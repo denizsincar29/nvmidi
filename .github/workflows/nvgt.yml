@@ -69,6 +69,17 @@ jobs:
           echo "engine: $nvgt"
           "$nvgt" --version 2>&1 | head -3 || true
 
+          # Which file the engine actually opens for a plugin, and which of
+          # them this checkout's header belongs to. A plugin is only registered
+          # when its compiled-in NVGT_PLUGIN_API_VERSION equals the number the
+          # running engine sends, and that number lives in the engine's own
+          # copy of nvgt_plugin.h - not in the one vendored here. Printing both
+          # makes a mismatch a name in the log instead of a guess.
+          echo "--- checkout's vendored header"
+          grep -n 'define NVGT_PLUGIN_API_VERSION' src/nvgt_plugin.h || true
+          echo "--- every vendored header shipped inside the engine"
+          find engine -name nvgt_plugin.h -exec sh -c 'echo "$1:"; grep -n "define NVGT_PLUGIN_API_VERSION" "$1"' _ {} \; || true
+
           # nvgt looks for a plugin in the lib/ folder beside the engine
           # binary, so the freshly built one is copied there - the same place
           # get_nvmidi.nvgt installs a release into.
@@ -79,6 +90,18 @@ jobs:
           fi
           cp "$plugin" "$(dirname "$nvgt")/lib/nvmidi.so"
           ls -la "$(dirname "$nvgt")/lib/nvmidi.so"
+
+          # The engine loads by bare name, so if it carries its own loader
+          # library a copy of the plugin there is what a script actually gets.
+          # Both are filled and both are listed, so the winning copy is visible.
+          find engine -name 'libnvgt.so*' -o -name 'nvgt.so*' 2>/dev/null | while read -r lib; do
+            cp "$plugin" "$(dirname "$lib")/nvmidi.so"
+            echo "plugin also placed beside $lib"
+          done
+          echo "--- every nvmidi.so the engine tree now contains"
+          find engine -name 'nvmidi.so' -exec ls -la {} \;
+          echo "--- the api version this plugin was compiled against"
+          grep -m1 'define NVGT_PLUGIN_API_VERSION' src/nvgt_plugin.h || true
 
           # Every script must at least compile. A script that speaks through a
           # screen reader has nothing to say on a headless runner, and that is
