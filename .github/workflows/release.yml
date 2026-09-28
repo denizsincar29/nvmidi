@@ -32,6 +32,84 @@ jobs:
         shell: cmd
         run: mingw32-make
 
+      # The import table is the thing that decides whether this dll loads on
+      # someone else's machine, and it is completely invisible in the file: a
+      # dll that names a library the machine does not have is refused whole,
+      # and nvgt then prints only
+      #
+      #     Compilation error: file: nvmidi
+      #     line: 0 (0)
+      #     ERROR: failed to load plugin
+      #
+      # Measured on the shipped v0.8.0 asset: its import table named
+      # libwinpthread-1.dll, a MinGW library Windows does not have, and that
+      # was the whole reason a user could not load the plugin. Nobody could
+      # have seen it without opening the file.
+      #
+      # So the table is asserted here. The three kinds of entry a stock Windows
+      # always has: KERNEL32.dll itself, the api-ms-win-crt-* runtime that ships
+      # with the system, and the multimedia stack the backend talks to. Anything
+      # else is a MinGW runtime library that followed the build in, and the
+      # build fails rather than shipping it to a machine that lacks it.
+      - name: assert the dll asks the system for nothing it does not have
+        shell: pwsh
+        run: |
+          $bytes = [IO.File]::ReadAllBytes("nvmidi.dll")
+          $pe = [BitConverter]::ToInt32($bytes, 0x3c)
+          $sectionCount = [BitConverter]::ToUInt16($bytes, $pe + 6)
+          $optSize = [BitConverter]::ToUInt16($bytes, $pe + 20)
+          $opt = $pe + 24
+          $magic = [BitConverter]::ToUInt16($bytes, $opt)
+          $dataDir = if ($magic -eq 0x20b) { $opt + 112 } else { $opt + 96 }
+          $sectionTable = $opt + $optSize
+
+          $sections = @()
+          for ($i = 0; $i -lt $sectionCount; $i++) {
+            $o = $sectionTable + $i * 40
+            $vsize = [BitConverter]::ToUInt32($bytes, $o + 8)
+            $vaddr = [BitConverter]::ToUInt32($bytes, $o + 12)
+            $rawSize = [BitConverter]::ToUInt32($bytes, $o + 16)
+            $rawOff = [BitConverter]::ToUInt32($bytes, $o + 20)
+            $sections += [pscustomobject]@{ Va = $vaddr; VSize = $vsize; RawOff = $rawOff; RawSize = $rawSize }
+          }
+
+          function RvaToOff([uint32]$rva) {
+            foreach ($s in $sections) {
+              if ($rva -ge $s.Va -and $rva -lt ($s.Va + [Math]::Max($s.VSize, 1))) {
+                return [int]($s.RawOff + ($rva - $s.Va))
+              }
+            }
+            return -1
+          }
+
+          $importRva = [BitConverter]::ToUInt32($bytes, $dataDir + 8)
+          if ($importRva -eq 0) { Write-Error "the dll has no import table at all"; exit 1 }
+
+          $allowed = @('KERNEL32.dll', 'WINMM.dll', 'ole32.dll', 'SETUPAPI.dll', 'ksuser.dll')
+          $bad = @()
+          $off = RvaToOff $importRva
+          while ($true) {
+            $nameRva = [BitConverter]::ToUInt32($bytes, $off + 12)
+            if ($nameRva -eq 0) { break }
+            $nameOff = RvaToOff $nameRva
+            $end = $nameOff
+            while ($bytes[$end] -ne 0) { $end++ }
+            $name = [Text.Encoding]::ASCII.GetString($bytes, $nameOff, $end - $nameOff)
+            Write-Host "  needs: $name"
+            $ok = $false
+            foreach ($a in $allowed) { if ($name -ieq $a) { $ok = $true } }
+            if ($name -like 'api-ms-win-*') { $ok = $true }
+            if ($name -like 'ext-ms-win-*') { $ok = $true }
+            if (-not $ok) { $bad += $name }
+            $off += 20
+          }
+
+          if ($bad.Count -gt 0) {
+            Write-Host "::error::the dll imports $($bad -join ', '), which a machine without MinGW does not have. Windows refuses such a dll as a whole, and nvgt then reports only ""failed to load plugin"" with line 0 (0), exactly as a user saw on v0.7.1 and v0.8.0. Build with -static so that no MinGW runtime library is needed at load time."
+            exit 1
+          }
+          Write-Host "the dll needs only the operating system's own libraries"
+
       - name: keep the dll
         uses: actions/upload-artifact@v4
         with:

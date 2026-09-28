@@ -29,7 +29,32 @@ SOURCES   = src/nvmidi.cpp third_party/rtmidi/RtMidi.cpp \
 ifeq ($(OS),Windows_NT)
     TARGET    = nvmidi.dll
     CXXFLAGS += -D__WINDOWS_MM__
-    LDFLAGS   = -shared -static-libgcc -static-libstdc++ -Wl,--kill-at
+    # -static, and the plugin dies without it.
+    #
+    # A released dll was built with only -static-libgcc -static-libstdc++, which
+    # leaves the compiler's other runtime libraries shared. The dll ended up
+    # importing libwinpthread-1.dll - measured by reading the import table of
+    # the shipped v0.8.0 asset, not inferred: it was the one entry in that
+    # table that is not part of Windows (KERNEL32, WINMM and the api-ms-win-crt-*
+    # runtime are; libwinpthread-1.dll is not).
+    #
+    # Windows does not resolve a library's dependencies one function at a time.
+    # A dll whose import table names something the machine does not have is
+    # refused as a whole, and nvgt's only words for that are
+    #
+    #     Compilation error: file: nvmidi
+    #     line: 0 (0)
+    #     ERROR: failed to load plugin
+    #
+    # with no script code run at all - the same silent wall ALSA produced on
+    # linux in v0.7.1, from the same class of mistake. A user hit it twice.
+    #
+    # -static pulls every MinGW runtime library in, so the shipped dll leans on
+    # nothing but the operating system. The cost is size, which does not matter
+    # here, and the gain is that "did it load" stops depending on what the user
+    # happens to have installed. The workflow asserts the import table after
+    # this, so a regression is a red build and not another user report.
+    LDFLAGS   = -shared -static -static-libgcc -static-libstdc++ -Wl,--kill-at
     LIBS      = -lwinmm -lole32 -lsetupapi -lksuser
     RM        = del /Q
 else
