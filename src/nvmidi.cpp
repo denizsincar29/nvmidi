@@ -1411,6 +1411,12 @@ int midi_note_number(const std::string& name) {
 // out loud, which is the only way it reaches a runner's log (the reporting
 // half of the plugin entry point compiles out when NVGT_PLUGIN_INCLUDE is
 // defined, so nothing here can call report_plugin_error()).
+// Set by any registration the engine refused for a reason other than
+// asALREADY_REGISTERED; read once by the entry point to decide whether to print
+// the engine's own view of the namespace. Deliberately outside the struct: the
+// reader is the entry point, which does not hold the reporter.
+static bool g_registration_failed = false;
+
 struct registration {
 	asIScriptEngine* engine;
 	int first_failure;
@@ -1434,6 +1440,9 @@ struct registration {
 		// happens when a second copy of this plugin is loaded and is not by
 		// itself a problem: the type under that name is this one. Anything else
 		// is, so it is the one that gets said out loud.
+		if (result != asALREADY_REGISTERED) {
+			g_registration_failed = true;
+		}
 		if (result != asALREADY_REGISTERED && unexpected == 0) {
 			unexpected = result;
 			fprintf(stderr, "nvmidi: registration failed at src/nvmidi.cpp:%d: %s\n", line, first_failure_text.c_str());
@@ -1632,6 +1641,35 @@ midi_config* midi_config_create() { return new midi_config(); }
 
 std::string midi_last_error() { return g_last_error; }
 
+// The engine's own view of the two decisions this plugin cannot see from the
+// inside: whether a name reached the global namespace at all, and which object
+// type its methods were hung on. A registration that returns a negative code is
+// reported once and then never mentioned again, and the script's error for a
+// type that failed to register is the unhelpful "is not a data type" - so the
+// engine is asked directly, and the answer is printed. It only runs when a
+// registration has already failed, so a healthy load stays silent.
+static void dump_registration_state(asIScriptEngine* engine) {
+	const char* names[] = {"midi_message", "midi_duration", "midi_note", "midi_config", "midi_input", "midi_output"};
+	for (int i = 0; i < 6; i++) {
+		asITypeInfo* type = engine->GetTypeInfoByName(names[i]);
+		if (!type) {
+			fprintf(stderr, "nvmidi: state: no type named '%s' in the global namespace\n", names[i]);
+			continue;
+		}
+		asUINT methods = type->GetMethodCount();
+		asUINT properties = type->GetPropertyCount();
+		fprintf(stderr, "nvmidi: state: type '%s': %u methods, %u properties\n", names[i], (unsigned)methods, (unsigned)properties);
+	}
+	const char* functions[] = {"midi_config@ midi_config_create()", "midi_input@ midi_input_create()", "midi_find_input_port(const string&in)"};
+	for (int i = 0; i < 3; i++) {
+		asIScriptFunction* f = engine->GetGlobalFunctionByDecl(functions[i]);
+		fprintf(stderr, "nvmidi: state: global function '%s': %s\n", functions[i], f ? "present" : "MISSING");
+	}
+	asITypeInfo* array_type = engine->GetTypeInfoByDecl("array<midi_note@>");
+	if (array_type)
+		fprintf(stderr, "nvmidi: state: the array type 'array<midi_note@>' exists\n");
+}
+
 // ---------------------------------------------------------------------------
 // Plugin entry point
 // ---------------------------------------------------------------------------
@@ -1649,6 +1687,8 @@ plugin_main(nvgt_plugin_shared* shared) {
 		return false;
 	}
 	register_nvmidi(shared->script_engine);
+	if (g_registration_failed)
+		dump_registration_state(shared->script_engine);
 	// Kept so the playing code can call back into the script, see wait_until().
 	g_engine = shared->script_engine;
 	return true;
