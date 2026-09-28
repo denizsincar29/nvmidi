@@ -316,17 +316,62 @@ void main() {
 	// "failed to load plugin", which names neither the file nor the reason. Two
 	// releases went out that way. Refusing here costs one sentence and saves a
 	// person an evening of swapping files.
-	file head(temporary, "rb");
-	if (head.active) {
-		string magic = head.read(2);
-		head.close();
-		bool windows_wanted = ASSET == "nvmidi.dll";
-		string looks_like = magic == "MZ" ? "a windows library" : "not a windows library";
-		if (windows_wanted && magic != "MZ") {
-			file_delete(temporary);
-			announce("Github sent " + looks_like + " for " + ASSET + ". This is a bug in this script or in the release, not something you did - do not install it by hand.");
-			return;
+	//
+	// Read in two separate opens, and nothing is read while a stream is open
+	// unless it is about to be closed in the same breath. The first version of
+	// this check read two bytes and then closed a stream that had been read to
+	// its end, and the engine answered with a bare
+	//
+	//     Yikes! System exception
+	//
+	// and nothing else - no reason, no line, and not the sentence this check
+	// exists to say. That is the same class of failure as the plugin message
+	// this whole block is about, produced by the check itself, which is worse
+	// than not having it: the user loses even the information that arrived.
+	//
+	// So the byte count is asked for first, from a stream that is opened and
+	// closed without a read, and the two bytes are fetched by a second stream
+	// opened at offset zero. Neither call can disturb the other.
+	bool windows_wanted = ASSET == "nvmidi.dll";
+	int64 arrived = 0;
+	{
+		file counter(temporary, "rb");
+		if (counter.active) {
+			arrived = counter.size;
+			counter.close();
 		}
+	}
+
+	// Too short to hold a header of any kind; the size check above is in
+	// kilobytes, this one is in bytes, and an empty file passes the first.
+	if (arrived < 2) {
+		file_delete(temporary);
+		announce("The file github sent is empty or nearly so, so it cannot be a library. Please try again, and if it keeps happening the release is at fault, not you.");
+		return;
+	}
+
+	string magic = "";
+	{
+		file head(temporary, "rb");
+		if (head.active) {
+			magic = head.read(2);
+			head.close();
+		}
+	}
+
+	// A stream that would not open is not a verdict about the file, so it is
+	// reported as what it is rather than as a wrong platform.
+	if (magic.length() < 2) {
+		file_delete(temporary);
+		announce("Cannot read the downloaded file after writing it. The path may be on a device that will not open it twice; nothing was installed.");
+		return;
+	}
+
+	string looks_like = magic == "MZ" ? "a windows library" : "not a windows library";
+	if (windows_wanted && magic != "MZ") {
+		file_delete(temporary);
+		announce("Github sent " + looks_like + " for " + ASSET + ". This is a bug in this script or in the release, not something you did - do not install it by hand.");
+		return;
 	}
 
 	// Only now is the old copy touched, and only once the new one is complete.
