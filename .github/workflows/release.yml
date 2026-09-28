@@ -3,14 +3,14 @@ name: release
 #
 # The downloader in scripts/get_nvmidi.nvgt resolves the "latest" release and
 # pulls the library out of it, so the asset names here are a contract, not a
-# detail: they are nvmidi.dll and libnvmidi.so, and they have to stay those.
+# detail: they are nvmidi.dll and nvmidi.so, and they have to stay those.
 #
 # The tag is the version. v0.7.0 makes a release named v0.7.0 - there is no
 # second place to write the number down, so it cannot drift from the tag.
 #
-# Both platforms are built. The plugin is not windows-only: the engine loads
-# nvmidi.dll on windows and libnvmidi.so everywhere else, and a release that
-# ships only the dll quietly leaves half the users with nothing to download.
+# Both platforms are built, and each asset keeps the name the Makefile gives
+# it: nvmidi.dll on windows, nvmidi.so on linux. A release that shipped only
+# the dll quietly left linux users with nothing to download.
 # The two jobs are independent, so they run in parallel; each one uploads its
 # artifact and the release job then attaches both files.
 on:
@@ -56,7 +56,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nvmidi-so
-          path: libnvmidi.so
+          path: nvmidi.so
           if-no-files-found: error
 
   # Only a tag push makes a release. A manual dispatch of this workflow still
@@ -84,7 +84,7 @@ jobs:
         run: |
           set -euo pipefail
           ls -l assets
-          gh release create "$GITHUB_REF_NAME" assets/nvmidi.dll assets/libnvmidi.so \
+          gh release create "$GITHUB_REF_NAME" assets/nvmidi.dll assets/nvmidi.so \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes
