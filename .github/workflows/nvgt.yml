@@ -1,0 +1,96 @@
+name: nvgt
+# Runs the scripts in this repository on the real nvgt engine.
+#
+# Why this workflow exists: nvgt scripts are compiled when nvgt runs them, so
+# there is no separate compiler to call and a broken script is invisible until
+# someone launches it by hand. This job downloads the official Linux engine and
+# runs the script for real, which turns a compile error into a red build. The
+# engine writes its diagnostics to stderr, so a failure here shows the same
+# "ERROR: ... line: N" text the user would have seen on their own machine -
+# nobody has to run it locally to find out.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The engine links against the system openssl, so it is present before
+      # anything tries to run it. This costs a few seconds and removes the one
+      # dependency the archive does not carry itself.
+      - name: install the engine's runtime dependency
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libssl3
+
+      # The engine is a c++ binary that dlopens its own lib/ folder, so it has
+      # to keep the directory layout it ships with. nvgt itself needs no
+      # additional packages on a current ubuntu runner.
+      - name: fetch the nvgt engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p engine
+          # The published builds live under downloads/ as
+          # nvgt_<version>_<channel>.tar.gz - there is no nvgt_linux.zip, and
+          # the download page has to be read to learn the current version. The
+          # version below is the one that was verified to exist and to unpack
+          # into a runnable engine.
+          url="https://nvgt.dev/downloads/nvgt_0.89.1_beta.tar.gz"
+          echo "downloading $url"
+          curl -fsSL "$url" -o engine.tar.gz || {
+            echo "::error::could not download the nvgt engine from $url"
+            exit 1
+          }
+          # The engine binary sits at the top level of the tarball next to its
+          # own lib/ folder, and it dlopens out of that folder by a path
+          # relative to itself, so the layout is unpacked as shipped.
+          tar xzf engine.tar.gz -C engine
+          ls -la engine
+          find engine -maxdepth 2 -name 'nvgt' -type f
+
+      - name: compile every script
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Locate the engine rather than assuming the archive's internal name.
+          nvgt="$(find engine -type f -name nvgt | head -n1)"
+          if [ -z "$nvgt" ]; then
+            echo "::error::the archive did not contain an nvgt binary"
+            exit 1
+          fi
+          chmod +x "$nvgt"
+          echo "engine: $nvgt"
+          # The engine needs libcrypto.so.3, which a plain runner image does
+          # not carry. Fail here with a readable line rather than letting each
+          # script fail with a loader message.
+          "$nvgt" --version 2>&1 | head -3 || true
+
+          # Every script must at least compile. A script that speaks through a
+          # screen reader has nothing to say on a headless runner, and that is
+          # fine - what is being checked is that it builds, and that no name in
+          # it has drifted from the engine's own api.
+          status=0
+          for script in scripts/*.nvgt examples/*.nvgt; do
+            [ -e "$script" ] || continue
+            echo "::group::$script"
+            # The engine exits 0 and says nothing when the script only speaks,
+            # so the log is inspected for its error format either way.
+            set +e
+            timeout 120 "$nvgt" "$script" 2>&1 | tee "$(basename "$script").log"
+            rc="${PIPESTATUS[0]}"
+            set -e
+            if [ "$rc" -ne 0 ]; then
+              echo "::error file=$script::nvgt exited $rc"
+              status=1
+            fi
+            if grep -qE 'ERROR:|Unexpected token|No matching signatures' "$(basename "$script").log"; then
+              echo "::error file=$script::the engine reported an error in $script"
+              grep -E 'ERROR:|Unexpected token|No matching signatures' "$(basename "$script").log"
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$status"

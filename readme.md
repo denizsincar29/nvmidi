@@ -46,9 +46,15 @@ NVGT source tree before rebuilding.
 
 ## Installing
 
-Put the built library where NVGT looks for plugins — next to `nvgt.exe` on
-Windows, or in the plugins directory on Linux. Restart NVGT; the functions
-below become available to every script.
+Put the built library where NVGT looks for plugins — the `lib/` directory of
+your NVGT installation. NVGT loads a plugin by bare name
+(`SDL_LoadObject("nvmidi.dll")`), so the operating system's search path
+decides where it is found, and that path is the NVGT install directory and its
+`lib/` subdirectory — never the folder the script happens to sit in. Restart
+NVGT; the functions below become available to every script.
+
+`scripts/get_nvmidi.nvgt` does this for you: it downloads the newest release
+and installs it into `lib/` next to the running NVGT.
 
 ## Reading a MIDI keyboard
 
@@ -315,8 +321,8 @@ keyboard's own sound engine).
 ## Installing the dll
 
 `scripts/get_nvmidi.nvgt` fetches `nvmidi.dll` from this repository's releases
-and puts it in the folder the script sits in, which is the folder nvgt loads
-the plugin from:
+and installs it into the `lib/` directory of the running NVGT — the folder
+NVGT actually searches for plugins:
 
     nvgt scripts/get_nvmidi.nvgt           newest release
     nvgt scripts/get_nvmidi.nvgt v0.7.0    a named release
@@ -328,10 +334,18 @@ through a text encoding, and it lands under a temporary name first: a
 connection that dies halfway cannot leave a truncated dll for nvgt to load on
 the next run.
 
-A dll that is currently loaded cannot be overwritten on Windows, so the script
-checks by renaming the existing copy out of the way before it downloads
-anything. If that rename fails, it says so and stops rather than replacing
-half of it — close nvgt and run it again.
+A dll that is currently loaded cannot be overwritten on Windows, so before it
+downloads anything the script copies the installed copy onto itself. That
+copy is the one test available for "is this file locked by a running nvgt": if
+even a self copy fails, something has the dll open, and the script says so and
+stops rather than replacing half of it — close nvgt and run it again.
+
+This repository is private, so the short address
+`releases/latest/download/nvmidi.dll` answers 404 — GitHub does not serve
+release assets of a private repository to an anonymous request. The script
+asks the api instead (`api.github.com/repos/<owner>/<repo>/releases/...`),
+reads the signed asset address out of the json it returns, and downloads from
+there; the signed address itself needs no token.
 
 ## Full API
 

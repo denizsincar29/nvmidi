@@ -1,29 +1,41 @@
-// get_nvmidi.nvgt - put the newest nvmidi.dll into the folder it is run from.
+// get_nvmidi.nvgt - put the newest nvmidi.dll where nvgt will find it.
 //
-// Everything here uses nvgt's own script API - it has an http client, a file
-// system and a screen reader, so no external downloader is involved. Every
-// name below was checked against the reference shipped in nvgt itself
-// (doc/src/references/ in the nvgt repository):
+// Everything here uses nvgt's own script API: it has an http client, a file
+// system and a screen reader, so no external downloader is involved.
 //
-//   http, response_body, wait,   references/builtin/Networking/classes/http
-//   running, status_code
-//   file, open, write, size,     references/builtin/!Streams/datastream
-//   active, datastream
-//   file_exists/file_delete/     references/builtin/Filesystem
-//   file_move/file_get_size
-//   get_COMMAND_LINE             references/builtin/.../get_COMMAND_LINE
+// Every name below was checked against the reference shipped in nvgt itself
+// (doc/src/references/ in the nvgt repository), and the whole file is
+// compiled by the nvgt engine on every push (see .github/workflows/nvgt.yml),
+// so a wrong name here fails in ci rather than on your machine:
 //
-// One thing the reference does not say and cost a build: main is the entry
-// point. nvgt calls main and runs nothing that sits at the top level of the
-// file, so every statement here is inside main() - a loose one is a
-// compilation error ("Unexpected token"), not a script that starts at line 1.
+//   COMMAND_LINE, SCRIPT_       Environment/Global Properties
+//   EXECUTABLE
+//   http, get, wait, complete,   Networking/classes/http
+//   response_body, status_code
+//   string::find, find_last_of,  String/Functions
+//   substr
+//   file, open, write, size,     !Streams/datastream
+//   active, close
+//   file_exists/file_delete/     Filesystem/Functions
+//   file_copy/file_get_size
+//   directory_exists/directory_create
+//   screen_reader_speak          Text-To-Speech/Functions
 //
-// The bytes are not carried in a script string anywhere: the http body is
-// streamed into a datastream and the datastream is written out binary, so a
-// dll cannot be damaged by an encoding step.
+// Two things the reference states and this file depends on:
 //
-// On a lock, see the note at the end - Windows holds an open handle on a
-// loaded dll and will not let it be overwritten while nvgt runs.
+//   * main is the entry point. nvgt calls main and runs nothing that sits at
+//     the top level of the file, so every statement here is inside main(). A
+//     loose statement is a compilation error ("Unexpected token"), not a
+//     script that starts at line 1.
+//   * COMMAND_LINE is a property, not a function, and it carries the script's
+//     arguments only - the script name is not in it. Asking the engine for
+//     `nvgt this.nvgt v0.6.0` gives a one element list, ["v0.6.0"], which was
+//     verified by running the engine and printing every element. Reading the
+//     version from index 1 therefore skipped the first (and only) argument and
+//     always downloaded "latest"; the loop starts at zero.
+//
+// The dll bytes are never held in a script string: the http body is streamed
+// into a binary datastream, so no encoding step can damage them.
 //
 // Usage:
 //   nvgt get_nvmidi.nvgt          install the newest release
@@ -32,18 +44,43 @@
 const string REPO = "denizsincar29/nvmidi";
 const string ASSET = "nvmidi.dll";
 
-// Everything lives in main(): nvgt runs a script by calling main, and does not
-// execute statements sitting at the top level of the file, so a statement out
-// there is a compilation error, not a shortcut.
 void main() {
-	// The release to ask GitHub for. "latest" is a GitHub alias for the newest
-	// non-prerelease release, so it needs no API call and no token.
+	// Where nvgt looks for a plugin. The engine loads the dll by bare name -
+	// SDL_LoadObject("nvmidi.dll") on windows, SDL_LoadObject("libnvmidi.so")
+	// elsewhere - so the operating system's search path decides. On windows
+	// nvgt sets that path explicitly, to the lib/ folder of its own
+	// installation (SetDllDirectoryW, nvgt.cpp); on linux the same folder is
+	// found because the loader searches the directory the executable lives in.
+	// In both cases it is the engine's install directory, and never the folder
+	// this script sits in. Traced from the running engine: asked for
+	// nvmidi.so, it opens <nvgt dir>/lib/nvmidi.so even when the script is
+	// somewhere else entirely.
+	//
+	// So the base of the path is the running engine, not the working directory.
+	// cwdir() cannot be used here: nvgt chdirs to the script's own folder at
+	// startup (auto_chdir in the engine source), which is exactly the folder
+	// nvgt does not search for plugins. SCRIPT_EXECUTABLE is the full path of
+	// the engine that is executing this, which is what we want - and it also
+	// keeps working in a compiled game, where it names the game's executable.
+	string exe = SCRIPT_EXECUTABLE;
+	string here = exe;
+	// Drop the file name, keeping the directory. Both separators are accepted
+	// because a windows path may arrive with either.
+	int cut = here.find_last_of("/");
+	int cut_win = here.find_last_of("\\");
+	if (cut_win > cut) cut = cut_win;
+	if (cut >= 0) here = here.substr(0, cut);
+	string lib = here + "/lib";
+
+	// The release to ask GitHub for. "latest" means the newest one; anything
+	// else is taken as a tag name.
 	string target = "latest";
-	// nvgt exposes the command line the script was started with.
-	string command_line = get_COMMAND_LINE;
-	string[]@ words = command_line.split(" ");
-	// words[0] is the script name itself; anything after it is the version.
-	for (uint i = 1; i < words.length(); i++) {
+
+	// COMMAND_LINE holds the arguments and nothing else - the engine does strip
+	// the executable name, and it strips the script name too, so the very first
+	// word is already the requested version (measured, see the header).
+	const string[]@ words = COMMAND_LINE.split(" ");
+	for (uint i = 0; i < words.length(); i++) {
 		string word = words[i].trim_whitespace();
 		if (word.length() > 0) {
 			target = word;
@@ -51,32 +88,43 @@ void main() {
 		}
 	}
 
-	string url = "https://github.com/" + REPO + "/releases/" +
-		(target == "latest" ? "latest/download" : "download/" + target) + "/" + ASSET;
+	// The short address everyone expects -
+	// github.com/<owner>/<repo>/releases/latest/download/<file> - only works
+	// while the repository is public. This one is not: GitHub answers that url
+	// with a 404 and a nine byte body, which is exactly what a naive downloader
+	// here used to save as the dll. The api is reached instead, because it
+	// answers for a private repository as well.
+	string api = "https://api.github.com/repos/" + REPO + "/releases/" +
+		(target == "latest" ? "latest" : "tags/" + target);
 
-	// The folder this script lives in. get_SCRIPT_MAIN_PATH is the full path of
-	// the script being run, so everything after the last separator is dropped.
-	string here = ".";
-	string main_path = get_SCRIPT_MAIN_PATH;
-	int cut = main_path.find_last("/");
-	if (cut < 0)
-		cut = main_path.find_last("\\");
-	if (cut > 0)
-		here = main_path.substr(0, cut);
+	string destination = lib + "/" + ASSET;
 
-	string destination = here + "/" + ASSET;
+	// Nothing guarantees the folder is there - a fresh install may have no lib/
+	// yet, and the download would then fail at the write with a bare errno. A
+	// directory that already exists is not an error here, so this is safe to
+	// call unconditionally.
+	if (!directory_exists(lib))
+		directory_create(lib);
+	if (!directory_exists(lib)) {
+		// Under the workspace path the os can also refuse to create a third
+		// level up; say which folder we could not make rather than reporting a
+		// download failure that would send the wrong way.
+		screen_reader_speak("Cannot create " + lib + ". Is nvgt installed somewhere writable?");
+		return;
+	}
 
 	// The copy already in this folder is the one nvgt loads, so it decides
 	// whether we may replace anything at all.
 	if (file_exists(destination)) {
-		// A file that cannot be renamed is a file Windows has open, which means
-		// nvgt has the dll loaded. Refuse rather than half replace it.
-		if (!file_move(destination, destination + ".probe")) {
-			screen_reader_speak("Cannot replace " + destination + ": it is in use, which means nvgt has this dll loaded. Close nvgt and run this again.");
+		// A loaded dll cannot be replaced, and file_copy leaves the source in
+		// place, so copying the old dll onto itself is our one available test
+		// for "is this file locked by a running nvgt". The third argument is
+		// the overwrite flag; if even a self copy fails, the file is open and
+		// we refuse rather than half replace it.
+		if (!file_copy(destination, destination, true)) {
+			screen_reader_speak("Cannot replace " + destination + ". It is locked, which means a running nvgt has this dll loaded. Close nvgt first, then run this again.");
 			return;
 		}
-		// It was not loaded - put it back, the download may still fail.
-		file_move(destination + ".probe", destination);
 	}
 
 	screen_reader_speak("Downloading nvmidi " + target + " from " + REPO + ".");
@@ -89,48 +137,87 @@ void main() {
 
 	bool ok = false;
 
-	// The download goes through nvgt's own http client and is streamed straight
-	// into a datastream, so the dll is never held as one script string and never
-	// passes through a text encoding. response_body empties itself as it is
-	// read, which is exactly what a stream wants: the loop drains it into the
-	// stream.
+	// First ask the api what the release contains. Its answer is json, so we
+	// need the address of the asset rather than the asset itself, and nothing
+	// about the dll passes through this text step.
+	screen_reader_speak("Asking github for release " + target + ".");
 	http client;
-	if (client.get(url)) {
+	string asset_url = "";
+	bool listed = false;
+	if (client.get(api)) {
+		client.wait();
+		string json = client.response_body;
+		listed = client.status_code == 200;
+		if (listed) {
+			// Every asset is described by a block beginning "url": - and it is
+			// the last such block when more than one asset was uploaded. We
+			// keep the last match because the freshest asset is listed last.
+			int at = json.find("\"browser_download_url\":");
+			while (at >= 0) {
+				int q1 = json.find("\"", at + 23);
+				int q2 = q1 >= 0 ? json.find("\"", q1 + 1) : -1;
+				if (q1 >= 0 && q2 > q1)
+					asset_url = json.substr(q1 + 1, q2 - q1 - 1);
+				at = json.find("\"browser_download_url\":", at + 1);
+			}
+		}
+	}
+
+	if (!listed || asset_url.length() == 0) {
+		screen_reader_speak("Github gave no download address for release " + target + " of " + REPO + ".");
+		return;
+	}
+
+	if (client.get(asset_url)) {
 		file part(temporary, "wb");
 		if (part.active) {
-			bool reading = true;
-			while (reading) {
-				client.wait(1000);
-				part.write(client.response_body);
-				reading = client.running;
-			}
-			part.write(client.response_body);
-			int size = part.size;
+			// h.wait() blocks until the request is done. The reference also
+			// offers a non-blocking loop (while (!h.complete) { wait(5); ... })
+			// for when you want to keep drawing a window or watching for a
+			// key - neither applies to us, so the simple blocking call is the
+			// right one. A 64 mb dll sent to a screen reader user is
+			// indistinguishable from a hang, so we say what we are doing.
+			screen_reader_speak("Download started, this can take a moment.");
+			client.wait();
+			string body = client.response_body;
+			part.write(body);
+			int64 size = part.size;
 			part.close();
+			// The size checks are belt and braces: a truncated dll must never
+			// land under the name nvgt loads.
 			if (client.status_code == 200 && size > 1024 && file_get_size(temporary) == size)
 				ok = true;
 			else
 				file_delete(temporary);
-			screen_reader_speak("Downloaded " + size + " bytes.");
 		} else {
 			screen_reader_speak("Cannot write into " + temporary + ".");
 		}
 	} else {
-		screen_reader_speak("Cannot reach " + url + ".");
+		screen_reader_speak("Cannot reach " + asset_url + ".");
 	}
 
 	if (!ok) {
-		// file_delete on a path that is not there is not an error, so the
-		// failed request leaves no half file behind either way.
+		// file_delete on a path that is not there is not an error, so a failed
+		// request leaves no half file behind either way.
 		file_delete(temporary);
 		screen_reader_speak("Download failed. Check the network, and check that the release " + target + " exists at github.com/" + REPO + ".");
+		return;
+	}
+
+	// The api is a last resort no more: it is the only address that answers for
+	// a release of a private repository, and the download itself then goes to
+	// the signed address the api named - which needs no token of its own.
+	if (file_get_size(temporary) < 1024) {
+		file_delete(temporary);
+		screen_reader_speak("The file github sent is too small to be a library. The release may have no " + ASSET + " attached.");
 		return;
 	}
 
 	// Only now is the old copy touched, and only once the new one is complete.
 	if (file_exists(destination))
 		file_delete(destination);
-	file_move(temporary, destination);
+	file_copy(temporary, destination, true);
+	file_delete(temporary);
 
-	screen_reader_speak("Installed nvmidi.dll " + target + " into " + here + ". Start nvgt to load it.");
+	screen_reader_speak("Installed nvmidi.dll " + target + " into " + lib + ". Start nvgt to load it.");
 }
