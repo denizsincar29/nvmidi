@@ -97,6 +97,11 @@ string asset_for(string engine_path) {
 }
 
 void main() {
+	// The very first line, before any work and before any dialog box. If the
+	// console shows nothing at all - not even this - then the fault is above
+	// the trace, in the machinery that runs main, and no amount of numbering
+	// inside main will ever describe it.
+	mark("0 main entered");
 	// Where nvgt looks for a plugin. The engine loads the dll by bare name -
 	// SDL_LoadObject("nvmidi.dll") on windows, SDL_LoadObject("nvmidi.so")
 	// elsewhere - so the operating system's search path decides. On windows

@@ -19,6 +19,7 @@ went wrong:
   * the dll is there but Windows refuses to load it (a dependency the machine
     does not have, a 32/64 bit mismatch, a file that is not really a PE);
   * the dll loaded but was built against a different plugin api version;
+  * the plugin was entered and crashed inside its own registration code;
   * everything loaded and there is simply no MIDI port to play on.
 
 ctypes answers the first three with the loader's own words, in one command,
@@ -131,7 +132,7 @@ MACHINE_NAMES = {
 # --- 2. the structure the engine hands to the plugin ------------------------
 
 
-class PluginShared(ctypes.Structure):
+class Plugin_Shared(ctypes.Structure):
     """The first three fields of nvgt_plugin_shared.
 
     Only the version matters here, and it has to be read before anything else
@@ -219,16 +220,25 @@ def probe(path):
     except AttributeError:
         print("  loaded and versioned, but has no nvgt_plugin entry point")
         return 1
+    if os.environ.get("MIDI_PROBE_ENTER", "1") == "0":
+        print("  nvgt_plugin() not called (MIDI_PROBE_ENTER=0); the file itself is fine")
+        return 0
+
     entry.restype = ctypes.c_bool
     entry.argtypes = [ctypes.c_void_p]
 
-    shared = PluginShared()
+    shared = Plugin_Shared()
     shared.version = KNOWN_API_VERSION
     print("  calling nvgt_plugin() with a stub engine...")
     try:
         accepted = entry(ctypes.byref(shared))
     except Exception as error:  # noqa: BLE001 - the point is to print anything
         print("  the entry point crashed: %r" % (error,))
+        print("  A write to address 0 means the plugin got as far as running its own")
+        print("  code and then dereferenced a null pointer - which is not something")
+        print("  the loader can cause, and not something nvgt would ever have shown")
+        print("  you. The file it loaded is genuinely this plugin; the fault is")
+        print("  inside it (or inside the stub engine it was handed).")
         return 1
 
     if accepted:

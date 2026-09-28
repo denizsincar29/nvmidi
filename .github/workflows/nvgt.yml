@@ -56,6 +56,13 @@ jobs:
           # compile is caught nowhere else, but it is never the one placed next
           # to the engine.
           sudo apt-get install -y -qq g++ libasound2-dev
+          # Where the ALSA headers live is a property of the machine and not of
+          # this repository, so it is found rather than assumed: alsa-lib
+          # releases move them between multiarch and plain /usr/include.
+          echo "--- alsa headers on this runner"
+          find /usr/include -maxdepth 3 -name asoundlib.h 2>/dev/null || echo "asoundlib.h: not present"
+          pkg-config --modversion alsa 2>/dev/null || echo "alsa: no pkg-config entry"
+
           make MIDI_BACKEND=dummy
           mv nvmidi.so nvmidi-dummy.so
           make clean
@@ -253,6 +260,19 @@ jobs:
           status=0
           for script in scripts/*.nvgt examples/*.nvgt; do
             [ -e "$script" ] || continue
+            # get_nvmidi.nvgt is not a test, it is the downloader: running it
+            # downloads the published release over the library this job just
+            # built and placed, so every script after it is compiled against a
+            # different library than the one under test. Measured: it installed
+            # v0.8.4 into the engine's lib/ partway through a run. Its own
+            # correctness is a question about the release, not about the build,
+            # and it is asked in the e2e job instead.
+            case "$script" in
+              scripts/get_nvmidi.nvgt)
+                echo "skipping $script: it fetches a published release and would overwrite the library under test"
+                continue
+                ;;
+            esac
             echo "::group::$script"
             # Every script must at least compile, and the log is what says so.
             set +e
@@ -288,6 +308,234 @@ jobs:
             echo "::endgroup::"
           done
           exit "$status"
+
+  # The scripts job answers "does it compile". This one answers "does it work".
+  #
+  # Everything up to here runs the plugin against the dummy backend, where a
+  # port is a number and sending a note is a no-op that returns success. That
+  # is enough to catch a name drifting out of the engine's api and nothing
+  # else: a plugin that opens no port, sends nothing and hears nothing passes
+  # every assertion the scripts job makes.
+  #
+  # So this job puts the ALSA build on a real sequencer, stands up a sink for
+  # it to play into, and makes the engine's own process publish a port that
+  # another process sends a note into. The note that comes back out is the one
+  # result a stubbed-out plugin cannot produce, because it arrives from outside
+  # it.
+  #
+  # The runner has no sound card. It does not need one: the ALSA sequencer is a
+  # kernel-side message bus that exists whether or not there is hardware on the
+  # other end, and attaching a synthesiser to it is how this becomes a test of
+  # "did a note reach an instrument" rather than "did a function return true".
+  e2e-midi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build the alsa backend
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq g++ libasound2-dev
+          make MIDI_BACKEND=alsa
+          test -s nvmidi.so
+          ls -la nvmidi.so
+          echo "--- what the dynamic loader will ask for"
+          readelf -d nvmidi.so | grep -E 'NEEDED|SONAME' || true
+
+      - name: fetch the pinned nvgt engine
+        shell: bash
+        run: ./scripts/nvgt_pin.sh fetch engine
+
+      - name: make the engine find its own libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          nvgt="$(find engine -type f -name nvgt | head -n1)"
+          if [ -z "$nvgt" ]; then
+            echo "::error::the archive did not contain an nvgt binary"
+            exit 1
+          fi
+          chmod +x "$nvgt"
+          libdir="$(dirname "$nvgt")/lib"
+          mkdir -p "$libdir"
+          cp nvmidi.so "$libdir/nvmidi.so"
+
+          # The engine links against openssl and carries the rest of itself
+          # somewhere in its own tree. Rather than guess which of those places
+          # the dynamic loader will look at, the engine is asked to run with the
+          # paths it was built against and each of its own directories added.
+          # Measured on a fresh runner, a bare invocation of the archive's
+          # binary fails before main() with an unresolved library.
+          find engine -type d | while read -r d; do
+            echo "$d"
+          done > /tmp/nvgt_dirs.txt
+          {
+            echo "LD_LIBRARY_PATH=$libdir:$(paste -sd: /tmp/nvgt_dirs.txt)"
+            echo "NVGT_BIN=$nvgt"
+          } >> "$GITHUB_ENV"
+
+          echo "engine: $nvgt"
+          echo "--- does it start at all"
+          set +e
+          "$nvgt" --version 2>&1 | head -5
+          echo "rc=$?"
+          set -e
+          echo "--- what it still wants"
+          ldd "$nvgt" 2>&1 | grep -i 'not found' || echo "every dependency resolves"
+
+      - name: stand up a midi sink
+        shell: bash
+        run: |
+          set -euo pipefail
+          # alsa-utils is what has aconnect and aseqdump; fluidsynth is the
+          # instrument. Both come from apt, which this container has by
+          # definition - the runner is a normal ubuntu image, unlike the agent's.
+          sudo apt-get install -y -qq alsa-utils
+
+          cat > /tmp/nvgt_midi.conf <<'CONF'
+          # The runner has no audio hardware, so the synth must not try to open
+          # one: without a null driver fluidsynth exits with "no audio driver
+          # available" and the sink never appears.
+          audio.driver=null
+          synth.gain=0.2
+          CONF
+
+          mkdir -p /tmp/sf
+          # a tiny soundfont, from the same distribution: the job is testing
+          # that midi events reach a synthesiser, not how one sounds.
+          sudo apt-get install -y -qq fluid-soundfont-gm || true
+          sf="$(find /usr/share/sounds/sf2 -name '*.sf2' 2>/dev/null | head -n1)"
+          if [ -z "$sf" ]; then
+            echo "::error::no soundfont is installed, so no synthesiser can be attached to the sequencer"
+            exit 1
+          fi
+          echo "soundfont: $sf"
+
+          ( fluidsynth -a null -f /tmp/nvgt_midi.conf -i -o synth.midi-bank-select=gm "$sf" >/tmp/fluidsynth.log 2>&1 & )
+          sleep 5
+          echo "--- midi clients, before"
+          aconnect -i || true
+          aconnect -o || true
+          if ! grep -q 'fluid' <(aconnect -o 2>/dev/null); then
+            echo "::error title=no midi sink::the synthesiser did not register a port on the alsa sequencer, so nothing can be played into"
+            cat /tmp/fluidsynth.log
+            exit 1
+          fi
+          echo "::notice::the synthesiser is on the sequencer"
+
+      - name: run the scripts against it
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The engine and its library paths came from the previous step through
+          # $GITHUB_ENV; each step is its own shell.
+          nvgt="$NVGT_BIN"
+          echo "engine: $nvgt"
+          echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+
+          # The one script whose whole purpose is to say what it did. It prints
+          # rather than calling alert, because a headless runner has no reader
+          # to hear an alert and no hand to dismiss the box it puts up: the
+          # examples announce through the engine and every word of theirs is
+          # lost here. e2e_midi.nvgt exists so that this job does not have to
+          # guess whether a script got past its first line.
+          mkdir -p logs
+
+          # The note is sent from another process, timed against the script's
+          # own announcement rather than a sleep: the script prints its port
+          # name as soon as it exists, and this waits for that line in the log
+          # before it starts looking for the port. Race-free both ways - if the
+          # script never gets that far, the sender's own attempt window is the
+          # only thing that expires, and the failure is reported as the missing
+          # line it is.
+          (
+            for i in $(seq 1 120); do
+              if [ -f logs/e2e_midi.log ] && grep -q '^nvmidi e2e' logs/e2e_midi.log; then
+                break
+              fi
+              sleep 0.25
+            done
+            python3 scripts/e2e_send.py "nvmidi e2e" 15 > logs/e2e_send.log 2>&1
+            echo "sender exit: $?" >> logs/e2e_send.log
+          ) &
+          sender_pid=$!
+
+          set +e
+          timeout 180 "$nvgt" scripts/e2e_midi.nvgt 2>&1 | tee logs/e2e_midi.log
+          rc="${PIPESTATUS[0]}"
+          set -e
+          echo "the engine exited $rc"
+          wait "$sender_pid" 2>/dev/null || true
+          echo "--- the sender on the other end of the port"
+          cat logs/e2e_send.log 2>/dev/null || echo "(the sender wrote nothing)"
+
+          # The note has to arrive from outside this process, or nothing here
+          # is evidence: the plugin can print that it heard something only if
+          # the bytes came in through the sequencer.
+          if ! grep -q '^E2E_HEARD' logs/e2e_midi.log; then
+            echo "::error title=nothing arrived::the plugin published a port but no message from another process reached it"
+          fi
+
+          echo "--- what the plugin said about itself"
+          grep -E '^E2E_' logs/e2e_midi.log || echo "(no E2E_ lines at all: the script never reached its first print)"
+
+          failed=0
+          if grep -q 'failed to load plugin' logs/e2e_midi.log; then
+            echo "::error title=plugin does not load::the engine refused the alsa library, so nothing was tested"
+            failed=1
+          fi
+          if ! grep -q '^E2E_BEGIN' logs/e2e_midi.log; then
+            echo "::error title=script never ran::e2e_midi.nvgt did not reach its first line"
+            failed=1
+          fi
+          if ! grep -q '^E2E_OK LOADED' logs/e2e_midi.log; then
+            echo "::error title=plugin never registered::the library loaded but reported no backend"
+            failed=1
+          fi
+          if grep -q '^E2E_FAIL' logs/e2e_midi.log; then
+            echo "::error title=the plugin failed its own test::every line below is a thing it could not do"
+            grep '^E2E_FAIL' logs/e2e_midi.log
+            failed=1
+          fi
+          # The count is the summary; the greps above are the accusation.
+          tail -1 logs/e2e_midi.log | grep -q 'failures=0' || {
+            echo "::error::e2e_midi.nvgt did not end with failures=0"
+            failed=1
+          }
+          if [ "$failed" -ne 0 ]; then
+            echo "--- the whole log"
+            cat logs/e2e_midi.log
+            echo "--- the synthesiser"
+            cat /tmp/fluidsynth.log || true
+            exit 1
+          fi
+
+      # The library the release attaches is the dummy one, because ALSA cannot
+      # be assumed on a user's machine. That is a deliberate trade, and it is
+      # exactly why the real backend is exercised here: the artefact a musician
+      # builds for themselves gets the coverage, and the artefact a user
+      # downloads keeps its honest "dummy" name.
+      - name: the alsa backend is not the stub
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/backend.nvgt <<'SCRIPT'
+          #pragma plugin nvmidi
+          void main() { print("NVGT_BACKEND " + midi_api_name()); }
+          SCRIPT
+          set +e
+          timeout 120 "$NVGT_BIN" /tmp/backend.nvgt 2>&1 | tee backend.log
+          set -e
+          grep -q 'NVGT_BACKEND' backend.log || {
+            echo "::error::the alsa library did not report a backend at all"
+            exit 1
+          }
+          if grep -q 'NVGT_BACKEND nvmidi/Dummy' backend.log; then
+            echo "::error title=the alsa build is a stub::MIDI_BACKEND=alsa produced a library that cannot reach a port"
+            exit 1
+          fi
+          echo "the alsa build reports: $(grep -o 'NVGT_BACKEND.*' backend.log | head -1)"
 
   # The load is asserted, and so is *what got loaded*. A published library and
   # a dummy one are both called nvmidi.so, both load, and both make every

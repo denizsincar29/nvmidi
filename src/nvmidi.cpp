@@ -743,7 +743,12 @@ bool midi_output::open(unsigned int port, const std::string& name) {
 				return false;
 			}
 		}
-		out->openPort(port, name);
+		// RtMidi's openVirtualPort ignores the port argument: it always
+		// creates its own port and never looks at the list, so passing any
+		// index is harmless. Called this way on a backend that has no virtual
+		// ports (the dummy build, and Windows) the call itself does nothing.
+		if (virtual_port) out->openVirtualPort(name);
+		else out->openPort(port, name);
 		midi_out = out;
 		port_index = static_cast<int>(port);
 		return true;
@@ -1629,6 +1634,17 @@ void register_midi_output(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectMethod("midi_output", "void send_sysex(const string&in data)", asMETHOD(midi_output, send_sysex), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "void all_notes_off()", asMETHOD(midi_output, all_notes_off), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "void reset()", asMETHOD(midi_output, reset), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	// A virtual port is a port this process publishes rather than one it
+	// opens, and only ALSA (and JACK) offer the idea - on Windows a port must
+	// belong to a driver. It is registered everywhere so a script that asks
+	// the question compiles on every build; the answer is the truth on the
+	// backend that is running, not on the one the script hopes for.
+	//
+	// While it is set, open() skips the port-index check, because the index
+	// belongs to the port being created and there is nothing to enumerate
+	// before it exists.
+	reg->check( engine->RegisterObjectMethod("midi_output", "bool is_virtual_port() const", asMETHOD(midi_output, is_virtual_port), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "void set_virtual_port(bool value)", asMETHOD(midi_output, set_virtual_port), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "midi_duration duration(double amount, int unit) const", asMETHOD(midi_output, duration), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_output", "double tempo", asOFFSET(midi_output, tempo)), "RegisterObjectProperty", __LINE__);
 }
