@@ -30,7 +30,10 @@ void main() {
 	screen_reader_speak("Listening on " + keyboard.get_port_name());
 
 	while (!key_pressed(KEY_ESCAPE)) {
-		midi_message@ m;
+		// A value, not a handle: next_message takes midi_message&, which in
+		// this engine is a value passed by reference. A handle here is
+		// rejected before the call is even looked up.
+		midi_message m;
 		while (keyboard.next_message(m)) {
 			// One line per message, spoken. m.to_string() already reads
 			// like "note on, channel 1, note 60, velocity 100".
