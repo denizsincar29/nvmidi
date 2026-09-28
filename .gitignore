@@ -6,3 +6,9 @@ nvmidi.dll
 *.a
 zig-cache/
 .zig-cache/
+
+# Build artefacts the CI job leaves behind
+logs/
+*.log
+*.core
+core

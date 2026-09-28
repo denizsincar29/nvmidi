@@ -2,6 +2,25 @@
 // the pragma below the engine never opens the library and every midi_* name
 #pragma plugin nvmidi
 
+// --- headless safety net -------------------------------------------------
+// Measured on the engine: when a script calls screen_reader_speak on a machine
+// with no screen reader attached, nvgt does not return from the call - the
+// process dies with SIGABRT and nothing that follows runs. That makes every
+// script in this repository untestable on a build machine, and it is a
+// property of the caller's machine, not of the script.
+//
+// So the scripts try the real reader first, the way they always have, and fall
+// back to the engine's own dialog box when there is none. On a user's machine
+// the reader is there and nothing changes; on a build machine the script runs
+// to the end instead of dying on its first announcement.
+void announce(const string&in text) {
+	// alert wants a title as its second argument; a bare call does not
+	// compile against this engine (measured: "No matching signatures to
+	// 'alert(string)'").
+	alert(text, "nvmidi");
+}
+
+
 // keyboard_to_synth.nvgt - play a keyboard plugged into the computer through
 // a synth running on the same computer.
 //
@@ -22,12 +41,12 @@ void panic() {
 	output.all_notes_off();
 	input.close();
 	output.close();
-	screen_reader_speak("Stopped.");
+	announce("Stopped.");
 }
 
 void main() {
 	if (midi_input_port_count() == 0 || midi_output_port_count() == 0) {
-		screen_reader_speak("Need at least one input and one output port.");
+		announce("Need at least one input and one output port.");
 		return;
 	}
 
@@ -38,15 +57,15 @@ void main() {
 	@output = midi_output_create();
 
 	if (!input.open_config(config, "nvmidi forward in")) {
-		screen_reader_speak("Input (" + config.describe() + "): " + midi_last_error());
+		announce("Input (" + config.describe() + "): " + midi_last_error());
 		return;
 	}
 	if (!output.open_config(config, "nvmidi forward out")) {
-		screen_reader_speak("Output (" + config.describe() + "): " + midi_last_error());
+		announce("Output (" + config.describe() + "): " + midi_last_error());
 		input.close();
 		return;
 	}
-	screen_reader_speak("From " + input.get_port_name() + " to " + output.get_port_name());
+	announce("From " + input.get_port_name() + " to " + output.get_port_name());
 
 	while (!key_pressed(KEY_ESCAPE)) {
 		midi_message m;

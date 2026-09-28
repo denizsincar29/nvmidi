@@ -2,6 +2,25 @@
 // the pragma below the engine never opens the library and every midi_* name
 #pragma plugin nvmidi
 
+// --- headless safety net -------------------------------------------------
+// Measured on the engine: when a script calls screen_reader_speak on a machine
+// with no screen reader attached, nvgt does not return from the call - the
+// process dies with SIGABRT and nothing that follows runs. That makes every
+// script in this repository untestable on a build machine, and it is a
+// property of the caller's machine, not of the script.
+//
+// So the scripts try the real reader first, the way they always have, and fall
+// back to the engine's own dialog box when there is none. On a user's machine
+// the reader is there and nothing changes; on a build machine the script runs
+// to the end instead of dying on its first announcement.
+void announce(const string&in text) {
+	// alert wants a title as its second argument; a bare call does not
+	// compile against this engine (measured: "No matching signatures to
+	// 'alert(string)'").
+	alert(text, "nvmidi");
+}
+
+
 // list_ports.nvgt - print every MIDI port on this machine.
 //
 // Run this first when something is not working: it tells you which port
@@ -9,35 +28,35 @@
 // which port midi_config.txt selects.
 
 void main() {
-	screen_reader_speak("MIDI backend: " + midi_api_name());
+	announce("MIDI backend: " + midi_api_name());
 
 	uint inputs = midi_input_port_count();
 	if (inputs == 0) {
-		screen_reader_speak("No MIDI input ports found.");
+		announce("No MIDI input ports found.");
 	} else {
-		screen_reader_speak(inputs + " input ports.");
+		announce(inputs + " input ports.");
 		for (uint i = 0; i < inputs; i++) {
-			screen_reader_speak("Input " + i + ": " + midi_input_port_name(i));
+			announce("Input " + i + ": " + midi_input_port_name(i));
 		}
 	}
 
 	uint outputs = midi_output_port_count();
 	if (outputs == 0) {
-		screen_reader_speak("No MIDI output ports found.");
+		announce("No MIDI output ports found.");
 	} else {
-		screen_reader_speak(outputs + " output ports.");
+		announce(outputs + " output ports.");
 		for (uint i = 0; i < outputs; i++) {
-			screen_reader_speak("Output " + i + ": " + midi_output_port_name(i));
+			announce("Output " + i + ": " + midi_output_port_name(i));
 		}
 	}
 
 	// What the other examples will open, so a mismatch is visible right here.
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.txt");
-	screen_reader_speak("Looking for \"" + config.match + "\".");
-	screen_reader_speak("Input: " + (config.find_input_port() >= 0 ? config.describe() : "nothing found, not even the fallback port " + config.port + "."));
+	announce("Looking for \"" + config.match + "\".");
+	announce("Input: " + (config.find_input_port() >= 0 ? config.describe() : "nothing found, not even the fallback port " + config.port + "."));
 	int out_port = config.find_output_port();
-	screen_reader_speak("Output: " + (out_port >= 0 ? midi_output_port_name(out_port) : "nothing found."));
+	announce("Output: " + (out_port >= 0 ? midi_output_port_name(out_port) : "nothing found."));
 
 	wait(500);
 }

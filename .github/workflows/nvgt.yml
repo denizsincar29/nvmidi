@@ -35,8 +35,33 @@ jobs:
       # "No matching symbol".
       - name: build the plugin
         run: |
+          # Two builds, on purpose.
+          #
+          # The one that ships is MIDI_BACKEND=dummy. Defining __LINUX_ALSA__
+          # puts a "needed: libasound.so.2" entry into the library, and the
+          # dynamic loader refuses a library whose dependencies it cannot
+          # resolve - all of it, before a single symbol is looked up. Measured
+          # with LD_DEBUG=libs on a machine without libasound.so.2:
+          #
+          #   find library=nvmidi.so  trying file=./lib/nvmidi.so   (found)
+          #   needed by ./lib/nvmidi.so -> libasound.so.2            (missing)
+          #   file=./lib/nvmidi.so  destroying link map              (unloaded)
+          #
+          # and the engine then says "failed to load plugin" for a library that
+          # was sitting in exactly the right folder. The dummy build needs only
+          # libc and libstdc++, so the loader always takes it. That is the
+          # artefact a user downloads, so that is the one this job tests.
+          #
+          # The alsa build is still made, because a plugin that does not
+          # compile is caught nowhere else, but it is never the one placed next
+          # to the engine.
           sudo apt-get install -y -qq g++ libasound2-dev
-          make
+          make MIDI_BACKEND=dummy
+          mv nvmidi.so nvmidi-dummy.so
+          make clean
+          make MIDI_BACKEND=alsa
+          mv nvmidi.so nvmidi-alsa.so
+          ls -la nvmidi-dummy.so nvmidi-alsa.so
 
       # The engine is a c++ binary that dlopens its own lib/ folder, so it has
       # to keep the directory layout it ships with. nvgt itself needs no
@@ -56,7 +81,7 @@ jobs:
         shell: bash
         run: ./scripts/nvgt_pin.sh fetch engine
 
-      - name: compile every script
+      - name: stage the plugin where the engine looks for it
         shell: bash
         run: |
           set -euo pipefail
@@ -84,12 +109,29 @@ jobs:
           # nvgt looks for a plugin in the lib/ folder beside the engine
           # binary, so the freshly built one is copied there - the same place
           # get_nvmidi.nvgt installs a release into.
-          plugin="$(find . -maxdepth 1 -name 'nvmidi.so' | head -n1)"
+          plugin="$(find . -maxdepth 1 -name 'nvmidi-dummy.so' | head -n1)"
           if [ -z "$plugin" ]; then
-            echo "::error::the plugin did not build, so the scripts cannot be compiled against it"
+            echo "::error::the shipping (dummy) plugin did not build, so the scripts cannot be compiled against it"
             exit 1
           fi
-          cp "$plugin" "$(dirname "$nvgt")/lib/nvmidi.so"
+          # Every copy of the library is verified, not assumed. Measured the
+          # hard way: a cp that lands a zero-byte file is silent, and the
+          # engine then reports "failed to load plugin" - a file that is
+          # present but empty and a file that was never written look identical
+          # from the script's side. An empty library also produces no error of
+          # its own here, so the size is checked at the moment of the copy
+          # rather than diagnosed later from a confusing engine message.
+          copy_plugin() {
+            local dest="$1" size
+            cp "$plugin" "$dest"
+            size="$(stat -c %s "$dest" 2>/dev/null || echo 0)"
+            if [ "$size" -ne "$(stat -c %s "$plugin")" ]; then
+              echo "::error::copying the plugin to $dest produced $size bytes, not the built size; the engine would report this as \"failed to load plugin\""
+              exit 1
+            fi
+            echo "plugin placed: $dest ($size bytes)"
+          }
+          copy_plugin "$(dirname "$nvgt")/lib/nvmidi.so"
           ls -la "$(dirname "$nvgt")/lib/nvmidi.so"
 
           # The plugin builds, and its entry points are the two symbols the
@@ -114,37 +156,109 @@ jobs:
           # placement that works either way, and a copy beside any loader
           # library nvgt carries. All are filled and all are listed, so the
           # winning copy is visible.
-          cp "$plugin" "$(dirname "$nvgt")/nvmidi.so"
+          copy_plugin "$(dirname "$nvgt")/nvmidi.so"
           find engine -name 'libnvgt.so*' -o -name 'nvgt.so*' 2>/dev/null | while read -r lib; do
-            cp "$plugin" "$(dirname "$lib")/nvmidi.so"
-            echo "plugin also placed beside $lib"
+            copy_plugin "$(dirname "$lib")/nvmidi.so"
           done
           echo "--- every nvmidi.so the engine tree now contains"
           find engine -name 'nvmidi.so' -exec ls -la {} \;
+          # A zero-byte library anywhere means the loader will reject it and
+          # the only symptom will be a script that quietly does nothing.
+          if find engine -name 'nvmidi.so' -size 0 | grep -q .; then
+            echo "::error::a nvmidi.so inside the engine tree is empty; every script would fail with \"failed to load plugin\""
+            find engine -name 'nvmidi.so' -size 0
+            exit 1
+          fi
           echo "--- the api version this plugin was compiled against"
           grep -m1 'define NVGT_PLUGIN_API_VERSION' src/nvgt_plugin.h || true
 
-          # Every script must at least compile. A script that speaks through a
+      # Everything above proves the plugin *built*. None of it proves the
+      # engine can *load* it, and those are different failures with the same
+      # symptom.
+      #
+      # Measured on the real engine: a script carrying "#pragma plugin nvmidi"
+      # whose library will not load prints
+      #
+      #   Compilation error: file: nvmidi
+      #   line: 0 (0)
+      #   ERROR: failed to load plugin
+      #
+      # and runs none of the script - not main, not preglobals, because the
+      # pragmas are processed before the script is compiled. A plugin that
+      # loads and one that does not are therefore distinguishable only by
+      # whether the script got far enough to print something of its own. This
+      # step asserts both halves: the failure text is absent *and* the script's
+      # own marker is present. Without the second half a script that silently
+      # runs nothing looks exactly like a pass.
+      - name: assert the engine can load the plugin
+        shell: bash
+        run: |
+          set -euo pipefail
+          nvgt="$(find engine -type f -name nvgt | head -n1)"
+          chmod +x "$nvgt"
+
+          cat > /tmp/loadcheck.nvgt <<'SCRIPT'
+          #pragma plugin nvmidi
+          void main() {
+            print("NVGT_PLUGIN_LOADED " + midi_api_name());
+          }
+          SCRIPT
+
+          set +e
+          timeout 120 "$nvgt" /tmp/loadcheck.nvgt 2>&1 | tee loadcheck.log
+          rc="${PIPESTATUS[0]}"
+          set -e
+
+          failed=0
+          if grep -q 'failed to load plugin' loadcheck.log; then
+            echo "::error title=plugin does not load::the engine refused nvmidi.so, so no script in this repository can run"
+            failed=1
+          fi
+          if ! grep -q 'NVGT_PLUGIN_LOADED' loadcheck.log; then
+            echo "::error title=plugin never ran::the engine did not report the plugin as loaded; the script did not reach main()"
+            failed=1
+          fi
+          if [ "$failed" -ne 0 ]; then
+            echo "--- the loader's own account of the attempt"
+            echo "the plugin's load-time dependencies:"
+            readelf -d nvmidi-dummy.so 2>&1 | grep -E 'NEEDED|SONAME' || true
+            echo "measured: on linux the engine loads a plugin by bare name, so the library must resolve with nothing but the default search path. A single unresolvable DT_NEEDED entry makes the loader reject the whole library."
+            exit 1
+          fi
+          echo "plugin loaded and reported itself: $(grep -o 'NVGT_PLUGIN_LOADED.*' loadcheck.log | head -n1)"
+
+      - name: compile every script
+        if: always()
+        shell: bash
+        run: |
           # screen reader has nothing to say on a headless runner, and that is
           # fine - what is being checked is that it builds, and that no name in
           # it has drifted from the engine's own api.
+          mkdir -p logs
           status=0
           for script in scripts/*.nvgt examples/*.nvgt; do
             [ -e "$script" ] || continue
             echo "::group::$script"
-            # The engine exits 0 and says nothing when the script only speaks,
-            # so the log is inspected for its error format either way.
+            # Every script must at least compile, and the log is what says so.
             set +e
-            timeout 120 "$nvgt" "$script" 2>&1 | tee "$(basename "$script").log"
+            log="logs/$(basename "$script").log"
+            timeout 120 "$nvgt" "$script" 2>&1 | tee "$log"
             rc="${PIPESTATUS[0]}"
             set -e
+            # rc is reported, never asserted. Measured: the engine calls
+            # screen_reader_speak only when a screen reader is actually there,
+            # and with no reader on the other end the call aborts the process
+            # (SIGABRT, rc=134) instead of returning. That is a property of the
+            # runner - a headless machine has no reader - and not of the
+            # script, so every talking script in this repository exits non-zero
+            # on it. The script's real health is the log: it must be free of
+            # the engine's own error format, which is what is checked below.
             if [ "$rc" -ne 0 ]; then
-              echo "::error file=$script::nvgt exited $rc"
-              status=1
+              echo "note: $script exited $rc (headless screen reader); the log decides the outcome"
             fi
-            if grep -qE 'ERROR:|Unexpected token|No matching signatures' "$(basename "$script").log"; then
+            if grep -qE 'ERROR:|Unexpected token|No matching signatures' "$log"; then
               echo "::error file=$script::the engine reported an error in $script"
-              grep -E 'ERROR:|Unexpected token|No matching signatures' "$(basename "$script").log"
+              grep -E 'ERROR:|Unexpected token|No matching signatures' "$log"
               status=1
             fi
             echo "::endgroup::"

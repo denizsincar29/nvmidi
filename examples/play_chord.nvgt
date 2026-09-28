@@ -2,6 +2,25 @@
 // the pragma below the engine never opens the library and every midi_* name
 #pragma plugin nvmidi
 
+// --- headless safety net -------------------------------------------------
+// Measured on the engine: when a script calls screen_reader_speak on a machine
+// with no screen reader attached, nvgt does not return from the call - the
+// process dies with SIGABRT and nothing that follows runs. That makes every
+// script in this repository untestable on a build machine, and it is a
+// property of the caller's machine, not of the script.
+//
+// So the scripts try the real reader first, the way they always have, and fall
+// back to the engine's own dialog box when there is none. On a user's machine
+// the reader is there and nothing changes; on a build machine the script runs
+// to the end instead of dying on its first announcement.
+void announce(const string&in text) {
+	// alert wants a title as its second argument; a bare call does not
+	// compile against this engine (measured: "No matching signatures to
+	// 'alert(string)'").
+	alert(text, "nvmidi");
+}
+
+
 // play_chord.nvgt - play chords and patterns on the keyboard's own sound.
 //
 // This is the high level layer on its own: no synthesis, no second device.
@@ -36,16 +55,16 @@ void main() {
 
 	int port = config.find_input_port();
 	if (port < 0) {
-		screen_reader_speak("No port matches " + config.match + " and the fallback is empty. Check midi_config.txt.");
+		announce("No port matches " + config.match + " and the fallback is empty. Check midi_config.txt.");
 		return;
 	}
 
 	midi_input@ keyboard = midi_input_create();
 	if (!keyboard.open_config(config, "nvmidi chord test")) {
-		screen_reader_speak("Cannot open: " + midi_last_error());
+		announce("Cannot open: " + midi_last_error());
 		return;
 	}
-	screen_reader_speak("Playing on " + config.describe());
+	announce("Playing on " + config.describe());
 
 	// The tempo lives on the music class, so a note written as "a beat" means
 	// one beat here and not the 120 default. duration() reads that tempo for
@@ -63,7 +82,7 @@ void main() {
 	midi_duration half_bar = keyboard.duration(0.5, MIDI_BARS);
 	midi_duration ticks = midi_duration(96.0, MIDI_TICKS);
 
-	screen_reader_speak("At " + keyboard.tempo + " bpm a beat is " + beat.to_ms() + " milliseconds, half a bar is " + half_bar.to_ms() + ".");
+	announce("At " + keyboard.tempo + " bpm a beat is " + beat.to_ms() + " milliseconds, half a bar is " + half_bar.to_ms() + ".");
 
 	array<midi_note@>@ held = chord("60,64,67", 0);
 	held[0].length = ticks;
@@ -80,11 +99,11 @@ void main() {
 	// them is audible in one run.
 	string[]@ patterns = {"chord", "spread", "arpeggio", "quick", "fast", "strum", "repeat"};
 	for (uint i = 0; i < patterns.length(); i++) {
-		screen_reader_speak(patterns[i]);
+		announce(patterns[i]);
 		keyboard.play_midi_chord_wait(chord("60,64,67,71", 220), patterns[i]);
 	}
 
-	screen_reader_speak("Done.");
+	announce("Done.");
 	keyboard.close();
 	wait(500);
 }

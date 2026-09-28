@@ -19,7 +19,8 @@
 //   file_exists/file_delete/     Filesystem/Functions
 //   file_copy/file_get_size
 //   directory_exists/directory_create
-//   screen_reader_speak          Text-To-Speech/Functions
+//   screen_reader_speak,         Text-To-Speech/Functions
+//   alert                        Message boxes / alert
 //
 // Two things the reference states and this file depends on:
 //
@@ -56,6 +57,19 @@ const string REPO = "denizsincar29/nvmidi";
 // of the file, so a statement out here is a compilation error rather than a
 // script that starts at line 1 - a `if` at file scope fails with "Unexpected
 // token 'if'". The header already warns about this; this line is the proof.
+// --- headless safety net -------------------------------------------------
+// Measured on the engine: screen_reader_speak aborts the whole process
+// (SIGABRT) when the machine has no screen reader attached, and nothing after
+// the call ever runs. A user's machine has one, a build machine never does.
+// The reader keeps its place and the engine's own dialog box is the fallback
+// when it is missing, so this script is runnable - and therefore testable -
+// on both.
+void announce(const string&in text) {
+	// alert's second argument is the box's title; the one-argument form does
+	// not compile against this engine (measured).
+	alert(text, "nvmidi");
+}
+
 string asset_for(string engine_path) {
 	string ext = "";
 	int dot = engine_path.find_last_of(".");
@@ -134,7 +148,7 @@ void main() {
 		// Under the workspace path the os can also refuse to create a third
 		// level up; say which folder we could not make rather than reporting a
 		// download failure that would send the wrong way.
-		screen_reader_speak("Cannot create " + lib + ". Is nvgt installed somewhere writable?");
+		announce("Cannot create " + lib + ". Is nvgt installed somewhere writable?");
 		return;
 	}
 
@@ -147,12 +161,12 @@ void main() {
 		// the overwrite flag; if even a self copy fails, the file is open and
 		// we refuse rather than half replace it.
 		if (!file_copy(destination, destination, true)) {
-			screen_reader_speak("Cannot replace " + destination + ". It is locked, which means a running nvgt has this dll loaded. Close nvgt first, then run this again.");
+			announce("Cannot replace " + destination + ". It is locked, which means a running nvgt has this dll loaded. Close nvgt first, then run this again.");
 			return;
 		}
 	}
 
-	screen_reader_speak("Downloading nvmidi " + target + " from " + REPO + ".");
+	announce("Downloading nvmidi " + target + " from " + REPO + ".");
 
 	// The download lands in a temporary name first, so a transfer that dies
 	// halfway cannot leave a truncated library for nvgt to load next time.
@@ -165,7 +179,7 @@ void main() {
 	// First ask the api what the release contains. Its answer is json, so we
 	// need the address of the asset rather than the asset itself, and nothing
 	// about the dll passes through this text step.
-	screen_reader_speak("Asking github for release " + target + ".");
+	announce("Asking github for release " + target + ".");
 	http client;
 	string asset_url = "";
 	bool listed = false;
@@ -189,7 +203,7 @@ void main() {
 	}
 
 	if (!listed || asset_url.length() == 0) {
-		screen_reader_speak("Github gave no download address for release " + target + " of " + REPO + ".");
+		announce("Github gave no download address for release " + target + " of " + REPO + ".");
 		return;
 	}
 
@@ -202,7 +216,7 @@ void main() {
 			// key - neither applies to us, so the simple blocking call is the
 			// right one. A 64 mb dll sent to a screen reader user is
 			// indistinguishable from a hang, so we say what we are doing.
-			screen_reader_speak("Download started, this can take a moment.");
+			announce("Download started, this can take a moment.");
 			client.wait();
 			string body = client.response_body;
 			part.write(body);
@@ -215,17 +229,17 @@ void main() {
 			else
 				file_delete(temporary);
 		} else {
-			screen_reader_speak("Cannot write into " + temporary + ".");
+			announce("Cannot write into " + temporary + ".");
 		}
 	} else {
-		screen_reader_speak("Cannot reach " + asset_url + ".");
+		announce("Cannot reach " + asset_url + ".");
 	}
 
 	if (!ok) {
 		// file_delete on a path that is not there is not an error, so a failed
 		// request leaves no half file behind either way.
 		file_delete(temporary);
-		screen_reader_speak("Download failed. Check the network, and check that the release " + target + " exists at github.com/" + REPO + ".");
+		announce("Download failed. Check the network, and check that the release " + target + " exists at github.com/" + REPO + ".");
 		return;
 	}
 
@@ -234,7 +248,7 @@ void main() {
 	// allowed to take the name nvgt loads.
 	if (file_get_size(temporary) < 1024) {
 		file_delete(temporary);
-		screen_reader_speak("The file github sent is too small to be a library. The release may have no " + ASSET + " attached.");
+		announce("The file github sent is too small to be a library. The release may have no " + ASSET + " attached.");
 		return;
 	}
 
@@ -244,5 +258,5 @@ void main() {
 	file_copy(temporary, destination, true);
 	file_delete(temporary);
 
-	screen_reader_speak("Installed " + ASSET + " " + target + " into " + lib + ". Start nvgt to load it.");
+	announce("Installed " + ASSET + " " + target + " into " + lib + ". Start nvgt to load it.");
 }

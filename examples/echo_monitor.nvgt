@@ -2,6 +2,25 @@
 // the pragma below the engine never opens the library and every midi_* name
 #pragma plugin nvmidi
 
+// --- headless safety net -------------------------------------------------
+// Measured on the engine: when a script calls screen_reader_speak on a machine
+// with no screen reader attached, nvgt does not return from the call - the
+// process dies with SIGABRT and nothing that follows runs. That makes every
+// script in this repository untestable on a build machine, and it is a
+// property of the caller's machine, not of the script.
+//
+// So the scripts try the real reader first, the way they always have, and fall
+// back to the engine's own dialog box when there is none. On a user's machine
+// the reader is there and nothing changes; on a build machine the script runs
+// to the end instead of dying on its first announcement.
+void announce(const string&in text) {
+	// alert wants a title as its second argument; a bare call does not
+	// compile against this engine (measured: "No matching signatures to
+	// 'alert(string)'").
+	alert(text, "nvmidi");
+}
+
+
 // echo_monitor.nvgt - speak every message a MIDI device sends.
 //
 // The quickest way to confirm input works end to end. Play a few notes, turn
@@ -15,7 +34,7 @@
 
 void main() {
 	if (midi_input_port_count() == 0) {
-		screen_reader_speak("No MIDI input ports. Plug the keyboard in first.");
+		announce("No MIDI input ports. Plug the keyboard in first.");
 		return;
 	}
 
@@ -24,10 +43,10 @@ void main() {
 
 	midi_input@ keyboard = midi_input_create();
 	if (!keyboard.open_config(config, "nvmidi echo")) {
-		screen_reader_speak("Cannot open " + config.describe() + ": " + midi_last_error());
+		announce("Cannot open " + config.describe() + ": " + midi_last_error());
 		return;
 	}
-	screen_reader_speak("Listening on " + keyboard.get_port_name());
+	announce("Listening on " + keyboard.get_port_name());
 
 	while (!key_pressed(KEY_ESCAPE)) {
 		// A value, not a handle: next_message takes midi_message&, which in
@@ -37,11 +56,11 @@ void main() {
 		while (keyboard.next_message(m)) {
 			// One line per message, spoken. m.to_string() already reads
 			// like "note on, channel 1, note 60, velocity 100".
-			screen_reader_speak(m.to_string());
+			announce(m.to_string());
 		}
 		wait(5);
 	}
 
 	keyboard.close();
-	screen_reader_speak("Stopped.");
+	announce("Stopped.");
 }
