@@ -1425,6 +1425,8 @@ struct registration {
 	int unexpected;
 	registration(asIScriptEngine* e) : engine(e), first_failure(0), first_failure_line(0), unexpected(0) {}
 	void check(int result, const char* call, int line) {
+		fprintf(stderr, "nvmidi trace: check(%d) %s line %d\n", result, call, line);
+		fflush(stderr);
 		if (result >= 0) return;
 		// This vendored header exposes no error text for a rejected
 		// registration (no GetLastError, no context in hand at load time), so
@@ -1453,6 +1455,7 @@ struct registration {
 
 
 void register_midi_message(asIScriptEngine* engine, registration* reg) {
+	fprintf(stderr, "nvmidi trace: ENTER register_midi_message\n"); fflush(stderr);
 	reg->check( engine->RegisterObjectType("midi_message", sizeof(midi_message), asOBJ_VALUE | asOBJ_POD | asGetTypeTraits<midi_message>()), "RegisterObjectType", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_message", "uint8 status", asOFFSET(midi_message, status)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_message", "uint8 data1", asOFFSET(midi_message, data1)), "RegisterObjectProperty", __LINE__);
@@ -1461,9 +1464,11 @@ void register_midi_message(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectProperty("midi_message", "double timestamp", asOFFSET(midi_message, timestamp)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_message", "string opImplConv() const", asMETHOD(midi_message, to_string), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_message", "string to_string() const", asMETHOD(midi_message, to_string), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	fprintf(stderr, "nvmidi trace: EXIT register_midi_message\n"); fflush(stderr);
 }
 
 void register_midi_input(asIScriptEngine* engine, registration* reg) {
+	fprintf(stderr, "nvmidi trace: ENTER register_midi_input\n"); fflush(stderr);
 	reg->check( engine->RegisterObjectType("midi_input", 0, asOBJ_REF | asOBJ_NOCOUNT), "RegisterObjectType", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool open(uint port, const string&in name = \"nvmidi\")", asMETHOD(midi_input, open), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool open_by_name(const string&in substring, const string&in name = \"nvmidi\")", asMETHOD(midi_input, open_by_name), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
@@ -1491,9 +1496,11 @@ void register_midi_input(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_sequence(midi_note@[]@ notes)", asMETHOD(midi_input, play_sequence), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "midi_duration duration(double amount, int unit) const", asMETHOD(midi_input, duration), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_input", "double tempo", asOFFSET(midi_input, tempo)), "RegisterObjectProperty", __LINE__);
+	fprintf(stderr, "nvmidi trace: EXIT register_midi_input\n"); fflush(stderr);
 }
 
 void register_midi_output(asIScriptEngine* engine, registration* reg) {
+	fprintf(stderr, "nvmidi trace: ENTER register_midi_output\n"); fflush(stderr);
 	reg->check( engine->RegisterObjectType("midi_output", 0, asOBJ_REF | asOBJ_NOCOUNT), "RegisterObjectType", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool open(uint port, const string&in name = \"nvmidi\")", asMETHOD(midi_output, open), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool open_by_name(const string&in substring, const string&in name = \"nvmidi\")", asMETHOD(midi_output, open_by_name), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
@@ -1524,9 +1531,11 @@ void register_midi_output(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectMethod("midi_output", "void reset()", asMETHOD(midi_output, reset), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "midi_duration duration(double amount, int unit) const", asMETHOD(midi_output, duration), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_output", "double tempo", asOFFSET(midi_output, tempo)), "RegisterObjectProperty", __LINE__);
+	fprintf(stderr, "nvmidi trace: EXIT register_midi_output\n"); fflush(stderr);
 }
 
 void register_midi_note(asIScriptEngine* engine, registration* reg) {
+	fprintf(stderr, "nvmidi trace: ENTER register_midi_note\n"); fflush(stderr);
 	// A value type, and it has to stay one: a handle can only be formed for a
 	// type flagged asOBJ_REF, asOBJ_TEMPLATE_SUBTYPE, asOBJ_ASHANDLE or
 	// asOBJ_FUNCDEF (asCDataType::MakeHandle in the SDK), so every midi_duration
@@ -1585,9 +1594,11 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterGlobalProperty("const int MUSIC_BEATS_100", (void*)&g_music_beats_100), "RegisterGlobalProperty", __LINE__);
 	reg->check( engine->RegisterGlobalProperty("const int MUSIC_BEATS_120", (void*)&g_music_beats_120), "RegisterGlobalProperty", __LINE__);
 	reg->check( engine->RegisterGlobalProperty("const int MUSIC_BEATS_140", (void*)&g_music_beats_140), "RegisterGlobalProperty", __LINE__);
+	fprintf(stderr, "nvmidi trace: EXIT register_midi_note\n"); fflush(stderr);
 }
 
 void register_midi_config(asIScriptEngine* engine, registration* reg) {
+	fprintf(stderr, "nvmidi trace: ENTER register_midi_config\n"); fflush(stderr);
 	reg->check( engine->RegisterObjectType("midi_config", 0, asOBJ_REF | asOBJ_NOCOUNT), "RegisterObjectType", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_config", "string match", asOFFSET(midi_config, match)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_config", "int port", asOFFSET(midi_config, port)), "RegisterObjectProperty", __LINE__);
@@ -1601,9 +1612,11 @@ void register_midi_config(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterGlobalFunction("midi_config@ midi_config_create()", asFUNCTION(midi_config_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("int midi_find_input_port(const string&in substring)", asFUNCTION(midi_find_input_port), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("int midi_find_output_port(const string&in substring)", asFUNCTION(midi_find_output_port), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	fprintf(stderr, "nvmidi trace: EXIT register_midi_config\n"); fflush(stderr);
 }
 
 void register_midi_globals(asIScriptEngine* engine, registration* reg) {
+	fprintf(stderr, "nvmidi trace: ENTER register_midi_globals\n"); fflush(stderr);
 	reg->check( engine->RegisterGlobalFunction("uint midi_input_port_count()", asFUNCTION(midi_input_port_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("uint midi_output_port_count()", asFUNCTION(midi_output_port_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("string midi_input_port_name(uint port)", asFUNCTION(midi_input_port_name), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
@@ -1615,6 +1628,7 @@ void register_midi_globals(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterGlobalFunction("string midi_last_error()", asFUNCTION(midi_last_error), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_input@ midi_input_create()", asFUNCTION(midi_input_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_output@ midi_output_create()", asFUNCTION(midi_output_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	fprintf(stderr, "nvmidi trace: EXIT register_midi_globals\n"); fflush(stderr);
 }
 
 void register_nvmidi(asIScriptEngine* engine) {
