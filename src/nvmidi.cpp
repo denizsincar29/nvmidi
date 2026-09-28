@@ -23,6 +23,12 @@
 #include <fstream>
 #include <sstream>
 
+#if defined(_WIN32)
+// GetTickCount64 lives here. MinGW's windows.h does not pull it in through
+// any of the other headers this file uses, so it has to be asked for.
+#include <windows.h>
+#endif
+
 namespace {
 
 // The unit constants a script sees, so MIDI_BEATS and friends are readable
@@ -1495,7 +1501,11 @@ void register_midi_output(asIScriptEngine* engine) {
 }
 
 void register_midi_note(asIScriptEngine* engine) {
-	engine->RegisterObjectType("midi_duration", sizeof(midi_duration), asOBJ_VALUE | asOBJ_POD | asGetTypeTraits<midi_duration>());
+	// Deliberately not asOBJ_POD: a POD value type has no handle, and the
+	// factories below hand the script a midi_duration@ handle. The traits flag
+	// is what asOBJ_POD would have added, so a script still passes a duration
+	// by value into a parameter the same way.
+	engine->RegisterObjectType("midi_duration", sizeof(midi_duration), asOBJ_VALUE | asGetTypeTraits<midi_duration>());
 	engine->RegisterObjectProperty("midi_duration", "double amount", asOFFSET(midi_duration, amount));
 	engine->RegisterObjectProperty("midi_duration", "int unit", asOFFSET(midi_duration, unit));
 	engine->RegisterObjectProperty("midi_duration", "double tempo", asOFFSET(midi_duration, tempo));
@@ -1585,6 +1595,7 @@ void register_nvmidi(asIScriptEngine* engine) {
 
 midi_input* midi_input_create() { return new midi_input(); }
 midi_output* midi_output_create() { return new midi_output(); }
+midi_config* midi_config_create() { return new midi_config(); }
 
 std::string midi_last_error() { return g_last_error; }
 
