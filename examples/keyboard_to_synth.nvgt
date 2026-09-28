@@ -1,0 +1,66 @@
+// keyboard_to_synth.nvgt - play a keyboard plugged into the computer through
+// a synth running on the same computer.
+//
+// Reads note messages from one port and forwards them to another, transposed
+// and with the velocity scaled. Shows both directions working at once.
+//
+// Press escape to stop. On the way out every note is released, so nothing is
+// left sounding.
+
+midi_input@ in;
+midi_output@ out;
+
+void panic() {
+	out.all_notes_off();
+	in.close();
+	out.close();
+	screen_reader_speak("Stopped.");
+}
+
+void main() {
+	if (midi_input_port_count() == 0 || midi_output_port_count() == 0) {
+		screen_reader_speak("Need at least one input and one output port.");
+		return;
+	}
+
+	in = midi_input_create();
+	out = midi_output_create();
+
+	if (!in.open(0)) {
+		screen_reader_speak("Input: " + midi_last_error());
+		return;
+	}
+	if (!out.open(0)) {
+		screen_reader_speak("Output: " + midi_last_error());
+		in.close();
+		return;
+	}
+	screen_reader_speak("From " + in.get_port_name() + " to " + out.get_port_name());
+
+	while (!key_pressed(KEY_ESCAPE)) {
+		midi_message@ m;
+		while (in.next_message(m)) {
+			uchar command = m.status & 0xf0;
+
+			if (command == 0x90 && m.data2 > 0) {
+				// Note on. Transpose up an octave, but keep it in range.
+				int note = m.data1 + 12;
+				if (note > 127) note -= 12;
+				out.send_note_on(m.channel, note, m.data2);
+			} else if (command == 0x80 || (command == 0x90 && m.data2 == 0)) {
+				// Note off, including the note-on-with-velocity-zero form
+				// many keyboards use.
+				int note = m.data1 + 12;
+				if (note > 127) note -= 12;
+				out.send_note_off(m.channel, note, m.data2);
+			} else if (command == 0xe0) {
+				// Pitch bend passes through unchanged.
+				out.send(m.status, m.data1, m.data2);
+			}
+			// Everything else is dropped. Add cases here as you need them.
+		}
+		wait(5);
+	}
+
+	panic();
+}

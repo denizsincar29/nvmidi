@@ -1,0 +1,35 @@
+// echo_monitor.nvgt - speak every message a MIDI device sends.
+//
+// The quickest way to confirm input works end to end. Play a few notes, turn
+// a knob, move the pitch wheel, and listen to what arrives.
+//
+// Press escape to stop.
+
+midi_input@ keyboard;
+
+void main() {
+	if (midi_input_port_count() == 0) {
+		screen_reader_speak("No MIDI input ports. Plug the keyboard in first.");
+		return;
+	}
+
+	keyboard = midi_input_create();
+	if (!keyboard.open(0)) {
+		screen_reader_speak("Could not open port 0: " + midi_last_error());
+		return;
+	}
+	screen_reader_speak("Listening on " + keyboard.get_port_name());
+
+	while (!key_pressed(KEY_ESCAPE)) {
+		midi_message@ m;
+		while (keyboard.next_message(m)) {
+			// One line per message, spoken. m.to_string() already reads
+			// like "note on, channel 1, note 60, velocity 100".
+			screen_reader_speak(m.to_string());
+		}
+		wait(5);
+	}
+
+	keyboard.close();
+	screen_reader_speak("Stopped.");
+}

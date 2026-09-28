@@ -1,0 +1,8 @@
+nvmidi.so
+nvmidi.dll
+*.o
+*.so
+*.dll
+*.a
+zig-cache/
+.zig-cache/
