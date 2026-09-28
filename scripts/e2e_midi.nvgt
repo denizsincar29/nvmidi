@@ -60,6 +60,13 @@ void note(const string&in what) {
 	print("E2E_NOTE " + what);
 }
 
+// A machine with no midi bus at all. This is a different outcome from a
+// plugin that opens a port and then hears nothing from it, and the caller has
+// to be able to tell the two apart: the first is the runner's kernel, the
+// second is a bug. Only the listener below knows which has happened, so it
+// says it out loud before stopping, and the ci job reads that line.
+bool have_bus = true;
+
 // --- 1. the library --------------------------------------------------------
 
 void main() {
@@ -100,17 +107,29 @@ void main() {
 	// This is measured behaviour of the vendored copy, not a guess, and it is
 	// the same trap a user falls into with a real keyboard - open the input
 	// first, then plug the instrument in, or reopen it after doing so.
-	midi_input@ reader = nvmidi_input_create();
-	reader.set_virtual_port(true);
+	midi_input@ reader = midi_input_create();
 	if (!reader.open_by_name("nvmidi e2e", "nvmidi e2e reader")) {
-		fail("could not open a reader for the test port: " + midi_last_error());
+		// Two very different reasons live behind this one false, and the
+		// difference is measurable rather than guessable: when the machine has
+		// no midi bus at all, it also lists no ports. On such a machine the
+		// virtual-port half of this test is not a thing that can be asked for,
+		// so it is reported as a fallback - the machine's shape, not the
+		// plugin's behaviour - and the caller reads E2E_NO_BUS rather than a
+		// failure the plugin did not commit.
+		if (outs == 0 && ins == 0) {
+			have_bus = false;
+			print("E2E_NO_BUS " + midi_last_error());
+			note("this machine has no midi bus: no ports exist and none can be published, so the port part of this test cannot run here");
+		} else {
+			fail("could not open a reader for the test port: " + midi_last_error());
+		}
 		print("E2E_END failures=" + failures);
 		return;
 	}
 	ok("READER OPEN " + reader.get_port_name());
 
 	// --- 4. publish a port of this process's own ----------------------------
-	midi_output@ vport = nvmidi_output_create();
+	midi_output@ vport = midi_output_create();
 	vport.set_virtual_port(true);
 	if (!vport.open(0, "nvmidi e2e")) {
 		fail("could not create a virtual output port: " + midi_last_error());
@@ -158,7 +177,7 @@ void main() {
 	// at, so this needs the same port this process just published: the plugin
 	// plays back through itself. That is why the port above is the test's
 	// subject and its destination at once.
-	midi_input@ instrument = nvmidi_input_create();
+	midi_input@ instrument = midi_input_create();
 	if (!instrument.open_by_name("nvmidi e2e", "nvmidi e2e playback")) {
 		fail("cannot open the test port for playing: " + midi_last_error());
 	} else {
@@ -168,6 +187,9 @@ void main() {
 		string[]@ pitches = {"60", "64", "67"};
 		for (uint i = 0; i < pitches.length(); i++) {
 			midi_note@ n = nvmidi_note_create(parse_int(pitches[i]));
+			// velocity and length are the only two fields this test needs to see
+			// travel: the note factory is a separate registration from the input
+			// and output ones, so it is exercised here rather than assumed.
 			n.velocity = 100;
 			n.length = midi_duration(60, MIDI_MS);
 			chord.insert_last(@n);

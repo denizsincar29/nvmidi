@@ -12,3 +12,12 @@ logs/
 *.log
 *.core
 core
+
+# Python bytecode left by running the ci helpers locally
+__pycache__/
+*.pyc
+
+# Work in progress towards an alsa backend that reaches the sequencer
+# through dlopen rather than a link-time dependency. Not shipped, and not
+# something the repository should carry until it is.
+scratch/
