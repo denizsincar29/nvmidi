@@ -1624,14 +1624,19 @@ void register_nvmidi(asIScriptEngine* engine) {
 	g_registration_engine = engine;
 	registration reg(engine);
 	register_midi_message(engine, &reg);
-	// The note, duration and config types first: the port classes name them in
-	// their own method declarations, so the engine has to know them by then.
+	// Every type a later declaration names has to exist first. The port
+	// classes' open_config takes a midi_config@, and their playing methods
+	// take midi_note and midi_duration, so all three come before them. The
+	// other way round - which is how this was written - the engine refuses
+	// open_config with "Identifier 'midi_config' is not a data type" and the
+	// refusal aborts the rest of the function, taking the whole port class
+	// with it.
 	register_midi_note(engine, &reg);
-	// Both port types are declared before the config functions, because the
-	// free functions in there take and return them by handle.
+	register_midi_config(engine, &reg);
 	register_midi_input(engine, &reg);
 	register_midi_output(engine, &reg);
-	register_midi_config(engine, &reg);
+	// The free search functions live in the config section and take a plain
+	// string, so they follow whatever needs them.
 	register_midi_globals(engine, &reg);
 }
 
