@@ -46,15 +46,35 @@ NVGT source tree before rebuilding.
 
 ## Installing
 
-Put the built library where NVGT looks for plugins — the `lib/` directory of
-your NVGT installation. NVGT loads a plugin by bare name
-(`SDL_LoadObject("nvmidi.dll")`), so the operating system's search path
-decides where it is found, and that path is the NVGT install directory and its
-`lib/` subdirectory — never the folder the script happens to sit in. Restart
-NVGT; the functions below become available to every script.
+Put the built library in the `lib/` directory of your NVGT installation, and
+ask for it by name from the script that needs it:
 
-`scripts/get_nvmidi.nvgt` does this for you: it downloads the newest release
-and installs it into `lib/` next to the running NVGT.
+```angelscript
+#pragma plugin nvmidi
+```
+
+The pragma is not decoration — it is the only thing that loads a plugin. The
+engine reads the script's pragmas before it compiles the script, and loads
+exactly the names it finds there (`CompileScript` and `PragmaCallback` in
+`src/nvgt_angelscript.cpp`); a plugin that nothing asks for is never opened,
+however carefully it is placed. Without the line every `midi_*` name fails to
+compile with `No matching symbol`, which reads like a broken library rather
+than a missing request.
+
+Loading is per script: each `.nvgt` that uses these functions needs its own
+`#pragma plugin nvmidi` line, at the top of the file.
+
+The library itself is found by the operating system, because the engine asks
+for it by bare name — `SDL_LoadObject("nvmidi.dll")`. On Windows NVGT sets
+that search path to its own `lib/` folder explicitly (`SetDllDirectoryW` in
+`src/nvgt.cpp`); on Linux nothing adds `lib/` to the search path unless the
+engine was linked with an rpath for it, so a copy beside the engine binary is
+the placement that always works. Either way it is the engine's install
+directory, never the folder the script happens to sit in.
+
+`scripts/get_nvmidi.nvgt` does the download and installation for you: it
+fetches the newest release and installs it into `lib/` next to the running
+NVGT.
 
 ## Reading a MIDI keyboard
 
@@ -321,8 +341,11 @@ keyboard's own sound engine).
 ## Installing the dll
 
 `scripts/get_nvmidi.nvgt` fetches `nvmidi.dll` from this repository's releases
-and installs it into the `lib/` directory of the running NVGT — the folder
-NVGT actually searches for plugins:
+and installs it into the `lib/` directory of the running NVGT — one of the
+folders NVGT searches for plugins. The script itself carries no
+`#pragma plugin` line, because it calls none of the plugin's functions; it only
+puts the file in place. The script that then uses MIDI is the one that needs
+the pragma:
 
     nvgt scripts/get_nvmidi.nvgt           newest release
     nvgt scripts/get_nvmidi.nvgt v0.7.0    a named release

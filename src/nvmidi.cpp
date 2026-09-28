@@ -62,6 +62,9 @@ void clear_error() { g_last_error.clear(); }
 // The engine register_nvmidi() was handed. wait_until() needs it to call back
 // into the script, and it is the only global the plugin keeps.
 asIScriptEngine* g_engine = nullptr;
+// The same engine, kept for the registration reporter below: it runs before
+// g_engine is assigned, so it cannot borrow that one.
+asIScriptEngine* g_registration_engine = nullptr;
 
 // Returns the low nibble of a status byte, i.e. the MIDI channel 1..16.
 int channel_of(unsigned char status) { return (status & 0x0f) + 1; }
@@ -1398,181 +1401,227 @@ int midi_note_number(const std::string& name) {
 // Angelscript registration
 // ---------------------------------------------------------------------------
 
-void register_midi_message(asIScriptEngine* engine) {
-	engine->RegisterObjectType("midi_message", sizeof(midi_message), asOBJ_VALUE | asOBJ_POD | asGetTypeTraits<midi_message>());
-	engine->RegisterObjectProperty("midi_message", "uint8 status", asOFFSET(midi_message, status));
-	engine->RegisterObjectProperty("midi_message", "uint8 data1", asOFFSET(midi_message, data1));
-	engine->RegisterObjectProperty("midi_message", "uint8 data2", asOFFSET(midi_message, data2));
-	engine->RegisterObjectProperty("midi_message", "int channel", asOFFSET(midi_message, channel));
-	engine->RegisterObjectProperty("midi_message", "double timestamp", asOFFSET(midi_message, timestamp));
-	engine->RegisterObjectMethod("midi_message", "string opImplConv() const", asMETHOD(midi_message, to_string), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_message", "string to_string() const", asMETHOD(midi_message, to_string), asCALL_THISCALL);
+// Every call below returns an AngelScript error code, and the ones that fail
+// are the ones nothing complains about: an asIScriptEngine refuses a
+// registration it does not like and returns a negative number, the plugin
+// still loads, and the script that then says "Identifier 'midi_input' is not a
+// data type" points at itself instead of at the call that was rejected. So the
+// first failure is recorded on the plugin's own error string - the one
+// midi_last_error() already reports - and the first *unexpected* one is said
+// out loud, which is the only way it reaches a runner's log (the reporting
+// half of the plugin entry point compiles out when NVGT_PLUGIN_INCLUDE is
+// defined, so nothing here can call report_plugin_error()).
+struct registration {
+	asIScriptEngine* engine;
+	int first_failure;
+	int first_failure_line;
+	std::string first_failure_text;
+	int unexpected;
+	registration(asIScriptEngine* e) : engine(e), first_failure(0), first_failure_line(0), unexpected(0) {}
+	void check(int result, const char* call, int line) {
+		if (result >= 0) return;
+		// This vendored header exposes no error text for a rejected
+		// registration (no GetLastError, no context in hand at load time), so
+		// the code itself is the message, next to the call that produced it.
+		std::string text = "code " + std::to_string(result);
+		if (first_failure == 0) {
+			first_failure = result;
+			first_failure_line = line;
+			first_failure_text = std::string(call) + ": " + text;
+			set_error("plugin registration " + first_failure_text);
+		}
+		// asALREADY_REGISTERED means the engine already knew the name, which
+		// happens when a second copy of this plugin is loaded and is not by
+		// itself a problem: the type under that name is this one. Anything else
+		// is, so it is the one that gets said out loud.
+		if (result != asALREADY_REGISTERED && unexpected == 0) {
+			unexpected = result;
+			fprintf(stderr, "nvmidi: registration failed at src/nvmidi.cpp:%d: %s\n", line, first_failure_text.c_str());
+			fflush(stderr);
+		}
+	}
+};
+
+
+void register_midi_message(asIScriptEngine* engine, registration* reg) {
+	reg->check( engine->RegisterObjectType("midi_message", sizeof(midi_message), asOBJ_VALUE | asOBJ_POD | asGetTypeTraits<midi_message>()), "RegisterObjectType", __LINE__);
+	reg->check( engine->RegisterObjectProperty("midi_message", "uint8 status", asOFFSET(midi_message, status)), "RegisterObjectProperty", __LINE__);
+	reg->check( engine->RegisterObjectProperty("midi_message", "uint8 data1", asOFFSET(midi_message, data1)), "RegisterObjectProperty", __LINE__);
+	reg->check( engine->RegisterObjectProperty("midi_message", "uint8 data2", asOFFSET(midi_message, data2)), "RegisterObjectProperty", __LINE__);
+	reg->check( engine->RegisterObjectProperty("midi_message", "int channel", asOFFSET(midi_message, channel)), "RegisterObjectProperty", __LINE__);
+	reg->check( engine->RegisterObjectProperty("midi_message", "double timestamp", asOFFSET(midi_message, timestamp)), "RegisterObjectProperty", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_message", "string opImplConv() const", asMETHOD(midi_message, to_string), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_message", "string to_string() const", asMETHOD(midi_message, to_string), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 }
 
-void register_midi_input(asIScriptEngine* engine) {
-	engine->RegisterObjectType("midi_input", 0, asOBJ_REF | asOBJ_NOCOUNT);
-	engine->RegisterObjectMethod("midi_input", "bool open(uint port, const string&in name = \"nvmidi\")", asMETHOD(midi_input, open), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "bool open_by_name(const string&in substring, const string&in name = \"nvmidi\")", asMETHOD(midi_input, open_by_name), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "bool open_config(midi_config@ config, const string&in name = \"nvmidi\")", asMETHOD(midi_input, open_config), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "bool play_chord(midi_note@[]@ notes)", asMETHOD(midi_input, play_chord), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "bool play_chord_wait(midi_note@[]@ notes)", asMETHOD(midi_input, play_chord_wait), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "bool play_note(const midi_note&in note)", asMETHOD(midi_input, play_note), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "bool play_note_wait(const midi_note&in note)", asMETHOD(midi_input, play_note_wait), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "uint stop_all_notes()", asMETHOD(midi_input, stop_all_notes), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "uint get_active_notes() const", asMETHOD(midi_input, get_active_notes), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "void close()", asMETHOD(midi_input, close), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "bool is_open() const", asMETHOD(midi_input, is_open), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "int get_port() const", asMETHOD(midi_input, get_port), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "string get_port_name() const", asMETHOD(midi_input, get_port_name), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "bool has_message() const", asMETHOD(midi_input, has_message), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "uint get_pending() const", asMETHOD(midi_input, get_pending), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "bool next_message(midi_message&out) const", asMETHOD(midi_input, next_message), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "void clear()", asMETHOD(midi_input, clear), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "void set_ignore_sysex(bool)", asMETHOD(midi_input, set_ignore_sysex), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "bool get_ignore_sysex() const", asMETHOD(midi_input, get_ignore_sysex), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "void set_ignore_timing(bool)", asMETHOD(midi_input, set_ignore_timing), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "bool get_ignore_timing() const", asMETHOD(midi_input, get_ignore_timing), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "uint get_message_queue_size() const", asMETHOD(midi_input, get_pending), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "bool play_midi_chord(midi_note@[]@ notes, const string&in pattern)", asMETHOD(midi_input, play_midi_chord), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "bool play_midi_chord_wait(midi_note@[]@ notes, const string&in pattern)", asMETHOD(midi_input, play_midi_chord_wait), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "bool play_sequence(midi_note@[]@ notes)", asMETHOD(midi_input, play_sequence), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_input", "midi_duration duration(double amount, int unit) const", asMETHOD(midi_input, duration), asCALL_THISCALL);
-	engine->RegisterObjectProperty("midi_input", "double tempo", asOFFSET(midi_input, tempo));
+void register_midi_input(asIScriptEngine* engine, registration* reg) {
+	reg->check( engine->RegisterObjectType("midi_input", 0, asOBJ_REF | asOBJ_NOCOUNT), "RegisterObjectType", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool open(uint port, const string&in name = \"nvmidi\")", asMETHOD(midi_input, open), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool open_by_name(const string&in substring, const string&in name = \"nvmidi\")", asMETHOD(midi_input, open_by_name), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool open_config(midi_config@ config, const string&in name = \"nvmidi\")", asMETHOD(midi_input, open_config), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_chord(midi_note@[]@ notes)", asMETHOD(midi_input, play_chord), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_chord_wait(midi_note@[]@ notes)", asMETHOD(midi_input, play_chord_wait), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_note(const midi_note&in note)", asMETHOD(midi_input, play_note), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_note_wait(const midi_note&in note)", asMETHOD(midi_input, play_note_wait), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "uint stop_all_notes()", asMETHOD(midi_input, stop_all_notes), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "uint get_active_notes() const", asMETHOD(midi_input, get_active_notes), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "void close()", asMETHOD(midi_input, close), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool is_open() const", asMETHOD(midi_input, is_open), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "int get_port() const", asMETHOD(midi_input, get_port), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "string get_port_name() const", asMETHOD(midi_input, get_port_name), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool has_message() const", asMETHOD(midi_input, has_message), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "uint get_pending() const", asMETHOD(midi_input, get_pending), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool next_message(midi_message&out) const", asMETHOD(midi_input, next_message), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "void clear()", asMETHOD(midi_input, clear), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "void set_ignore_sysex(bool)", asMETHOD(midi_input, set_ignore_sysex), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool get_ignore_sysex() const", asMETHOD(midi_input, get_ignore_sysex), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "void set_ignore_timing(bool)", asMETHOD(midi_input, set_ignore_timing), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool get_ignore_timing() const", asMETHOD(midi_input, get_ignore_timing), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "uint get_message_queue_size() const", asMETHOD(midi_input, get_pending), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_midi_chord(midi_note@[]@ notes, const string&in pattern)", asMETHOD(midi_input, play_midi_chord), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_midi_chord_wait(midi_note@[]@ notes, const string&in pattern)", asMETHOD(midi_input, play_midi_chord_wait), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_sequence(midi_note@[]@ notes)", asMETHOD(midi_input, play_sequence), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "midi_duration duration(double amount, int unit) const", asMETHOD(midi_input, duration), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectProperty("midi_input", "double tempo", asOFFSET(midi_input, tempo)), "RegisterObjectProperty", __LINE__);
 }
 
-void register_midi_output(asIScriptEngine* engine) {
-	engine->RegisterObjectType("midi_output", 0, asOBJ_REF | asOBJ_NOCOUNT);
-	engine->RegisterObjectMethod("midi_output", "bool open(uint port, const string&in name = \"nvmidi\")", asMETHOD(midi_output, open), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "bool open_by_name(const string&in substring, const string&in name = \"nvmidi\")", asMETHOD(midi_output, open_by_name), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "bool open_config(midi_config@ config, const string&in name = \"nvmidi\")", asMETHOD(midi_output, open_config), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "bool play_chord(midi_note@[]@ notes)", asMETHOD(midi_output, play_chord), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "bool play_chord_wait(midi_note@[]@ notes)", asMETHOD(midi_output, play_chord_wait), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "bool play_midi_chord(midi_note@[]@ notes, const string&in pattern)", asMETHOD(midi_output, play_midi_chord), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "bool play_midi_chord_wait(midi_note@[]@ notes, const string&in pattern)", asMETHOD(midi_output, play_midi_chord_wait), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "bool play_note(const midi_note&in note)", asMETHOD(midi_output, play_note), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "bool play_note_wait(const midi_note&in note)", asMETHOD(midi_output, play_note_wait), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "uint stop_all_notes()", asMETHOD(midi_output, stop_all_notes), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "uint get_active_notes() const", asMETHOD(midi_output, get_active_notes), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "void close()", asMETHOD(midi_output, close), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "bool is_open() const", asMETHOD(midi_output, is_open), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "int get_port() const", asMETHOD(midi_output, get_port), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "string get_port_name() const", asMETHOD(midi_output, get_port_name), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "bool send(uint status, uint data1, uint data2)", asMETHOD(midi_output, send), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "bool send_packed(uint packed)", asMETHOD(midi_output, send_packed), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "void send_note_on(uint channel, uint note, uint velocity)", asMETHOD(midi_output, send_note_on), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "void send_note_off(uint channel, uint note, uint velocity = 0)", asMETHOD(midi_output, send_note_off), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "void send_control_change(uint channel, uint controller, uint value)", asMETHOD(midi_output, send_control_change), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "void send_program_change(uint channel, uint program)", asMETHOD(midi_output, send_program_change), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "void send_pitch_bend(uint channel, uint value)", asMETHOD(midi_output, send_pitch_bend), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "void send_aftertouch(uint channel, uint note, uint pressure)", asMETHOD(midi_output, send_aftertouch), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "void send_channel_pressure(uint channel, uint pressure)", asMETHOD(midi_output, send_channel_pressure), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "void send_sysex(const string&in data)", asMETHOD(midi_output, send_sysex), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "void all_notes_off()", asMETHOD(midi_output, all_notes_off), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "void reset()", asMETHOD(midi_output, reset), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_output", "midi_duration duration(double amount, int unit) const", asMETHOD(midi_output, duration), asCALL_THISCALL);
-	engine->RegisterObjectProperty("midi_output", "double tempo", asOFFSET(midi_output, tempo));
+void register_midi_output(asIScriptEngine* engine, registration* reg) {
+	reg->check( engine->RegisterObjectType("midi_output", 0, asOBJ_REF | asOBJ_NOCOUNT), "RegisterObjectType", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "bool open(uint port, const string&in name = \"nvmidi\")", asMETHOD(midi_output, open), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "bool open_by_name(const string&in substring, const string&in name = \"nvmidi\")", asMETHOD(midi_output, open_by_name), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "bool open_config(midi_config@ config, const string&in name = \"nvmidi\")", asMETHOD(midi_output, open_config), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_chord(midi_note@[]@ notes)", asMETHOD(midi_output, play_chord), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_chord_wait(midi_note@[]@ notes)", asMETHOD(midi_output, play_chord_wait), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_midi_chord(midi_note@[]@ notes, const string&in pattern)", asMETHOD(midi_output, play_midi_chord), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_midi_chord_wait(midi_note@[]@ notes, const string&in pattern)", asMETHOD(midi_output, play_midi_chord_wait), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_note(const midi_note&in note)", asMETHOD(midi_output, play_note), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_note_wait(const midi_note&in note)", asMETHOD(midi_output, play_note_wait), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "uint stop_all_notes()", asMETHOD(midi_output, stop_all_notes), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "uint get_active_notes() const", asMETHOD(midi_output, get_active_notes), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "void close()", asMETHOD(midi_output, close), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "bool is_open() const", asMETHOD(midi_output, is_open), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "int get_port() const", asMETHOD(midi_output, get_port), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "string get_port_name() const", asMETHOD(midi_output, get_port_name), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "bool send(uint status, uint data1, uint data2)", asMETHOD(midi_output, send), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "bool send_packed(uint packed)", asMETHOD(midi_output, send_packed), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "void send_note_on(uint channel, uint note, uint velocity)", asMETHOD(midi_output, send_note_on), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "void send_note_off(uint channel, uint note, uint velocity = 0)", asMETHOD(midi_output, send_note_off), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "void send_control_change(uint channel, uint controller, uint value)", asMETHOD(midi_output, send_control_change), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "void send_program_change(uint channel, uint program)", asMETHOD(midi_output, send_program_change), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "void send_pitch_bend(uint channel, uint value)", asMETHOD(midi_output, send_pitch_bend), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "void send_aftertouch(uint channel, uint note, uint pressure)", asMETHOD(midi_output, send_aftertouch), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "void send_channel_pressure(uint channel, uint pressure)", asMETHOD(midi_output, send_channel_pressure), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "void send_sysex(const string&in data)", asMETHOD(midi_output, send_sysex), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "void all_notes_off()", asMETHOD(midi_output, all_notes_off), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "void reset()", asMETHOD(midi_output, reset), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "midi_duration duration(double amount, int unit) const", asMETHOD(midi_output, duration), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectProperty("midi_output", "double tempo", asOFFSET(midi_output, tempo)), "RegisterObjectProperty", __LINE__);
 }
 
-void register_midi_note(asIScriptEngine* engine) {
+void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	// A value type, and it has to stay one: a handle can only be formed for a
 	// type flagged asOBJ_REF, asOBJ_TEMPLATE_SUBTYPE, asOBJ_ASHANDLE or
 	// asOBJ_FUNCDEF (asCDataType::MakeHandle in the SDK), so every midi_duration
 	// below is passed and returned by value. asOBJ_POD is deliberately not set -
 	// it is the traits flag plus a promise that the type is bitwise copyable,
 	// which a midi_duration with a std::string to_string() is not.
-	engine->RegisterObjectType("midi_duration", sizeof(midi_duration), asOBJ_VALUE | asGetTypeTraits<midi_duration>());
-	engine->RegisterObjectBehaviour("midi_duration", asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(midi_duration_default_construct), asCALL_CDECL_OBJLAST);
-	engine->RegisterObjectBehaviour("midi_duration", asBEHAVE_CONSTRUCT, "void f(double amount, int unit)", asFUNCTION(midi_duration_construct), asCALL_CDECL_OBJLAST);
-	engine->RegisterObjectBehaviour("midi_duration", asBEHAVE_CONSTRUCT, "void f(double amount, int unit, double tempo)", asFUNCTION(midi_duration_construct_tempo), asCALL_CDECL_OBJLAST);
-	engine->RegisterObjectBehaviour("midi_duration", asBEHAVE_DESTRUCT, "void f()", asFUNCTION(midi_duration_destruct), asCALL_CDECL_OBJLAST);
-	engine->RegisterObjectProperty("midi_duration", "double amount", asOFFSET(midi_duration, amount));
-	engine->RegisterObjectProperty("midi_duration", "int unit", asOFFSET(midi_duration, unit));
-	engine->RegisterObjectProperty("midi_duration", "double tempo", asOFFSET(midi_duration, tempo));
-	engine->RegisterObjectProperty("midi_duration", "double ppq", asOFFSET(midi_duration, ppq));
-	engine->RegisterObjectMethod("midi_duration", "double to_ms() const", asMETHOD(midi_duration, to_ms), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_duration", "string to_string() const", asMETHOD(midi_duration, to_string), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_duration", "string opImplConv() const", asMETHOD(midi_duration, to_string), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_duration", "midi_duration& opAssign(const midi_duration&in other)", asMETHODPR(midi_duration, opAssign, (const midi_duration&), midi_duration&), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_duration", "midi_duration& opAssign(double amount)", asMETHODPR(midi_duration, opAssign, (double), midi_duration&), asCALL_THISCALL);
+	reg->check( engine->RegisterObjectType("midi_duration", sizeof(midi_duration), asOBJ_VALUE | asGetTypeTraits<midi_duration>()), "RegisterObjectType", __LINE__);
+	reg->check( engine->RegisterObjectBehaviour("midi_duration", asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(midi_duration_default_construct), asCALL_CDECL_OBJLAST), "RegisterObjectBehaviour", __LINE__);
+	reg->check( engine->RegisterObjectBehaviour("midi_duration", asBEHAVE_CONSTRUCT, "void f(double amount, int unit)", asFUNCTION(midi_duration_construct), asCALL_CDECL_OBJLAST), "RegisterObjectBehaviour", __LINE__);
+	reg->check( engine->RegisterObjectBehaviour("midi_duration", asBEHAVE_CONSTRUCT, "void f(double amount, int unit, double tempo)", asFUNCTION(midi_duration_construct_tempo), asCALL_CDECL_OBJLAST), "RegisterObjectBehaviour", __LINE__);
+	reg->check( engine->RegisterObjectBehaviour("midi_duration", asBEHAVE_DESTRUCT, "void f()", asFUNCTION(midi_duration_destruct), asCALL_CDECL_OBJLAST), "RegisterObjectBehaviour", __LINE__);
+	reg->check( engine->RegisterObjectProperty("midi_duration", "double amount", asOFFSET(midi_duration, amount)), "RegisterObjectProperty", __LINE__);
+	reg->check( engine->RegisterObjectProperty("midi_duration", "int unit", asOFFSET(midi_duration, unit)), "RegisterObjectProperty", __LINE__);
+	reg->check( engine->RegisterObjectProperty("midi_duration", "double tempo", asOFFSET(midi_duration, tempo)), "RegisterObjectProperty", __LINE__);
+	reg->check( engine->RegisterObjectProperty("midi_duration", "double ppq", asOFFSET(midi_duration, ppq)), "RegisterObjectProperty", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_duration", "double to_ms() const", asMETHOD(midi_duration, to_ms), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_duration", "string to_string() const", asMETHOD(midi_duration, to_string), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_duration", "string opImplConv() const", asMETHOD(midi_duration, to_string), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_duration", "midi_duration& opAssign(const midi_duration&in other)", asMETHODPR(midi_duration, opAssign, (const midi_duration&), midi_duration&), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_duration", "midi_duration& opAssign(double amount)", asMETHODPR(midi_duration, opAssign, (double), midi_duration&), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	// By value, not midi_duration@ - see the comment above the type.
-	engine->RegisterGlobalFunction("midi_duration midi_duration_create()", asFUNCTION(midi_duration_create), asCALL_CDECL);
-	engine->RegisterGlobalFunction("midi_duration midi_duration_create(double amount, int unit)", asFUNCTION(midi_duration_create_full), asCALL_CDECL);
-	engine->RegisterGlobalFunction("midi_duration midi_duration_create(double amount, int unit, double tempo)", asFUNCTION(midi_duration_create_tempo), asCALL_CDECL);
+	reg->check( engine->RegisterGlobalFunction("midi_duration midi_duration_create()", asFUNCTION(midi_duration_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_duration midi_duration_create(double amount, int unit)", asFUNCTION(midi_duration_create_full), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_duration midi_duration_create(double amount, int unit, double tempo)", asFUNCTION(midi_duration_create_tempo), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 
 	// A handle type: a script writes note@ n = midi_note(60, 100); and the
 	// handle points at the object rather than copying it, which is what makes
 	// changing n.velocity later actually change the note that is played.
-	engine->RegisterObjectType("midi_note", 0, asOBJ_REF | asOBJ_NOCOUNT);
-	engine->RegisterObjectProperty("midi_note", "int pitch", asOFFSET(midi_note, pitch));
-	engine->RegisterObjectProperty("midi_note", "int velocity", asOFFSET(midi_note, velocity));
-	engine->RegisterObjectProperty("midi_note", "int channel", asOFFSET(midi_note, channel));
-	engine->RegisterObjectProperty("midi_note", "midi_duration length", asOFFSET(midi_note, length));
-	engine->RegisterObjectProperty("midi_note", "double duration_ms", asOFFSET(midi_note, length) + offsetof(midi_duration, amount));
-	engine->RegisterObjectMethod("midi_note", "string to_string() const", asMETHOD(midi_note, to_string), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_note", "string opImplConv() const", asMETHOD(midi_note, to_string), asCALL_THISCALL);
-	engine->RegisterGlobalFunction("midi_note@ midi_note_create()", asFUNCTION(midi_note_create), asCALL_CDECL);
-	engine->RegisterGlobalFunction("midi_note@ midi_note_create(int pitch, int velocity, int channel)", asFUNCTION(midi_note_create_full), asCALL_CDECL);
-	engine->RegisterGlobalFunction("midi_note@ midi_note_create_ms(int pitch, int velocity, double duration_ms)", asFUNCTION(midi_note_create_ms), asCALL_CDECL);
-	engine->RegisterGlobalFunction("int midi_note_number(const string&in name)", asFUNCTION(midi_note_number), asCALL_CDECL);
-	engine->RegisterGlobalFunction("string midi_note_name(int pitch)", asFUNCTION(midi_note_pitch_name), asCALL_CDECL);
+	reg->check( engine->RegisterObjectType("midi_note", 0, asOBJ_REF | asOBJ_NOCOUNT), "RegisterObjectType", __LINE__);
+	reg->check( engine->RegisterObjectProperty("midi_note", "int pitch", asOFFSET(midi_note, pitch)), "RegisterObjectProperty", __LINE__);
+	reg->check( engine->RegisterObjectProperty("midi_note", "int velocity", asOFFSET(midi_note, velocity)), "RegisterObjectProperty", __LINE__);
+	reg->check( engine->RegisterObjectProperty("midi_note", "int channel", asOFFSET(midi_note, channel)), "RegisterObjectProperty", __LINE__);
+	reg->check( engine->RegisterObjectProperty("midi_note", "midi_duration length", asOFFSET(midi_note, length)), "RegisterObjectProperty", __LINE__);
+	reg->check( engine->RegisterObjectProperty("midi_note", "double duration_ms", asOFFSET(midi_note, length) + offsetof(midi_duration, amount)), "RegisterObjectProperty", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_note", "string to_string() const", asMETHOD(midi_note, to_string), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_note", "string opImplConv() const", asMETHOD(midi_note, to_string), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note_create()", asFUNCTION(midi_note_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note_create(int pitch, int velocity, int channel)", asFUNCTION(midi_note_create_full), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note_create_ms(int pitch, int velocity, double duration_ms)", asFUNCTION(midi_note_create_ms), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_note_number(const string&in name)", asFUNCTION(midi_note_number), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("string midi_note_name(int pitch)", asFUNCTION(midi_note_pitch_name), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 
 	// Unit constants, so a script never has to remember 0..3.
-	engine->RegisterGlobalProperty("const int MIDI_MS", (void*)&g_unit_ms);
-	engine->RegisterGlobalProperty("const int MIDI_TICKS", (void*)&g_unit_ticks);
-	engine->RegisterGlobalProperty("const int MIDI_BEATS", (void*)&g_unit_beats);
-	engine->RegisterGlobalProperty("const int MIDI_BARS", (void*)&g_unit_bars);
+	reg->check( engine->RegisterGlobalProperty("const int MIDI_MS", (void*)&g_unit_ms), "RegisterGlobalProperty", __LINE__);
+	reg->check( engine->RegisterGlobalProperty("const int MIDI_TICKS", (void*)&g_unit_ticks), "RegisterGlobalProperty", __LINE__);
+	reg->check( engine->RegisterGlobalProperty("const int MIDI_BEATS", (void*)&g_unit_beats), "RegisterGlobalProperty", __LINE__);
+	reg->check( engine->RegisterGlobalProperty("const int MIDI_BARS", (void*)&g_unit_bars), "RegisterGlobalProperty", __LINE__);
 	// The musical units. The plain four mean the same numbers as MIDI_*, so a
 	// script written for one spelling keeps working with the other; the
 	// MUSIC_BEATS_NN constants are extra values that carry their own tempo.
-	engine->RegisterGlobalProperty("const int MUSIC_MS", (void*)&g_music_ms);
-	engine->RegisterGlobalProperty("const int MUSIC_TICKS", (void*)&g_music_ticks);
-	engine->RegisterGlobalProperty("const int MUSIC_BEATS", (void*)&g_music_beats);
-	engine->RegisterGlobalProperty("const int MUSIC_BARS", (void*)&g_music_bars);
-	engine->RegisterGlobalProperty("const int MUSIC_BEATS_90", (void*)&g_music_beats_90);
-	engine->RegisterGlobalProperty("const int MUSIC_BEATS_100", (void*)&g_music_beats_100);
-	engine->RegisterGlobalProperty("const int MUSIC_BEATS_120", (void*)&g_music_beats_120);
-	engine->RegisterGlobalProperty("const int MUSIC_BEATS_140", (void*)&g_music_beats_140);
+	reg->check( engine->RegisterGlobalProperty("const int MUSIC_MS", (void*)&g_music_ms), "RegisterGlobalProperty", __LINE__);
+	reg->check( engine->RegisterGlobalProperty("const int MUSIC_TICKS", (void*)&g_music_ticks), "RegisterGlobalProperty", __LINE__);
+	reg->check( engine->RegisterGlobalProperty("const int MUSIC_BEATS", (void*)&g_music_beats), "RegisterGlobalProperty", __LINE__);
+	reg->check( engine->RegisterGlobalProperty("const int MUSIC_BARS", (void*)&g_music_bars), "RegisterGlobalProperty", __LINE__);
+	reg->check( engine->RegisterGlobalProperty("const int MUSIC_BEATS_90", (void*)&g_music_beats_90), "RegisterGlobalProperty", __LINE__);
+	reg->check( engine->RegisterGlobalProperty("const int MUSIC_BEATS_100", (void*)&g_music_beats_100), "RegisterGlobalProperty", __LINE__);
+	reg->check( engine->RegisterGlobalProperty("const int MUSIC_BEATS_120", (void*)&g_music_beats_120), "RegisterGlobalProperty", __LINE__);
+	reg->check( engine->RegisterGlobalProperty("const int MUSIC_BEATS_140", (void*)&g_music_beats_140), "RegisterGlobalProperty", __LINE__);
 }
 
-void register_midi_config(asIScriptEngine* engine) {
-	engine->RegisterObjectType("midi_config", 0, asOBJ_REF | asOBJ_NOCOUNT);
-	engine->RegisterObjectProperty("midi_config", "string match", asOFFSET(midi_config, match));
-	engine->RegisterObjectProperty("midi_config", "int port", asOFFSET(midi_config, port));
-	engine->RegisterObjectMethod("midi_config", "bool load(const string&in path)", asMETHOD(midi_config, load), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_config", "bool load_if_present(const string&in path)", asMETHOD(midi_config, load_if_present), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_config", "int find_input_port() const", asMETHOD(midi_config, find_input_port), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_config", "int find_output_port() const", asMETHOD(midi_config, find_output_port), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_config", "int get_last_port() const", asMETHOD(midi_config, get_last_port), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_config", "string describe() const", asMETHOD(midi_config, describe), asCALL_THISCALL);
-	engine->RegisterObjectMethod("midi_config", "string get_path() const", asMETHOD(midi_config, get_path), asCALL_THISCALL);
-	engine->RegisterGlobalFunction("midi_config@ midi_config_create()", asFUNCTION(midi_config_create), asCALL_CDECL);
-	engine->RegisterGlobalFunction("int midi_find_input_port(const string&in substring)", asFUNCTION(midi_find_input_port), asCALL_CDECL);
-	engine->RegisterGlobalFunction("int midi_find_output_port(const string&in substring)", asFUNCTION(midi_find_output_port), asCALL_CDECL);
+void register_midi_config(asIScriptEngine* engine, registration* reg) {
+	reg->check( engine->RegisterObjectType("midi_config", 0, asOBJ_REF | asOBJ_NOCOUNT), "RegisterObjectType", __LINE__);
+	reg->check( engine->RegisterObjectProperty("midi_config", "string match", asOFFSET(midi_config, match)), "RegisterObjectProperty", __LINE__);
+	reg->check( engine->RegisterObjectProperty("midi_config", "int port", asOFFSET(midi_config, port)), "RegisterObjectProperty", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_config", "bool load(const string&in path)", asMETHOD(midi_config, load), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_config", "bool load_if_present(const string&in path)", asMETHOD(midi_config, load_if_present), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_config", "int find_input_port() const", asMETHOD(midi_config, find_input_port), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_config", "int find_output_port() const", asMETHOD(midi_config, find_output_port), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_config", "int get_last_port() const", asMETHOD(midi_config, get_last_port), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_config", "string describe() const", asMETHOD(midi_config, describe), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_config", "string get_path() const", asMETHOD(midi_config, get_path), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_config@ midi_config_create()", asFUNCTION(midi_config_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_find_input_port(const string&in substring)", asFUNCTION(midi_find_input_port), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_find_output_port(const string&in substring)", asFUNCTION(midi_find_output_port), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 }
 
-void register_midi_globals(asIScriptEngine* engine) {
-	engine->RegisterGlobalFunction("uint midi_input_port_count()", asFUNCTION(midi_input_port_count), asCALL_CDECL);
-	engine->RegisterGlobalFunction("uint midi_output_port_count()", asFUNCTION(midi_output_port_count), asCALL_CDECL);
-	engine->RegisterGlobalFunction("string midi_input_port_name(uint port)", asFUNCTION(midi_input_port_name), asCALL_CDECL);
-	engine->RegisterGlobalFunction("string midi_output_port_name(uint port)", asFUNCTION(midi_output_port_name), asCALL_CDECL);
-	engine->RegisterGlobalFunction("string[]@ midi_input_port_names()", asFUNCTION(midi_input_port_names), asCALL_CDECL);
-	engine->RegisterGlobalFunction("string[]@ midi_output_port_names()", asFUNCTION(midi_output_port_names), asCALL_CDECL);
-	engine->RegisterGlobalFunction("string midi_api_name()", asFUNCTION(midi_api_name), asCALL_CDECL);
-	engine->RegisterGlobalFunction("string midi_message_name(const midi_message&in m)", asFUNCTION(midi_message_name), asCALL_CDECL);
-	engine->RegisterGlobalFunction("string midi_last_error()", asFUNCTION(midi_last_error), asCALL_CDECL);
-	engine->RegisterGlobalFunction("midi_input@ midi_input_create()", asFUNCTION(midi_input_create), asCALL_CDECL);
-	engine->RegisterGlobalFunction("midi_output@ midi_output_create()", asFUNCTION(midi_output_create), asCALL_CDECL);
+void register_midi_globals(asIScriptEngine* engine, registration* reg) {
+	reg->check( engine->RegisterGlobalFunction("uint midi_input_port_count()", asFUNCTION(midi_input_port_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("uint midi_output_port_count()", asFUNCTION(midi_output_port_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("string midi_input_port_name(uint port)", asFUNCTION(midi_input_port_name), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("string midi_output_port_name(uint port)", asFUNCTION(midi_output_port_name), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("string[]@ midi_input_port_names()", asFUNCTION(midi_input_port_names), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("string[]@ midi_output_port_names()", asFUNCTION(midi_output_port_names), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("string midi_api_name()", asFUNCTION(midi_api_name), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("string midi_message_name(const midi_message&in m)", asFUNCTION(midi_message_name), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("string midi_last_error()", asFUNCTION(midi_last_error), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_input@ midi_input_create()", asFUNCTION(midi_input_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_output@ midi_output_create()", asFUNCTION(midi_output_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 }
 
 void register_nvmidi(asIScriptEngine* engine) {
-	register_midi_message(engine);
+	// The registration helpers below take no engine argument, so the reporter
+	// finds it here.
+	g_registration_engine = engine;
+	registration reg(engine);
+	register_midi_message(engine, &reg);
 	// The note, duration and config types first: the port classes name them in
 	// their own method declarations, so the engine has to know them by then.
-	register_midi_note(engine);
-	register_midi_config(engine);
-	register_midi_input(engine);
-	register_midi_output(engine);
-	register_midi_globals(engine);
+	register_midi_note(engine, &reg);
+	register_midi_config(engine, &reg);
+	register_midi_input(engine, &reg);
+	register_midi_output(engine, &reg);
+	register_midi_globals(engine, &reg);
 }
 
 midi_input* midi_input_create() { return new midi_input(); }
@@ -1586,8 +1635,17 @@ std::string midi_last_error() { return g_last_error; }
 // ---------------------------------------------------------------------------
 
 plugin_main(nvgt_plugin_shared* shared) {
-	if (!prepare_plugin(shared)) return false;
-	if (!shared->script_engine) return false;
+	if (!prepare_plugin(shared)) {
+		fprintf(stderr, "nvmidi: the engine's plugin api version is %d, this plugin was built against %d\n",
+			shared->version, NVGT_PLUGIN_API_VERSION);
+		fflush(stderr);
+		return false;
+	}
+	if (!shared->script_engine) {
+		fprintf(stderr, "nvmidi: the engine handed over no script engine, so no type could be registered\n");
+		fflush(stderr);
+		return false;
+	}
 	register_nvmidi(shared->script_engine);
 	// Kept so the playing code can call back into the script, see wait_until().
 	g_engine = shared->script_engine;

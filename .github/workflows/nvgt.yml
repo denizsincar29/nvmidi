@@ -26,12 +26,13 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libssl3
 
       # The plugin is what the scripts are testing, so it has to exist before
-      # they are compiled. nvgt loads plugins from its own lib/ folder when it
-      # starts and registers them before the script is parsed, which means a
-      # script that names a plugin type fails to compile unless the library is
-      # already sitting there - there is no dllload line to call first. A
-      # fresh checkout therefore cannot run these scripts at all without this
-      # step, and the check would report every example as broken.
+      # they are compiled. A plugin is loaded only when the script carries
+      # "#pragma plugin nvmidi"; the engine reads the pragmas, then loads
+      # exactly those names, then compiles the script (CompileScript and
+      # PragmaCallback in the engine's src/nvgt_angelscript.cpp). The examples
+      # carry that line, so this step decides whether they can run at all: a
+      # fresh checkout with no library fails every one of them with
+      # "No matching symbol".
       - name: build the plugin
         run: |
           sudo apt-get install -y -qq g++ libasound2-dev
@@ -106,9 +107,14 @@ jobs:
             readelf -d "$lib" 2>&1 | grep -E 'NEEDED|SONAME' || true
           done
 
-          # The engine loads by bare name, so if it carries its own loader
-          # library a copy of the plugin there is what a script actually gets.
-          # Both are filled and both are listed, so the winning copy is visible.
+          # The engine loads by bare name, and on linux it never tells the
+          # loader about lib/ (SetDllDirectoryW in src/nvgt.cpp is inside
+          # #ifdef _WIN32), so lib/ is only searched when the engine was built
+          # with an rpath for it. A copy beside the engine binary itself is the
+          # placement that works either way, and a copy beside any loader
+          # library nvgt carries. All are filled and all are listed, so the
+          # winning copy is visible.
+          cp "$plugin" "$(dirname "$nvgt")/nvmidi.so"
           find engine -name 'libnvgt.so*' -o -name 'nvgt.so*' 2>/dev/null | while read -r lib; do
             cp "$plugin" "$(dirname "$lib")/nvmidi.so"
             echo "plugin also placed beside $lib"
