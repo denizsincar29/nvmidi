@@ -1,4 +1,4 @@
-// get_nvmidi.nvgt - put the newest nvmidi.dll where nvgt will find it.
+// get_nvmidi.nvgt - put the newest nvmidi library where nvgt will find it.
 //
 // Everything here uses nvgt's own script API: it has an http client, a file
 // system and a screen reader, so no external downloader is involved.
@@ -42,11 +42,25 @@
 //   nvgt get_nvmidi.nvgt v0.7.0   install a named release
 
 const string REPO = "denizsincar29/nvmidi";
-const string ASSET = "nvmidi.dll";
+// Which library the running engine actually asks the operating system for.
+// nvgt loads the plugin by bare name - nvmidi.dll on windows, nvmidi.so on
+// linux - so hardcoding the dll made this script ask for a file linux has no
+// use for and then install it under a name nothing would ever open.
+//
+// The engine is asked, not asked about: SCRIPT_EXECUTABLE is the path of the
+// running engine, and its extension says which platform that engine belongs
+// to. A windows engine is nvgt.exe, a linux engine is nvgt with no extension
+// at all, so one test covers both.
+string engine_path = SCRIPT_EXECUTABLE;
+string engine_ext = "";
+int dot = engine_path.find_last_of(".");
+if (dot >= 0)
+	engine_ext = engine_path.substr(dot).lower();
+const string ASSET = engine_ext == ".exe" ? "nvmidi.dll" : "nvmidi.so";
 
 void main() {
 	// Where nvgt looks for a plugin. The engine loads the dll by bare name -
-	// SDL_LoadObject("nvmidi.dll") on windows, SDL_LoadObject("libnvmidi.so")
+	// SDL_LoadObject("nvmidi.dll") on windows, SDL_LoadObject("nvmidi.so")
 	// elsewhere - so the operating system's search path decides. On windows
 	// nvgt sets that path explicitly, to the lib/ folder of its own
 	// installation (SetDllDirectoryW, nvgt.cpp); on linux the same folder is
@@ -89,11 +103,13 @@ void main() {
 	}
 
 	// The short address everyone expects -
-	// github.com/<owner>/<repo>/releases/latest/download/<file> - only works
-	// while the repository is public. This one is not: GitHub answers that url
-	// with a 404 and a nine byte body, which is exactly what a naive downloader
-	// here used to save as the dll. The api is reached instead, because it
-	// answers for a private repository as well.
+	// github.com/<owner>/<repo>/releases/latest/download/<file> - works while
+	// the repository is public, which it now is. Measured: it answers 404 with
+	// a nine byte body while the repository is private, and a naive downloader
+	// then saves that body as the library. So the api is asked instead of the
+	// short address - it answers for a release whether the repository is
+	// public or private, and the download itself still goes to the signed
+	// address the api hands back.
 	string api = "https://api.github.com/repos/" + REPO + "/releases/" +
 		(target == "latest" ? "latest" : "tags/" + target);
 
@@ -130,7 +146,7 @@ void main() {
 	screen_reader_speak("Downloading nvmidi " + target + " from " + REPO + ".");
 
 	// The download lands in a temporary name first, so a transfer that dies
-	// halfway cannot leave a truncated nvmidi.dll for nvgt to load next time.
+	// halfway cannot leave a truncated library for nvgt to load next time.
 	string temporary = destination + ".part";
 	if (file_exists(temporary))
 		file_delete(temporary);
@@ -204,9 +220,9 @@ void main() {
 		return;
 	}
 
-	// The api is a last resort no more: it is the only address that answers for
-	// a release of a private repository, and the download itself then goes to
-	// the signed address the api named - which needs no token of its own.
+	// The download went to the signed address the api named, which needs no
+	// token of its own. This is the last sanity check before the file is
+	// allowed to take the name nvgt loads.
 	if (file_get_size(temporary) < 1024) {
 		file_delete(temporary);
 		screen_reader_speak("The file github sent is too small to be a library. The release may have no " + ASSET + " attached.");
@@ -219,5 +235,5 @@ void main() {
 	file_copy(temporary, destination, true);
 	file_delete(temporary);
 
-	screen_reader_speak("Installed nvmidi.dll " + target + " into " + lib + ". Start nvgt to load it.");
+	screen_reader_speak("Installed " + ASSET + " " + target + " into " + lib + ". Start nvgt to load it.");
 }
