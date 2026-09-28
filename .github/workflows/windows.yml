@@ -1,0 +1,14 @@
+name: windows
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: build
+        shell: cmd
+        run: mingw32-make
