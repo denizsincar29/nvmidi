@@ -17,11 +17,12 @@ CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -fPIC -Wall -Wextra
 INCLUDES  = -Isrc -Ithird_party/rtmidi -Ithird_party/angelscript
 
-# scriptarray.cpp is the add-on behind RegisterScriptArray. nvgt and the
-# host already carry these symbols, so the plugin never links it; the
-# `check` target compiles it alongside the plugin to prove the vendored
-# headers and the plugin source still agree.
-SOURCES   = src/nvmidi.cpp third_party/rtmidi/RtMidi.cpp
+# scriptarray.cpp is the array add-on behind CScriptArray. The plugin calls
+# into it (Create, GetSize, At, SetValue) to read the arrays a script hands
+# over, so its symbols have to be linked into the plugin rather than
+# resolved against the host, which exports no such thing.
+SOURCES   = src/nvmidi.cpp third_party/rtmidi/RtMidi.cpp \
+            third_party/angelscript/scriptarray.cpp
 
 # Backend selection. RtMidi compiles exactly one of these in.
 ifeq ($(OS),Windows_NT)
