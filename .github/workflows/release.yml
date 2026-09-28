@@ -44,13 +44,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The linux build needs ALSA, both to compile against and to link
-      # -lasound. A bare runner image does not carry it.
-      - name: install alsa
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      # The build a release ships, and the backend is the whole point.
+      #
+      # A bare "make" here used to select ALSA, and ALSA is exactly what must
+      # not be shipped: defining __LINUX_ALSA__ puts a "needed: libasound.so.2"
+      # entry into the library, and a machine without ALSA has the loader
+      # reject the entire library before a single symbol is looked up. The
+      # engine then says "failed to load plugin", the script never runs, and
+      # nothing on the user's side can tell this apart from a missing file.
+      # Measured on the real engine; this is the bug a user reported as
+      # "failed to load plugin всё равно" after downloading v0.7.1.
+      #
+      # The dummy build needs libc and libstdc++ only, so the loader always
+      # takes it on a stock linux, and it says so through midi_api_name().
+      # Nothing else is built here: an alsa build in a release is a trap, not
+      # a fallback, because the error it produces names nothing.
+      - name: build the library a release ships
+        run: make MIDI_BACKEND=dummy
 
-      - name: build
-        run: make
+      # The dependency list is asserted rather than trusted. The whole failure
+      # mode above is invisible in the file contents: the library is complete
+      # and healthy, and only this list makes it unloadable. readelf is the
+      # runner's own, so this costs no setup.
+      - name: assert the library needs nothing a stock machine lacks
+        run: |
+          set -euo pipefail
+          readelf -d nvmidi.so | grep -E 'NEEDED|SONAME' || true
+          if readelf -d nvmidi.so | grep -q 'libasound'; then
+            echo "::error::this library needs libasound.so.2, so the loader will reject it on a machine without ALSA and the engine will report only \"failed to load plugin\""
+            exit 1
+          fi
 
       - name: keep the so
         uses: actions/upload-artifact@v4

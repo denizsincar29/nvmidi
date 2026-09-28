@@ -288,3 +288,51 @@ jobs:
             echo "::endgroup::"
           done
           exit "$status"
+
+  # The load is asserted, and so is *what got loaded*. A published library and
+  # a dummy one are both called nvmidi.so, both load, and both make every
+  # script run to the end - so a job that only checks "did it load" stays green
+  # while the thing it ships is a stub that cannot reach a keyboard.
+  #
+  # Measured, this is not hypothetical: release v0.7.1 shipped the ALSA build,
+  # whose "needed: libasound.so.2" entry makes the loader reject the whole
+  # library on a machine without ALSA, and the engine's only words are
+  # "failed to load plugin". A user hit exactly that.
+  #
+  # So the release workflow's own backend is rebuilt here, without ALSA, and
+  # the name a running plugin gives back is compared against the one the
+  # release actually shipped. A mismatch is a red build on the tag itself.
+  shipped-backend:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+      - name: build the library the release ships
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq g++
+          make MIDI_BACKEND=dummy
+          readelf -d nvmidi.so | grep -E 'NEEDED' || true
+          if readelf -d nvmidi.so | grep -q libasound; then
+            echo "::error::the release build needs libasound.so.2 and will not load on a machine without ALSA"
+            exit 1
+          fi
+      - name: the engine loads it and names its backend
+        run: |
+          set -euo pipefail
+          ./scripts/nvgt_pin.sh fetch engine
+          nvgt="$(find engine -type f -name nvgt | head -n1)"
+          chmod +x "$nvgt"
+          mkdir -p "$(dirname "$nvgt")/lib"
+          cp nvmidi.so "$(dirname "$nvgt")/lib/nvmidi.so"
+          test "$(stat -c %s "$(dirname "$nvgt")/lib/nvmidi.so")" -gt 0
+          cat > /tmp/name.nvgt <<'SCRIPT'
+          #pragma plugin nvmidi
+          void main() { print("NVGT_PLUGIN_LOADED " + midi_api_name()); }
+          SCRIPT
+          timeout 120 "$nvgt" /tmp/name.nvgt 2>&1 | tee name.log
+          grep -q 'NVGT_PLUGIN_LOADED' name.log
+          if grep -q 'nvmidi/Dummy' name.log; then
+            echo "::error title=the release ships a stub::the library the release attaches reports the Dummy backend; it loads and runs but cannot reach any MIDI hardware, and a user sees only silence"
+            exit 1
+          fi
+          echo "the release's library reports: $(grep -o 'NVGT_PLUGIN_LOADED.*' name.log | head -n1)"

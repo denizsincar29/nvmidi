@@ -1362,7 +1362,18 @@ std::string midi_api_name() {
 		std::vector<RtMidi::Api> apis;
 		RtMidiIn::getCompiledApi(apis);
 		if (apis.empty()) return "";
-		return RtMidiIn::getApiDisplayName(apis[0]);
+		// The backend is spelled out in the name, because the backend is the
+		// thing a user cannot otherwise see. A dummy build and an ALSA build
+		// are both "nvmidi.so", both load, and both answer this call - and
+		// they do completely different things. Without the suffix, "the
+		// library loaded" and "the library can reach your keyboard" are the
+		// same report, which is how a user ends up running a stub and reading
+		// its silence as a broken download.
+		//
+		// Measured: a dummy plugin reports "Dummy" - the backend's own name,
+		// not something written here - so the first argument is that name and
+		// not a label invented for it.
+		return "nvmidi/" + RtMidiIn::getApiDisplayName(apis[0]);
 	} catch (RtMidiError&) {
 		return "";
 	}
