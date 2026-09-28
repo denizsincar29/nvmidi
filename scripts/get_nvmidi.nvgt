@@ -51,12 +51,18 @@ const string REPO = "denizsincar29/nvmidi";
 // running engine, and its extension says which platform that engine belongs
 // to. A windows engine is nvgt.exe, a linux engine is nvgt with no extension
 // at all, so one test covers both.
-string engine_path = SCRIPT_EXECUTABLE;
-string engine_ext = "";
-int dot = engine_path.find_last_of(".");
-if (dot >= 0)
-	engine_ext = engine_path.substr(dot).lower();
-const string ASSET = engine_ext == ".exe" ? "nvmidi.dll" : "nvmidi.so";
+//
+// Asked inside main, not here. The engine runs main and ignores the top level
+// of the file, so a statement out here is a compilation error rather than a
+// script that starts at line 1 - a `if` at file scope fails with "Unexpected
+// token 'if'". The header already warns about this; this line is the proof.
+string asset_for(string engine_path) {
+	string ext = "";
+	int dot = engine_path.find_last_of(".");
+	if (dot >= 0)
+		ext = engine_path.substr(dot).lower();
+	return ext == ".exe" ? "nvmidi.dll" : "nvmidi.so";
+}
 
 void main() {
 	// Where nvgt looks for a plugin. The engine loads the dll by bare name -
@@ -85,6 +91,9 @@ void main() {
 	if (cut_win > cut) cut = cut_win;
 	if (cut >= 0) here = here.substr(0, cut);
 	string lib = here + "/lib";
+	// Which library this engine wants, decided from the engine we are
+	// running under. See asset_for at the top.
+	const string ASSET = asset_for(exe);
 
 	// The release to ask GitHub for. "latest" means the newest one; anything
 	// else is taken as a tag name.
