@@ -55,8 +55,15 @@ const int g_music_beats_140 = MUSIC_BEATS_140;
 // RtMidi throws on every failure; NVGT scripts should see a return value
 // instead, so every entry point wraps its body in this.
 std::string g_last_error;
+// And the first one of the run. Kept separately because g_last_error is
+// overwritten every time something else goes wrong, and the earliest failure
+// is usually the one that caused the rest.
+std::string g_first_error;
 
-void set_error(const std::string& message) { g_last_error = message; }
+void set_error(const std::string& message) {
+	g_last_error = message;
+	if (g_first_error.empty()) g_first_error = message;
+}
 void clear_error() { g_last_error.clear(); }
 
 // The engine register_nvmidi() was handed. wait_until() needs it to call back
@@ -149,6 +156,23 @@ void clamp_note(midi_note& note);
 bool read_note(CScriptArray* notes, size_t index, midi_note& out);
 // Waits until the moment is reached, in short hops.
 void wait_until(double moment);
+// Both are registered by the globals block far below, which sits in the file
+// before their definitions; the declarations are what let it see them.
+std::string midi_last_error();
+std::string midi_first_error();
+
+// What a script should call to build a port: the backend that actually works
+// on this machine, or the dummy when none does.
+//
+// This exists because the choice cannot be made at compile time on Linux.
+// __LINUX_ALSA__ is defined whenever the plugin was built where the ALSA
+// headers were present, and that says nothing about the machine that runs the
+// game afterwards: a target with no libasound.so.2 makes the *loader* refuse
+// the whole plugin, so the script never learns that MIDI - and only MIDI - is
+// what is unavailable. Picking the backend at run time keeps that difference
+// visible to the script instead of turning it into a plugin that will not
+// load. Defined with the other shared helpers below.
+extern const RtMidi::Api g_preferred_api;
 
 const char* midi_message::to_string() const {
 	std::ostringstream out;
@@ -333,7 +357,7 @@ bool midi_input::open(unsigned int port, const std::string& name) {
 	clear_error();
 	close();
 	try {
-		RtMidiIn* in = new RtMidiIn(RtMidi::UNSPECIFIED, name);
+		RtMidiIn* in = new RtMidiIn(g_preferred_api, name);
 		const unsigned int count = in->getPortCount();
 		if (port >= count) {
 			delete in;
@@ -665,7 +689,7 @@ bool midi_output::open(unsigned int port, const std::string& name) {
 	clear_error();
 	close();
 	try {
-		RtMidiOut* out = new RtMidiOut(RtMidi::UNSPECIFIED, name);
+		RtMidiOut* out = new RtMidiOut(g_preferred_api, name);
 		if (!virtual_port) {
 			const unsigned int count = out->getPortCount();
 			if (port >= count) {
@@ -1312,6 +1336,23 @@ CScriptArray* midi_output_port_names() {
 	return make_string_array(names);
 }
 
+// The definition of the constant declared with the other shared helpers.
+const RtMidi::Api g_preferred_api = [] {
+	std::vector<RtMidi::Api> apis;
+	try {
+		RtMidi::getCompiledApi(apis);
+	} catch (...) {
+		return RtMidi::RTMIDI_DUMMY;
+	}
+	// getCompiledApi lists backends in the constructor's own search order, and
+	// the dummy is compiled in unconditionally and sits last, so the first
+	// entry that is not the dummy is the real one.
+	for (size_t i = 0; i < apis.size(); ++i) {
+		if (apis[i] != RtMidi::RTMIDI_DUMMY) return apis[i];
+	}
+	return RtMidi::RTMIDI_DUMMY;
+}();
+
 // Names the backend RtMidi actually compiled against, so a user can tell
 // "MMAPI" on Windows from "ALSA" on Linux in a bug report.
 std::string midi_api_name() {
@@ -1636,6 +1677,7 @@ void register_midi_globals(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterGlobalFunction("string midi_api_name()", asFUNCTION(midi_api_name), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("string midi_message_name(const midi_message&in m)", asFUNCTION(midi_message_name), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("string midi_last_error()", asFUNCTION(midi_last_error), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("string midi_first_error()", asFUNCTION(midi_first_error), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_input@ midi_input_create()", asFUNCTION(midi_input_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_output@ midi_output_create()", asFUNCTION(midi_output_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 }
@@ -1667,6 +1709,20 @@ midi_output* midi_output_create() { return new midi_output(); }
 midi_config* midi_config_create() { return new midi_config(); }
 
 std::string midi_last_error() { return g_last_error; }
+
+// What went wrong first, kept because g_last_error is overwritten by every
+// later failure and the first one is usually the cause of the rest.
+//
+// This is a convenience for a script that got the plugin loaded and is
+// debugging its own run; it is not a way to report a library that never
+// loaded. It cannot be: with "#pragma plugin nvmidi" present and the library
+// missing, the engine stops at the pragma and no script code runs at all -
+// measured on the engine, including with a script-side midi_first_error()
+// declared to catch exactly that. See the readme's "Saying why it failed".
+std::string midi_first_error() {
+	if (!g_first_error.empty()) return g_first_error;
+	return g_last_error;
+}
 
 // ---------------------------------------------------------------------------
 // Plugin entry point

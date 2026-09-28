@@ -76,6 +76,65 @@ directory, never the folder the script happens to sit in.
 fetches the newest release and installs it into `lib/` next to the running
 NVGT.
 
+## Shipping a compiled game
+
+Two halves matter here, and NVGT's own manual ("Compiling your project for
+distribution") states both.
+
+The first: once you compile, the library is looked for next to the game's
+executable — either directly in that folder or in a `lib` folder inside it.
+The engine's own `lib/` is no longer involved, because a compiled game does
+not use the engine's installation.
+
+The second is the one that bites. NVGT's bundling step does **not** copy
+plugin libraries into the bundle by default: `build.shared_library_excludes`
+defaults to `"plist TrueAudioNext GPUUtilities systemd_notify sqlite git2
+curl"`, so the shared libraries for plugins are excluded unless the author
+says otherwise. A game built with default settings therefore ships without
+`nvmidi.dll` and dies at startup with no explanation. If you bundle, override
+that property in your project's configuration file so it no longer excludes
+what you use — or copy the library beside the executable yourself.
+
+### Saying why it failed
+
+Honest answer first, because the obvious approach does not work.
+
+`#pragma plugin nvmidi` is processed *before the script is compiled*. If the
+library cannot be loaded, the engine stops there — `ERROR: failed to load
+plugin` — and **nothing in your script runs**, neither `preglobals()` nor
+`main()`. A script cannot report that its own plugin is missing, because the
+plugin's absence is what stops the script.
+
+Measured on the engine: with `#pragma plugin nvmidi` and no loadable library,
+the run ends at the pragma even when the script declares a `midi_first_error()`
+of its own to catch exactly that. A script *can* shadow a plugin's name when
+the plugin is simply absent and no pragma asks for it — but that is not the
+case you have.
+
+What you can do instead:
+
+**Check for the plugin without asking the engine for it at load time.** Leave
+the pragma out of the main script, load the library yourself, and keep the
+pragma inside a file that is only compiled once the library is known to be
+there. That is more moving parts than most games need.
+
+**Ship a plugin that cannot fail to load.** This is the practical one and it
+is a property of the build, not the script — see *Building*: a plugin built
+with `MIDI_BACKEND=dummy` needs nothing but libc and libstdc++, so the loader
+always takes it, and the script learns "no MIDI here" from the API instead of
+from a startup that never happens.
+
+**Tell the player what to install.** A missing library at ship time is a
+packaging mistake, and the fix is the `build.shared_library_excludes`
+paragraph above rather than a runtime message.
+
+`midi_first_error()` stays in the API for the case where the plugin *did*
+load: it reports the first thing that went wrong, and is empty while nothing
+has. NVGT's `preglobals()` is still the right hook for the checks it was
+designed for — the manual's own example is `SOUND_AVAILABLE` and
+`SCREEN_READER_AVAILABLE`, engine-side features that exist regardless of any
+plugin.
+
 ## Reading a MIDI keyboard
 
 The short version: create an input, open a port, then drain the queue once
