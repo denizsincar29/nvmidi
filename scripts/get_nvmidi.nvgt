@@ -13,6 +13,11 @@
 //   file_move/file_get_size
 //   get_COMMAND_LINE             references/builtin/.../get_COMMAND_LINE
 //
+// One thing the reference does not say and cost a build: main is the entry
+// point. nvgt calls main and runs nothing that sits at the top level of the
+// file, so every statement here is inside main() - a loose one is a
+// compilation error ("Unexpected token"), not a script that starts at line 1.
+//
 // The bytes are not carried in a script string anywhere: the http body is
 // streamed into a datastream and the datastream is written out binary, so a
 // dll cannot be damaged by an encoding step.
@@ -27,99 +32,105 @@
 const string REPO = "denizsincar29/nvmidi";
 const string ASSET = "nvmidi.dll";
 
-// The release to ask GitHub for. "latest" is a GitHub alias for the newest
-// non-prerelease release, so it needs no API call and no token.
-string target = "latest";
-// nvgt exposes the command line the script was started with.
-string command_line = get_COMMAND_LINE;
-string[]@ words = command_line.split(" ");
-// words[0] is the script name itself; anything after it is the version.
-for (uint i = 1; i < words.length(); i++) {
-	string word = words[i].trim_whitespace();
-	if (word.length() > 0) {
-		target = word;
-		break;
-	}
-}
-
-string url = "https://github.com/" + REPO + "/releases/" +
-	(target == "latest" ? "latest/download" : "download/" + target) + "/" + ASSET;
-
-// The folder this script lives in. get_SCRIPT_MAIN_PATH is the full path of
-// the script being run, so everything after the last separator is dropped.
-string here = ".";
-string main_path = get_SCRIPT_MAIN_PATH;
-int cut = main_path.find_last("/");
-if (cut < 0)
-	cut = main_path.find_last("\\");
-if (cut > 0)
-	here = main_path.substr(0, cut);
-
-string destination = here + "/" + ASSET;
-
-// The copy already in this folder is the one nvgt loads, so it decides
-// whether we may replace anything at all.
-if (file_exists(destination)) {
-	// A file that cannot be renamed is a file Windows has open, which means
-	// nvgt has the dll loaded. Refuse rather than half replace it.
-	if (!file_move(destination, destination + ".probe")) {
-		screen_reader_speak("Cannot replace " + destination + ": it is in use, which means nvgt has this dll loaded. Close nvgt and run this again.");
-		exit();
-	}
-	// It was not loaded - put it back, the download may still fail.
-	file_move(destination + ".probe", destination);
-}
-
-screen_reader_speak("Downloading nvmidi " + target + " from " + REPO + ".");
-
-// The download lands in a temporary name first, so a transfer that dies
-// halfway cannot leave a truncated nvmidi.dll for nvgt to load next time.
-string temporary = destination + ".part";
-if (file_exists(temporary))
-	file_delete(temporary);
-
-bool ok = false;
-
-// The download goes through nvgt's own http client and is streamed straight
-// into a datastream, so the dll is never held as one script string and never
-// passes through a text encoding. response_body empties itself as it is read,
-// which is exactly what a stream wants: the loop drains it into the stream.
-http client;
-if (client.get(url)) {
-	file part(temporary, "wb");
-	if (part.active) {
-		bool reading = true;
-		while (reading) {
-			client.wait(1000);
-			part.write(client.response_body);
-			reading = client.running;
+// Everything lives in main(): nvgt runs a script by calling main, and does not
+// execute statements sitting at the top level of the file, so a statement out
+// there is a compilation error, not a shortcut.
+void main() {
+	// The release to ask GitHub for. "latest" is a GitHub alias for the newest
+	// non-prerelease release, so it needs no API call and no token.
+	string target = "latest";
+	// nvgt exposes the command line the script was started with.
+	string command_line = get_COMMAND_LINE;
+	string[]@ words = command_line.split(" ");
+	// words[0] is the script name itself; anything after it is the version.
+	for (uint i = 1; i < words.length(); i++) {
+		string word = words[i].trim_whitespace();
+		if (word.length() > 0) {
+			target = word;
+			break;
 		}
-		part.write(client.response_body);
-		int size = part.size;
-		part.close();
-		if (client.status_code == 200 && size > 1024 && file_get_size(temporary) == size)
-			ok = true;
-		else
-			file_delete(temporary);
-		screen_reader_speak("Downloaded " + size + " bytes.");
-	} else {
-		screen_reader_speak("Cannot write into " + temporary + ".");
 	}
-} else {
-	screen_reader_speak("Cannot reach " + url + ".");
+
+	string url = "https://github.com/" + REPO + "/releases/" +
+		(target == "latest" ? "latest/download" : "download/" + target) + "/" + ASSET;
+
+	// The folder this script lives in. get_SCRIPT_MAIN_PATH is the full path of
+	// the script being run, so everything after the last separator is dropped.
+	string here = ".";
+	string main_path = get_SCRIPT_MAIN_PATH;
+	int cut = main_path.find_last("/");
+	if (cut < 0)
+		cut = main_path.find_last("\\");
+	if (cut > 0)
+		here = main_path.substr(0, cut);
+
+	string destination = here + "/" + ASSET;
+
+	// The copy already in this folder is the one nvgt loads, so it decides
+	// whether we may replace anything at all.
+	if (file_exists(destination)) {
+		// A file that cannot be renamed is a file Windows has open, which means
+		// nvgt has the dll loaded. Refuse rather than half replace it.
+		if (!file_move(destination, destination + ".probe")) {
+			screen_reader_speak("Cannot replace " + destination + ": it is in use, which means nvgt has this dll loaded. Close nvgt and run this again.");
+			return;
+		}
+		// It was not loaded - put it back, the download may still fail.
+		file_move(destination + ".probe", destination);
+	}
+
+	screen_reader_speak("Downloading nvmidi " + target + " from " + REPO + ".");
+
+	// The download lands in a temporary name first, so a transfer that dies
+	// halfway cannot leave a truncated nvmidi.dll for nvgt to load next time.
+	string temporary = destination + ".part";
+	if (file_exists(temporary))
+		file_delete(temporary);
+
+	bool ok = false;
+
+	// The download goes through nvgt's own http client and is streamed straight
+	// into a datastream, so the dll is never held as one script string and never
+	// passes through a text encoding. response_body empties itself as it is
+	// read, which is exactly what a stream wants: the loop drains it into the
+	// stream.
+	http client;
+	if (client.get(url)) {
+		file part(temporary, "wb");
+		if (part.active) {
+			bool reading = true;
+			while (reading) {
+				client.wait(1000);
+				part.write(client.response_body);
+				reading = client.running;
+			}
+			part.write(client.response_body);
+			int size = part.size;
+			part.close();
+			if (client.status_code == 200 && size > 1024 && file_get_size(temporary) == size)
+				ok = true;
+			else
+				file_delete(temporary);
+			screen_reader_speak("Downloaded " + size + " bytes.");
+		} else {
+			screen_reader_speak("Cannot write into " + temporary + ".");
+		}
+	} else {
+		screen_reader_speak("Cannot reach " + url + ".");
+	}
+
+	if (!ok) {
+		// file_delete on a path that is not there is not an error, so the
+		// failed request leaves no half file behind either way.
+		file_delete(temporary);
+		screen_reader_speak("Download failed. Check the network, and check that the release " + target + " exists at github.com/" + REPO + ".");
+		return;
+	}
+
+	// Only now is the old copy touched, and only once the new one is complete.
+	if (file_exists(destination))
+		file_delete(destination);
+	file_move(temporary, destination);
+
+	screen_reader_speak("Installed nvmidi.dll " + target + " into " + here + ". Start nvgt to load it.");
 }
-
-if (!ok) {
-	// file_delete on a path that is not there is not an error, so the failed
-	// request leaves no half file behind either way.
-	file_delete(temporary);
-	screen_reader_speak("Download failed. Check the network, and check that the release " + target + " exists at github.com/" + REPO + ".");
-	exit();
-}
-
-// Only now is the old copy touched, and only once the new one is complete.
-if (file_exists(destination))
-	file_delete(destination);
-file_move(temporary, destination);
-
-screen_reader_speak("Installed nvmidi.dll " + target + " into " + here + ". Start nvgt to load it.");
