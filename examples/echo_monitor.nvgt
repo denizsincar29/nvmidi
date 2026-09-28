@@ -12,7 +12,6 @@
 //
 // Press escape to stop.
 
-midi_input@ keyboard;
 
 void main() {
 	if (midi_input_port_count() == 0) {
@@ -23,7 +22,7 @@ void main() {
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.txt");
 
-	keyboard = midi_input_create();
+	midi_input@ keyboard = midi_input_create();
 	if (!keyboard.open_config(config, "nvmidi echo")) {
 		screen_reader_speak("Cannot open " + config.describe() + ": " + midi_last_error());
 		return;

@@ -158,6 +158,11 @@ struct midi_note {
 };
 
 midi_note* midi_note_create();
+// Overloads so the constructor form midi_note(60) / midi_note(60, 100) can be
+// registered as an object or a global function: an overloaded name cannot be
+// resolved by asFUNCTION, only by asFUNCTIONPR with the parameter list.
+midi_note* midi_note_create_pitch(int pitch);
+midi_note* midi_note_create_velocity(int pitch, int velocity);
 midi_note* midi_note_create_full(int pitch, int velocity, int channel);
 // Takes the length straight in milliseconds, the unit every clock agrees on.
 midi_note* midi_note_create_ms(int pitch, int velocity, double duration_ms);

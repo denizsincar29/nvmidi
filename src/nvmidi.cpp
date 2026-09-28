@@ -304,6 +304,8 @@ std::string midi_note::to_string() const {
 }
 
 midi_note* midi_note_create() { return new midi_note(); }
+midi_note* midi_note_create_pitch(int pitch) { return new midi_note(pitch); }
+midi_note* midi_note_create_velocity(int pitch, int velocity) { return new midi_note(pitch, velocity); }
 
 midi_note* midi_note_create_full(int pitch, int velocity, int channel) {
 	midi_note* note = new midi_note(pitch, velocity);
@@ -1557,7 +1559,6 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectProperty("midi_duration", "double ppq", asOFFSET(midi_duration, ppq)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_duration", "double to_ms() const", asMETHOD(midi_duration, to_ms), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_duration", "string to_string() const", asMETHOD(midi_duration, to_string), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_duration", "string opImplConv() const", asMETHOD(midi_duration, to_string), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_duration", "midi_duration& opAssign(const midi_duration&in other)", asMETHODPR(midi_duration, opAssign, (const midi_duration&), midi_duration&), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_duration", "midi_duration& opAssign(double amount)", asMETHODPR(midi_duration, opAssign, (double), midi_duration&), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	// By value, not midi_duration@ - see the comment above the type.
@@ -1575,7 +1576,13 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectProperty("midi_note", "midi_duration length", asOFFSET(midi_note, length)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_note", "double duration_ms", asOFFSET(midi_note, length) + offsetof(midi_duration, amount)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_note", "string to_string() const", asMETHOD(midi_note, to_string), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_note", "string opImplConv() const", asMETHOD(midi_note, to_string), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	// The object form of the factory. A script writes midi_note(60, 100) as
+	// naturally as it writes midi_duration(1.0, MUSIC_BEATS), and without this
+	// that line is compiled as a value object: "Data type can't be 'midi_note'",
+	// because a midi_note is a handle type and cannot live on the stack.
+	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note()", asFUNCTION(midi_note_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note(int pitch)", asFUNCTIONPR(midi_note_create_pitch, (int), midi_note*), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note(int pitch, int velocity)", asFUNCTIONPR(midi_note_create_velocity, (int, int), midi_note*), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note_create()", asFUNCTION(midi_note_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note_create(int pitch, int velocity, int channel)", asFUNCTION(midi_note_create_full), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note_create_ms(int pitch, int velocity, double duration_ms)", asFUNCTION(midi_note_create_ms), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);

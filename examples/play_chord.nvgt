@@ -8,8 +8,6 @@
 // The notes are sent back out of the same keyboard, so its built in engine
 // makes them heard. The port comes from midi_config.txt next to this script.
 
-midi_config@ config;
-midi_input@ keyboard;
 
 // Builds an array of notes out of a comma separated list, so a test can be
 // written as "60,64,67" instead of four lines of object juggling.
@@ -22,9 +20,9 @@ array<midi_note@>@ chord(const string&in pitches, double length_ms) {
 		midi_note@ note;
 		int number = midi_note_number(parts[i].trim_whitespace());
 		if (number >= 0)
-			@note = midi_note(number);
+			note = midi_note(number);
 		else
-			@note = midi_note(parse_int(parts[i].trim_whitespace()));
+			note = midi_note(parse_int(parts[i].trim_whitespace()));
 		note.velocity = 100;
 		note.length = midi_duration(length_ms, MIDI_MS);
 		notes.insert_last(note);
@@ -33,7 +31,7 @@ array<midi_note@>@ chord(const string&in pitches, double length_ms) {
 }
 
 void main() {
-	config = midi_config_create();
+	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.txt");
 
 	int port = config.find_input_port();
@@ -42,7 +40,7 @@ void main() {
 		return;
 	}
 
-	keyboard = midi_input_create();
+	midi_input@ keyboard = midi_input_create();
 	if (!keyboard.open_config(config, "nvmidi chord test")) {
 		screen_reader_speak("Cannot open: " + midi_last_error());
 		return;

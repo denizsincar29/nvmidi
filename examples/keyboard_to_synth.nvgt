@@ -11,8 +11,6 @@
 // Press escape to stop. On the way out every note is released, so nothing is
 // left sounding. Both ports come from midi_config.txt next to this script.
 
-midi_input@ input;
-midi_output@ output;
 
 void panic() {
 	output.all_notes_off();
@@ -30,8 +28,8 @@ void main() {
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.txt");
 
-	input = midi_input_create();
-	output = midi_output_create();
+	midi_input@ input = midi_input_create();
+	midi_output@ output = midi_output_create();
 
 	if (!input.open_config(config, "nvmidi forward in")) {
 		screen_reader_speak("Input (" + config.describe() + "): " + midi_last_error());
