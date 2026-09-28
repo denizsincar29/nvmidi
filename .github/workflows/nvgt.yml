@@ -91,6 +91,21 @@ jobs:
           cp "$plugin" "$(dirname "$nvgt")/lib/nvmidi.so"
           ls -la "$(dirname "$nvgt")/lib/nvmidi.so"
 
+          # The plugin builds, and its entry points are the two symbols the
+          # engine looks up - but a library the engine refuses to register is
+          # indistinguishable from one that was never found, so print what the
+          # engine will actually see instead of guessing later. nm/readelf are
+          # the runner's own binutils; nothing here is installed.
+          echo "--- the built plugin's entry points"
+          nm -D --defined-only "$plugin" 2>&1 | grep -E 'nvgt_plugin' || echo "(no nvgt_plugin symbol in the dynamic table)"
+          echo "--- what the plugin needs at load time"
+          readelf -d "$plugin" 2>&1 | grep -E 'NEEDED|SONAME' || true
+          echo "--- and what the engine's own working plugins need"
+          for lib in $(find engine -name 'libunicode.so' -o -name 'libnvgt.so*' 2>/dev/null | head -n2); do
+            echo "$lib:"
+            readelf -d "$lib" 2>&1 | grep -E 'NEEDED|SONAME' || true
+          done
+
           # The engine loads by bare name, so if it carries its own loader
           # library a copy of the plugin there is what a script actually gets.
           # Both are filled and both are listed, so the winning copy is visible.
