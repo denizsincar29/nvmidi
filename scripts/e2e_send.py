@@ -21,14 +21,17 @@ Nothing here is installed: libasound is already on the runner, and ctypes is in
 the standard library. That matters because this file runs in a ci job whose
 whole point is to avoid installing anything into the user's machine.
 
-Dependencies, all measured rather than assumed:
+Dependencies - what is measured here and what is not:
 
-  * the alsa sequencer (/dev/snd/seq) is a kernel object and exists on a
-    machine with no sound hardware
   * a port name given to snd_seq_create_simple_port is visible to every other
-    client, and snd_seq_parse_address resolves it by substring
+    client, and snd_seq_parse_address resolves it by substring (documented
+    alsa behaviour, and the whole basis of this file)
   * snd_seq_connect_to is how a client addresses another client's port; the
-    event itself is then sent to subscribers and delivered to that subscription
+    event is then broadcast to subscribers and delivered to that subscription
+  * the alsa sequencer itself is *not* guaranteed to exist. It is a kernel
+    object (/dev/snd/seq, the snd-seq module) and the machine must have it.
+    This file cannot create it; if snd_seq_open fails, that is the runner's
+    configuration and the message says so.
 
 The exit code is the interface: 0 only when the note was actually handed to the
 sequencer, with the reason on stderr otherwise.

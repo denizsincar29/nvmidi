@@ -323,10 +323,13 @@ jobs:
   # result a stubbed-out plugin cannot produce, because it arrives from outside
   # it.
   #
-  # The runner has no sound card. It does not need one: the ALSA sequencer is a
-  # kernel-side message bus that exists whether or not there is hardware on the
-  # other end, and attaching a synthesiser to it is how this becomes a test of
-  # "did a note reach an instrument" rather than "did a function return true".
+  # The runner has no sound card, which is not by itself a problem: the ALSA
+  # sequencer is a kernel-side message bus, not a device driver for hardware.
+  # It is still a kernel object, and the first run of this job proved the
+  # difference the hard way - "open /dev/snd/seq failed: No such file or
+  # directory", "can't open sequencer". A bus that is not there is not a bus
+  # that needs no hardware. The sink step now creates it (modprobe snd-seq,
+  # then the device node) and says plainly what it found either way.
   e2e-midi:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -388,10 +391,61 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # alsa-utils is what has aconnect and aseqdump; fluidsynth is the
-          # instrument. Both come from apt, which this container has by
-          # definition - the runner is a normal ubuntu image, unlike the agent's.
-          sudo apt-get install -y -qq alsa-utils
+          # alsa-utils is what has aconnect; fluidsynth is the instrument.
+          # fluidsynth is installed by name - the first version of this step
+          # installed only the soundfont and then called a binary that was
+          # never there ("fluidsynth: command not found").
+          sudo apt-get install -y -qq alsa-utils fluidsynth || true
+
+          # Everything below needs one kernel object: the alsa sequencer,
+          # /dev/snd/seq, the snd-seq module. The previous version of this
+          # step claimed a runner has that bus regardless of sound hardware.
+          # That claim was wrong, and the run said so:
+          #   ALSA lib seq_hw.c:528:(snd_seq_hw_open) open /dev/snd/seq failed
+          #   can't open sequencer
+          # Both ways of getting it are attempted below, and what actually
+          # happened is printed either way - no path exits quietly.
+          echo "--- the sequencer device, before"
+          ls -l /dev/snd/seq 2>&1 || echo "no /dev/snd/seq"
+          uname -r
+          lsmod 2>/dev/null | grep -E '^snd' || echo "no snd modules loaded"
+
+          echo "--- module path 1: modprobe"
+          sudo modprobe snd-seq 2>&1 || echo "modprobe snd-seq failed"
+          echo "--- module path 2: module load"
+          sudo modprobe snd-seq-midi 2>&1 || true
+          lsmod 2>/dev/null | grep -E 'snd_seq' || echo "snd_seq is still not loaded"
+
+          # Last resort: create the device node by hand. Major 116 minor 1 is
+          # the sequencer's fixed char device (Documentation/sound/alsa/
+          # ALSA-Configuration.txt, "Sequencer"); the module being present is
+          # what makes the node answer.
+          if [ ! -e /dev/snd/seq ]; then
+            echo "--- module path 3: the device node itself"
+            sudo mkdir -p /dev/snd
+            sudo mknod /dev/snd/seq c 116 1 2>&1 || echo "mknod failed"
+            sudo chmod 666 /dev/snd/seq 2>&1 || true
+            ls -l /dev/snd/seq 2>&1 || true
+          fi
+
+          echo "--- can anything open it"
+          cat > /tmp/seq_probe.py <<'PROBE'
+          import ctypes, ctypes.util, sys
+          lib = ctypes.CDLL(ctypes.util.find_library("asound") or "libasound.so.2")
+          h = ctypes.c_void_p()
+          lib.snd_seq_open.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_char_p, ctypes.c_int, ctypes.c_int]
+          rc = lib.snd_seq_open(ctypes.byref(h), b"default", 1, 0)
+          lib.snd_strerror.restype = ctypes.c_char_p
+          if rc < 0:
+              print("the sequencer cannot be opened: %s" % lib.snd_strerror(rc).decode())
+              sys.exit(1)
+          lib.snd_seq_close(ctypes.c_void_p(h))
+          print("the sequencer opens")
+          PROBE
+          if ! python3 /tmp/seq_probe.py; then
+            echo "::error title=no alsa sequencer::this runner has no /dev/snd/seq and it cannot be created, so there is no midi bus to test on. The plugin's alsa backend is built and loadable, but this job cannot exercise a port here."
+            exit 1
+          fi
 
           cat > /tmp/nvgt_midi.conf <<'CONF'
           # The runner has no audio hardware, so the synth must not try to open
@@ -401,7 +455,6 @@ jobs:
           synth.gain=0.2
           CONF
 
-          mkdir -p /tmp/sf
           # a tiny soundfont, from the same distribution: the job is testing
           # that midi events reach a synthesiser, not how one sounds.
           sudo apt-get install -y -qq fluid-soundfont-gm || true
@@ -414,6 +467,8 @@ jobs:
 
           ( fluidsynth -a null -f /tmp/nvgt_midi.conf -i -o synth.midi-bank-select=gm "$sf" >/tmp/fluidsynth.log 2>&1 & )
           sleep 5
+          echo "--- the synthesiser's own log"
+          cat /tmp/fluidsynth.log || true
           echo "--- midi clients, before"
           aconnect -i || true
           aconnect -o || true

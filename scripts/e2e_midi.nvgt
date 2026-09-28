@@ -1,3 +1,9 @@
+// nvgt loads this plugin only when the script asks for it by name: without
+// the pragma below the engine never opens the library and every midi_* name
+// is unknown to the compiler. That is exactly how the first ci run of this
+// script failed, so the line is the first thing in the file on purpose.
+#pragma plugin nvmidi
+
 // e2e_midi.nvgt - the whole plugin, exercised once, with the console as the
 // only microphone.
 //
@@ -32,8 +38,9 @@
 //   6. and the whole high level layer runs   "PLAYED <pattern>"
 //
 // Step 4 needs a client on the other side; the ci job creates one with
-// aconnect and aseqdump. When nothing connects, the wait ends by itself and
-// the script reports "NOTHING HEARD" and fails - a silent pass would be
+// scripts/e2e_send.py, a second process that connects to the published port
+// by name and plays a note into it. When nothing connects, the wait ends by
+// itself and the script reports a failure - a silent pass would be
 // indistinguishable from a plugin that opens ports and then reads none.
 
 // --- the harness -----------------------------------------------------------
