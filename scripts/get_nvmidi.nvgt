@@ -60,10 +60,13 @@ const string REPO = "denizsincar29/nvmidi";
 // --- headless safety net -------------------------------------------------
 // Measured on the engine: screen_reader_speak aborts the whole process
 // (SIGABRT) when the machine has no screen reader attached, and nothing after
-// the call ever runs. A user's machine has one, a build machine never does.
-// The reader keeps its place and the engine's own dialog box is the fallback
-// when it is missing, so this script is runnable - and therefore testable -
-// on both.
+// the call ever runs. A user's machine has one, a build machine never does,
+// and that made every script here untestable on a build machine.
+//
+// So the reader is not called at all: this script goes straight to the
+// engine's own dialog box, which speaks through whatever assistive technology
+// is running and is readable by a person either way. The caller's machine
+// decides how the text arrives, not the script.
 void announce(const string&in text) {
 	// alert's second argument is the box's title; the one-argument form does
 	// not compile against this engine (measured).

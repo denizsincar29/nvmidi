@@ -9,10 +9,11 @@
 // script in this repository untestable on a build machine, and it is a
 // property of the caller's machine, not of the script.
 //
-// So the scripts try the real reader first, the way they always have, and fall
-// back to the engine's own dialog box when there is none. On a user's machine
-// the reader is there and nothing changes; on a build machine the script runs
-// to the end instead of dying on its first announcement.
+// So the reader is not called at all: the scripts go straight to the engine's
+// own dialog box, which speaks through whatever assistive technology is
+// running and is readable by a person either way. The caller's machine decides
+// how the text arrives, not the script - and on a build machine the script
+// runs to the end instead of dying on its first announcement.
 void announce(const string&in text) {
 	// alert wants a title as its second argument; a bare call does not
 	// compile against this engine (measured: "No matching signatures to
