@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 
 #if defined(_WIN32)
@@ -55,6 +56,50 @@ const int g_music_beats_140 = MUSIC_BEATS_140;
 // RtMidi throws on every failure; NVGT scripts should see a return value
 // instead, so every entry point wraps its body in this.
 std::string g_last_error;
+
+// Serialises every RtMidi object's lifetime in this plugin. See the comment on
+// release_port below for what it is holding off; one mutex is enough because
+// nothing here ever holds it across a wait.
+std::recursive_mutex g_rtmidi_mutex;
+
+// Run one RtMidi object through its whole life with nothing else able to touch
+// RtMidi at the same time.
+//
+// This is the whole reason this function exists, and it was originally not
+// here at all.
+//
+// RtMidi keeps one list of live port objects for the process (MidiApi's
+// apiData_, inside RtMidi.cpp). A port object that is created and destroyed is
+// NOT freed when its destructor runs: it is appended to that list and released
+// later, when some *other* RtMidi object is constructed - RtMidi::apiData()
+// calls deleteUnusedApiData() on every access. So the collector runs inside
+// the constructor of whatever comes next.
+//
+// Which means: while midi_input_port_count() is busy constructing its own
+// RtMidiIn, the collector is walking the same process-wide list that this
+// thread is mutating - and a std::vector that grows during that walk
+// reallocates, moves every element, and leaves the collector holding a
+// pointer into freed memory. Measured, this is not theoretical: it is the
+// access violation the probe reports when it calls nvgt_plugin() and the
+// plugin registers its types.
+//
+// The object is therefore not just constructed and left to its destructor.
+// Its entire life - construction, which is where the collector may run, and
+// destruction, which is what queues the next collection - happens inside one
+// uninterrupted region of code, so no other thread can be inside RtMidi while
+// the list is being walked or rewritten.
+//
+// Note what is NOT done here: the object is not deleted through a `RtMidi*`.
+// RtMidi declares its destructor protected (third_party/rtmidi/RtMidi.h) on
+// purpose, so the owning handle is always the derived type, built here on the
+// stack, where the compiler knows the real size and calls the real destructor.
+template <class Port, class Body>
+auto with_port(Body body) -> decltype(body(std::declval<Port&>())) {
+	const std::lock_guard<std::recursive_mutex> lock(g_rtmidi_mutex);
+	Port port;
+	return body(port);
+}
+
 // And the first one of the run. Kept separately because g_last_error is
 // overwritten every time something else goes wrong, and the earliest failure
 // is usually the one that caused the rest.
@@ -1267,8 +1312,9 @@ std::string midi_config::describe() const {
 
 unsigned int midi_input_port_count() {
 	try {
-		RtMidiIn in;
-		return in.getPortCount();
+		return with_port<RtMidiIn>([](RtMidiIn& in) {
+			return in.getPortCount();
+		});
 	} catch (RtMidiError& error) {
 		set_error(error.getMessage());
 		return 0;
@@ -1277,8 +1323,9 @@ unsigned int midi_input_port_count() {
 
 unsigned int midi_output_port_count() {
 	try {
-		RtMidiOut out;
-		return out.getPortCount();
+		return with_port<RtMidiOut>([](RtMidiOut& out) {
+			return out.getPortCount();
+		});
 	} catch (RtMidiError& error) {
 		set_error(error.getMessage());
 		return 0;
@@ -1287,9 +1334,10 @@ unsigned int midi_output_port_count() {
 
 std::string midi_input_port_name(unsigned int port) {
 	try {
-		RtMidiIn in;
-		if (port >= in.getPortCount()) return "";
-		return in.getPortName(port);
+		return with_port<RtMidiIn>([port](RtMidiIn& in) -> std::string {
+			if (port >= in.getPortCount()) return "";
+			return in.getPortName(port);
+		});
 	} catch (RtMidiError&) {
 		return "";
 	}
@@ -1297,9 +1345,10 @@ std::string midi_input_port_name(unsigned int port) {
 
 std::string midi_output_port_name(unsigned int port) {
 	try {
-		RtMidiOut out;
-		if (port >= out.getPortCount()) return "";
-		return out.getPortName(port);
+		return with_port<RtMidiOut>([port](RtMidiOut& out) -> std::string {
+			if (port >= out.getPortCount()) return "";
+			return out.getPortName(port);
+		});
 	} catch (RtMidiError&) {
 		return "";
 	}
