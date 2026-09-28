@@ -19,8 +19,7 @@
 //   file_exists/file_delete/     Filesystem/Functions
 //   file_copy/file_get_size
 //   directory_exists/directory_create
-//   screen_reader_speak,         Text-To-Speech/Functions
-//   alert                        Message boxes / alert
+//   alert, input_box             Message boxes
 //
 // Two things the reference states and this file depends on:
 //
@@ -114,6 +113,14 @@ void main() {
 
 	// The release to ask GitHub for. "latest" means the newest one; anything
 	// else is taken as a tag name.
+	//
+	// A console argument wins when there is one, so the script stays usable
+	// from a command line. With none - which is how a screen reader user
+	// launches a script, by activating it - the version is asked for in a
+	// dialog box instead of silently downloading "latest". Measured on the
+	// engine: input_box's first argument is the prompt, the second is the
+	// box's title, and the third is the text the field starts with, so
+	// pressing enter accepts the default.
 	string target = "latest";
 
 	// COMMAND_LINE holds the arguments and nothing else - the engine does strip
@@ -126,6 +133,15 @@ void main() {
 			target = word;
 			break;
 		}
+	}
+
+	if (target == "latest") {
+		string asked = input_box("Which nvmidi release do you want? Leave it as latest for the newest one, or type a tag such as v0.7.1.", "nvmidi", "latest");
+		asked = asked.trim_whitespace();
+		// An empty field or a cancelled box both come back empty; the default
+		// is what was already chosen, so this cannot fail.
+		if (asked.length() > 0)
+			target = asked;
 	}
 
 	// The short address everyone expects -
