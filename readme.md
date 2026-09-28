@@ -312,6 +312,27 @@ folder: `list_ports` (what is plugged in, and what the config picks),
 one port to another, transposed) and `play_chord` (chords and patterns on the
 keyboard's own sound engine).
 
+## Installing the dll
+
+`scripts/get_nvmidi.nvgt` fetches `nvmidi.dll` from this repository's releases
+and puts it in the folder the script sits in, which is the folder nvgt loads
+the plugin from:
+
+    nvgt scripts/get_nvmidi.nvgt           newest release
+    nvgt scripts/get_nvmidi.nvgt v0.7.0    a named release
+
+It uses nothing but nvgt's own script API — its http client, its file and
+screen reader functions — so there is no separate downloader to install. The
+transfer is streamed into a file opened binary, so the dll never passes
+through a text encoding, and it lands under a temporary name first: a
+connection that dies halfway cannot leave a truncated dll for nvgt to load on
+the next run.
+
+A dll that is currently loaded cannot be overwritten on Windows, so the script
+checks by renaming the existing copy out of the way before it downloads
+anything. If that rename fails, it says so and stops rather than replacing
+half of it — close nvgt and run it again.
+
 ## Full API
 
 `doc/api.md` is the reference: every type, every method, the error model and

@@ -1,0 +1,48 @@
+name: release
+# Cuts a GitHub Release carrying nvmidi.dll when a version tag is pushed.
+#
+# The downloader in examples/ resolves the "latest" release and pulls the dll
+# out of it, so the asset name here is a contract, not a detail: it is
+# nvmidi.dll, and it has to stay nvmidi.dll.
+#
+# The tag is the version. v0.7.0 makes a release named v0.7.0 - there is no
+# second place to write the number down, so it cannot drift from the tag.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build
+        shell: cmd
+        run: mingw32-make
+
+      - name: keep the dll
+        uses: actions/upload-artifact@v4
+        with:
+          name: nvmidi-dll
+          path: nvmidi.dll
+          if-no-files-found: error
+
+      # Only a tag push makes a release. A manual dispatch of this workflow
+      # still gets the artifact above, but must not invent a version number -
+      # a release with a guessed tag is worse than no release.
+      - name: release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" nvmidi.dll \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
