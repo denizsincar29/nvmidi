@@ -150,10 +150,11 @@ bool read_note(CScriptArray* notes, size_t index, midi_note& out);
 // Waits until the moment is reached, in short hops.
 void wait_until(double moment);
 
-std::string midi_message::to_string() const {
+const char* midi_message::to_string() const {
 	std::ostringstream out;
 	out << midi_message_name(*this);
-	return out.str();
+	buffer = out.str();
+	return buffer.c_str();
 }
 
 // ---------------------------------------------------------------------------
@@ -1462,7 +1463,10 @@ void register_midi_message(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectProperty("midi_message", "uint8 data2", asOFFSET(midi_message, data2)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_message", "int channel", asOFFSET(midi_message, channel)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_message", "double timestamp", asOFFSET(midi_message, timestamp)), "RegisterObjectProperty", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_message", "string opImplConv() const", asMETHOD(midi_message, to_string), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	// One name only: "string to_string() const". An opImplConv() declaration
+	// here would describe a conversion operator, which is not a method
+	// Angelscript can register this way, and a script can already write
+	// "" + m because the engine converts any type that has to_string().
 	reg->check( engine->RegisterObjectMethod("midi_message", "string to_string() const", asMETHOD(midi_message, to_string), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	fprintf(stderr, "nvmidi trace: EXIT register_midi_message\n"); fflush(stderr);
 }

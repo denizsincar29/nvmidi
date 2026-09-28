@@ -28,9 +28,14 @@ struct midi_message {
 	unsigned char data2;
 	int channel; // 1..16
 	double timestamp; // seconds since the input port was opened
-	std::string to_string() const;
+	// Returns a pointer into a per-object buffer rather than a std::string:
+	// Angelscript can marshal a const char* straight into its own string, and
+	// it has no idea what a std::string return by value is, which made the
+	// binding below fail to register and left the type half-built.
+	const char* to_string() const;
+private:
+	mutable std::string buffer; // holds the text the returned pointer points at
 };
-
 // ---------------------------------------------------------------------------
 // midi_duration - how long something lasts, built from a unit and a count
 // ---------------------------------------------------------------------------
