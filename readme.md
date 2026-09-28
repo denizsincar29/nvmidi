@@ -208,7 +208,7 @@ calling on shutdown so a panic does not leave a stuck note sounding.
 - `int midi_note_number(const string&in name)` — `"C4"`, `"F#3"`, `"Bb5"` to a
   MIDI note number, -1 when the name is not understood. `midi_note_name(60)`
   goes the other way.
-- `midi_config@ midi_config_create()`, `midi_duration@ midi_duration_create()`,
+- `midi_config@ midi_config_create()`, `midi_duration midi_duration_create()` (by value),
   `midi_note@ midi_note_create()` — factories.
 - `MIDI_MS`, `MIDI_TICKS`, `MIDI_BEATS`, `MIDI_BARS` — the duration units.
   `MUSIC_MS`, `MUSIC_TICKS`, `MUSIC_BEATS`, `MUSIC_BARS` are the same four

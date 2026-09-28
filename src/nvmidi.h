@@ -93,11 +93,37 @@ struct midi_duration {
 	midi_duration();
 	midi_duration(double amount, int unit);
 	midi_duration(double amount, int unit, double tempo);
+
+	// Assignment from the parts of another duration. The default copy
+	// assignment only exists in C++; without this, a script could read a
+	// duration property but never write one, and note.length = duration(...)
+	// would not compile.
+	midi_duration& opAssign(const midi_duration& other);
+
+	// The same, taking the parts back out of a duration that has to be
+	// converted first - midi_note::duration_ms is registered as a double
+	// living inside a midi_duration, and a script writes it directly.
+	midi_duration& opAssign(double amount);
 };
 
-midi_duration* midi_duration_create();
-midi_duration* midi_duration_create_full(double amount, int unit);
-midi_duration* midi_duration_create_tempo(double amount, int unit, double tempo);
+// These return by value. A duration is registered as a plain value type, and
+// a value type can never be a handle in Angelscript (see asCDataType::MakeHandle
+// in the SDK: only asOBJ_REF, asOBJ_TEMPLATE_SUBTYPE, asOBJ_ASHANDLE and
+// asOBJ_FUNCDEF can carry a @). An earlier version returned midi_duration*
+// and registered them as returning midi_duration@, which is a registration
+// Angelscript rejects outright.
+midi_duration midi_duration_create();
+midi_duration midi_duration_create_full(double amount, int unit);
+midi_duration midi_duration_create_tempo(double amount, int unit, double tempo);
+
+// Placement-new wrappers for the Angelscript construct and destruct
+// behaviours. asCALL_CDECL_OBJLAST hands these the address of the object being
+// built as the last parameter, so each takes one argument more than the
+// constructor it calls.
+void midi_duration_default_construct(midi_duration* self);
+void midi_duration_construct(midi_duration* self, double amount, int unit);
+void midi_duration_construct_tempo(midi_duration* self, double amount, int unit, double tempo);
+void midi_duration_destruct(midi_duration* self);
 
 // ---------------------------------------------------------------------------
 // midi_note - one note, with its pitch and its length

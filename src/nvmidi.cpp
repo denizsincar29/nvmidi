@@ -293,14 +293,48 @@ std::string midi_duration::to_string() const {
 	return out.str();
 }
 
-midi_duration* midi_duration_create() { return new midi_duration(); }
-
-midi_duration* midi_duration_create_full(double amount, int unit) {
-	return new midi_duration(amount, unit);
+midi_duration& midi_duration::opAssign(const midi_duration& other) {
+	amount = other.amount;
+	unit = other.unit;
+	tempo = other.tempo;
+	ppq = other.ppq;
+	return *this;
 }
 
-midi_duration* midi_duration_create_tempo(double amount, int unit, double tempo) {
-	return new midi_duration(amount, unit, tempo);
+midi_duration& midi_duration::opAssign(double value) {
+	amount = value;
+	unit = MIDI_UNIT_MS;
+	ppq = 96.0;
+	return *this;
+}
+
+midi_duration midi_duration_create() { return midi_duration(); }
+
+midi_duration midi_duration_create_full(double amount, int unit) {
+	return midi_duration(amount, unit);
+}
+
+midi_duration midi_duration_create_tempo(double amount, int unit, double tempo) {
+	return midi_duration(amount, unit, tempo);
+}
+
+// The constructors, wrapping a placement new on the memory Angelscript hands
+// over. asCALL_CDECL_OBJLAST passes that pointer as the last argument, which
+// is why the signature has one parameter more than the script-visible one.
+void midi_duration_default_construct(midi_duration* self) {
+	new (self) midi_duration();
+}
+
+void midi_duration_construct(midi_duration* self, double amount, int unit) {
+	new (self) midi_duration(amount, unit);
+}
+
+void midi_duration_construct_tempo(midi_duration* self, double amount, int unit, double tempo) {
+	new (self) midi_duration(amount, unit, tempo);
+}
+
+void midi_duration_destruct(midi_duration* self) {
+	self->~midi_duration();
 }
 
 // ---------------------------------------------------------------------------
@@ -1501,11 +1535,17 @@ void register_midi_output(asIScriptEngine* engine) {
 }
 
 void register_midi_note(asIScriptEngine* engine) {
-	// Deliberately not asOBJ_POD: a POD value type has no handle, and the
-	// factories below hand the script a midi_duration@ handle. The traits flag
-	// is what asOBJ_POD would have added, so a script still passes a duration
-	// by value into a parameter the same way.
+	// A value type, and it has to stay one: a handle can only be formed for a
+	// type flagged asOBJ_REF, asOBJ_TEMPLATE_SUBTYPE, asOBJ_ASHANDLE or
+	// asOBJ_FUNCDEF (asCDataType::MakeHandle in the SDK), so every midi_duration
+	// below is passed and returned by value. asOBJ_POD is deliberately not set -
+	// it is the traits flag plus a promise that the type is bitwise copyable,
+	// which a midi_duration with a std::string to_string() is not.
 	engine->RegisterObjectType("midi_duration", sizeof(midi_duration), asOBJ_VALUE | asGetTypeTraits<midi_duration>());
+	engine->RegisterObjectBehaviour("midi_duration", asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(midi_duration_default_construct), asCALL_CDECL_OBJLAST);
+	engine->RegisterObjectBehaviour("midi_duration", asBEHAVE_CONSTRUCT, "void f(double amount, int unit)", asFUNCTION(midi_duration_construct), asCALL_CDECL_OBJLAST);
+	engine->RegisterObjectBehaviour("midi_duration", asBEHAVE_CONSTRUCT, "void f(double amount, int unit, double tempo)", asFUNCTION(midi_duration_construct_tempo), asCALL_CDECL_OBJLAST);
+	engine->RegisterObjectBehaviour("midi_duration", asBEHAVE_DESTRUCT, "void f()", asFUNCTION(midi_duration_destruct), asCALL_CDECL_OBJLAST);
 	engine->RegisterObjectProperty("midi_duration", "double amount", asOFFSET(midi_duration, amount));
 	engine->RegisterObjectProperty("midi_duration", "int unit", asOFFSET(midi_duration, unit));
 	engine->RegisterObjectProperty("midi_duration", "double tempo", asOFFSET(midi_duration, tempo));
@@ -1513,9 +1553,12 @@ void register_midi_note(asIScriptEngine* engine) {
 	engine->RegisterObjectMethod("midi_duration", "double to_ms() const", asMETHOD(midi_duration, to_ms), asCALL_THISCALL);
 	engine->RegisterObjectMethod("midi_duration", "string to_string() const", asMETHOD(midi_duration, to_string), asCALL_THISCALL);
 	engine->RegisterObjectMethod("midi_duration", "string opImplConv() const", asMETHOD(midi_duration, to_string), asCALL_THISCALL);
-	engine->RegisterGlobalFunction("midi_duration@ midi_duration_create()", asFUNCTION(midi_duration_create), asCALL_CDECL);
-	engine->RegisterGlobalFunction("midi_duration@ midi_duration_create(double amount, int unit)", asFUNCTION(midi_duration_create_full), asCALL_CDECL);
-	engine->RegisterGlobalFunction("midi_duration@ midi_duration_create(double amount, int unit, double tempo)", asFUNCTION(midi_duration_create_tempo), asCALL_CDECL);
+	engine->RegisterObjectMethod("midi_duration", "midi_duration& opAssign(const midi_duration&in other)", asMETHODPR(midi_duration, opAssign, (const midi_duration&), midi_duration&), asCALL_THISCALL);
+	engine->RegisterObjectMethod("midi_duration", "midi_duration& opAssign(double amount)", asMETHODPR(midi_duration, opAssign, (double), midi_duration&), asCALL_THISCALL);
+	// By value, not midi_duration@ - see the comment above the type.
+	engine->RegisterGlobalFunction("midi_duration midi_duration_create()", asFUNCTION(midi_duration_create), asCALL_CDECL);
+	engine->RegisterGlobalFunction("midi_duration midi_duration_create(double amount, int unit)", asFUNCTION(midi_duration_create_full), asCALL_CDECL);
+	engine->RegisterGlobalFunction("midi_duration midi_duration_create(double amount, int unit, double tempo)", asFUNCTION(midi_duration_create_tempo), asCALL_CDECL);
 
 	// A handle type: a script writes note@ n = midi_note(60, 100); and the
 	// handle points at the object rather than copying it, which is what makes

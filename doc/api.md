@@ -236,7 +236,9 @@ the later ones arrive.
 - `midi_input@ midi_input_create()`
 - `midi_output@ midi_output_create()`
 - `midi_config@ midi_config_create()`
-- `midi_duration@ midi_duration_create()`
+- `midi_duration midi_duration_create()`, `midi_duration midi_duration_create(double amount, int unit)`,
+  `midi_duration midi_duration_create(double amount, int unit, double tempo)` - by value: a
+  `midi_duration` is a value type and can never be a handle
 - `midi_note@ midi_note_create()`
 
 Unit constants, so a script never has to remember 0..3: `MIDI_MS`,

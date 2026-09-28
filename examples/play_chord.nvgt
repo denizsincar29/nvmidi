@@ -13,9 +13,14 @@ array<midi_note@>@ chord(const string&in pitches, double length_ms) {
 	array<midi_note@>@ notes = array<midi_note@>();
 	string[]@ parts = pitches.split(",");
 	for (uint i = 0; i < parts.length(); i++) {
-		midi_note@ note = midi_note_number(parts[i].trim()) >= 0
-			? midi_note(midi_note_number(parts[i].trim()))
-			: midi_note(parseInt(trim(parts[i])));
+		// Not a ternary: Angelscript cannot choose between two object handles
+		// in ?:.
+		midi_note@ note;
+		int number = midi_note_number(parts[i].trim());
+		if (number >= 0)
+			@note = midi_note(number);
+		else
+			@note = midi_note(parseInt(trim(parts[i])));
 		note.velocity = 100;
 		note.length = midi_duration(length_ms, MIDI_MS);
 		notes.insertLast(note);
@@ -52,9 +57,9 @@ void main() {
 	// at the class tempo, half a bar, and a length counted in MIDI ticks.
 	// Beats and bars are converted by the duration itself, so a script can
 	// think in music and pass milliseconds only where the hardware demands it.
-	midi_duration@ beat = keyboard.duration(1.0, MIDI_BEATS);
-	midi_duration@ half_bar = keyboard.duration(0.5, MIDI_BARS);
-	midi_duration@ ticks = midi_duration(96.0, MIDI_TICKS);
+	midi_duration beat = keyboard.duration(1.0, MIDI_BEATS);
+	midi_duration half_bar = keyboard.duration(0.5, MIDI_BARS);
+	midi_duration ticks = midi_duration(96.0, MIDI_TICKS);
 
 	screen_reader_speak("At " + keyboard.tempo + " bpm a beat is " + beat.to_ms() + " milliseconds, half a bar is " + half_bar.to_ms() + ".");
 

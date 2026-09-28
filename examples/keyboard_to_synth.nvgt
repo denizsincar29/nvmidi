@@ -7,13 +7,13 @@
 // Press escape to stop. On the way out every note is released, so nothing is
 // left sounding. Both ports come from midi_config.txt next to this script.
 
-midi_input@ in;
-midi_output@ out;
+midi_input@ input;
+midi_output@ output;
 
 void panic() {
-	out.all_notes_off();
-	in.close();
-	out.close();
+	output.all_notes_off();
+	input.close();
+	output.close();
 	screen_reader_speak("Stopped.");
 }
 
@@ -26,39 +26,39 @@ void main() {
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.txt");
 
-	in = midi_input_create();
-	out = midi_output_create();
+	input = midi_input_create();
+	output = midi_output_create();
 
-	if (!in.open_config(config, "nvmidi forward in")) {
+	if (!input.open_config(config, "nvmidi forward in")) {
 		screen_reader_speak("Input (" + config.describe() + "): " + midi_last_error());
 		return;
 	}
-	if (!out.open_config(config, "nvmidi forward out")) {
+	if (!output.open_config(config, "nvmidi forward out")) {
 		screen_reader_speak("Output (" + config.describe() + "): " + midi_last_error());
-		in.close();
+		input.close();
 		return;
 	}
-	screen_reader_speak("From " + in.get_port_name() + " to " + out.get_port_name());
+	screen_reader_speak("From " + input.get_port_name() + " to " + output.get_port_name());
 
 	while (!key_pressed(KEY_ESCAPE)) {
 		midi_message@ m;
-		while (in.next_message(m)) {
+		while (input.next_message(m)) {
 			uchar command = m.status & 0xf0;
 
 			if (command == 0x90 && m.data2 > 0) {
 				// Note on. Transpose up an octave, but keep it in range.
 				int note = m.data1 + 12;
 				if (note > 127) note -= 12;
-				out.send_note_on(m.channel, note, m.data2);
+				output.send_note_on(m.channel, note, m.data2);
 			} else if (command == 0x80 || (command == 0x90 && m.data2 == 0)) {
 				// Note off, including the note-on-with-velocity-zero form
 				// many keyboards use.
 				int note = m.data1 + 12;
 				if (note > 127) note -= 12;
-				out.send_note_off(m.channel, note, m.data2);
+				output.send_note_off(m.channel, note, m.data2);
 			} else if (command == 0xe0) {
 				// Pitch bend passes through unchanged.
-				out.send(m.status, m.data1, m.data2);
+				output.send(m.status, m.data1, m.data2);
 			}
 			// Everything else is dropped. Add cases here as you need them.
 		}
