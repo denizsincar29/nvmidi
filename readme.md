@@ -149,11 +149,11 @@ whichever unit you think in:
 
 ```angelscript
 array<midi_note@>@ notes = array<midi_note@>();
-midi_note@ n = midi_note_create(60, 100);          // middle C, velocity 100
+midi_note@ n = nvmidi_note_create(60, 100);          // middle C, velocity 100
 n.length = midi_duration(1.0, MIDI_BEATS);  // one beat at the default 120 bpm
 notes.insert_last(n);
-notes.insert_last(midi_note_create(midi_note_number("E4"), 100));
-notes.insert_last(midi_note_create(midi_note_number("G4"), 100));
+notes.insert_last(nvmidi_note_create(midi_note_number("E4"), 100));
+notes.insert_last(nvmidi_note_create(midi_note_number("G4"), 100));
 
 out.play_chord_wait(notes);                 // sounds, then returns
 out.play_midi_chord_wait(notes, "arpeggio");
@@ -173,7 +173,7 @@ already resolved against it:
 
 ```angelscript
 in.tempo = 96.0;                                  // bpm, 120 by default
-midi_note@ n = midi_note_create(60, 100);
+midi_note@ n = nvmidi_note_create(60, 100);
 n.length = in.duration(1.0, MUSIC_BEATS);         // a beat at 96, not at 120
 n.length = in.duration(0.5, MUSIC_BARS);          // half a bar at the same tempo
 n.length = in.duration(96.0, MUSIC_TICKS);        // ticks ignore the tempo
@@ -235,7 +235,7 @@ calling on shutdown so a panic does not leave a stuck note sounding.
   MIDI note number, -1 when the name is not understood. `midi_note_name(60)`
   goes the other way.
 - `midi_config@ midi_config_create()`, `midi_duration midi_duration_create()` (by value),
-  `midi_note@ midi_note_create()` — factories.
+  `midi_note@ nvmidi_note_create()` — factories.
 - `MIDI_MS`, `MIDI_TICKS`, `MIDI_BEATS`, `MIDI_BARS` — the duration units.
   `MUSIC_MS`, `MUSIC_TICKS`, `MUSIC_BEATS`, `MUSIC_BARS` are the same four
   values under the name the music classes use, and `MUSIC_BEATS_90`,

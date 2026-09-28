@@ -20,9 +20,9 @@ array<midi_note@>@ chord(const string&in pitches, double length_ms) {
 		midi_note@ note;
 		int number = midi_note_number(parts[i].trim_whitespace());
 		if (number >= 0)
-			@note = midi_note_create(number);
+			@note = nvmidi_note_create(number);
 		else
-			@note = midi_note_create(parse_int(parts[i].trim_whitespace()));
+			@note = nvmidi_note_create(parse_int(parts[i].trim_whitespace()));
 		note.velocity = 100;
 		note.length = midi_duration(length_ms, MIDI_MS);
 		notes.insert_last(@note);

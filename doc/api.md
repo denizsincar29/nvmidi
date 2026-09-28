@@ -49,7 +49,7 @@ keeps its own tempo map converts to milliseconds itself and passes `MIDI_MS`.
 
 ### midi_note
 
-One note of a chord. A handle type: `midi_note@ n = midi_note_create(60, 100);`
+One note of a chord. A handle type: `midi_note@ n = nvmidi_note_create(60, 100);`
 points at the object rather than copying it, so changing `n.velocity` later
 really changes the note that is played.
 
@@ -63,8 +63,8 @@ really changes the note that is played.
 - `double duration_ms() const` — the length in milliseconds
 - `string to_string() const` — e.g. `"C4 (60), velocity 100, channel 1"`
 
-Factories: `midi_note_create()`, `midi_note_create(pitch, velocity, channel)`
-and `midi_note_create_ms(pitch, velocity, duration_ms)`.
+Factories: `nvmidi_note_create()`, `nvmidi_note_create(pitch, velocity, channel)`
+and `nvmidi_note_create_ms(pitch, velocity, duration_ms)`.
 
 Two free functions name pitches both ways: `int midi_note_number("C4")` takes
 `C`, `F#3`, `Bb5` and returns -1 for anything it does not understand, and
@@ -239,7 +239,7 @@ the later ones arrive.
 - `midi_duration midi_duration_create()`, `midi_duration midi_duration_create(double amount, int unit)`,
   `midi_duration midi_duration_create(double amount, int unit, double tempo)` - by value: a
   `midi_duration` is a value type and can never be a handle
-- `midi_note@ midi_note_create()`
+- `midi_note@ nvmidi_note_create()`
 
 Unit constants, so a script never has to remember 0..3: `MIDI_MS`,
 `MIDI_TICKS`, `MIDI_BEATS`, `MIDI_BARS`. `MUSIC_MS`, `MUSIC_TICKS`,

@@ -1574,11 +1574,21 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	// are the ones doc/api.md told scripts to call all along.
 	// asFUNCTIONPR is required for the overloaded C++ helper: an overloaded
 	// name cannot be resolved by asFUNCTION, only by its parameter list.
-	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note_create()", asFUNCTION(midi_note_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note_create(int pitch)", asFUNCTIONPR(midi_note_create_pitch, (int), midi_note*), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note_create(int pitch, int velocity)", asFUNCTIONPR(midi_note_create_velocity, (int, int), midi_note*), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note_create(int pitch, int velocity, int channel)", asFUNCTION(midi_note_create_full), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note_create_ms(int pitch, int velocity, double duration_ms)", asFUNCTION(midi_note_create_ms), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	// The name the engine will not give us is the bare `midi_note` - it already
+	// owns that word - but the *constructor* names came back rejected too, and
+	// only at run time on a real machine: RegisterGlobalFunction reports
+	// asNAME_TAKEN (-9) for `midi_note_create` as well, because nvgt declares
+	// its own midi_note there before the plugin registers anything. A rejected
+	// registration is not fatal, so the plugin loaded and every script then
+	// failed with "No matching signatures to 'midi_note_create(int)'" - the
+	// name was simply never created. Measured on Дениз's windows build
+	// (play_chord.nvgt, 28.09). The factories therefore live under nvmidi_'s
+	// own prefix, which nothing in the engine owns.
+	reg->check( engine->RegisterGlobalFunction("midi_note@ nvmidi_note_create()", asFUNCTION(midi_note_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_note@ nvmidi_note_create(int pitch)", asFUNCTIONPR(midi_note_create_pitch, (int), midi_note*), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_note@ nvmidi_note_create(int pitch, int velocity)", asFUNCTIONPR(midi_note_create_velocity, (int, int), midi_note*), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_note@ nvmidi_note_create(int pitch, int velocity, int channel)", asFUNCTION(midi_note_create_full), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_note@ nvmidi_note_create_ms(int pitch, int velocity, double duration_ms)", asFUNCTION(midi_note_create_ms), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("int midi_note_number(const string&in name)", asFUNCTION(midi_note_number), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("string midi_note_name(int pitch)", asFUNCTION(midi_note_pitch_name), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 
