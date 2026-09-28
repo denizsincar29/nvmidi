@@ -40,22 +40,34 @@ void main() {
 	}
 	screen_reader_speak("Playing on " + config.describe());
 
+	// The tempo lives on the music class, so a note written as "a beat" means
+	// one beat here and not the 120 default. duration() reads that tempo for
+	// you: change keyboard.tempo once and every length follows.
+	keyboard.tempo = 96.0;
+
 	// A major chord, all notes at once, held for a second.
 	keyboard.play_chord_wait(chord("60,64,67", 1000));
 
 	// The same chord in every unit the duration object understands: a beat
-	// at 120, half a bar, and a length counted in MIDI ticks. Beats and bars
-	// are converted by the duration itself, so a script can think in music
-	// and pass milliseconds only where the hardware demands them.
-	midi_duration@ beat = midi_duration(1.0, MIDI_BEATS);
-	midi_duration@ half_bar = midi_duration(0.5, MIDI_BARS);
+	// at the class tempo, half a bar, and a length counted in MIDI ticks.
+	// Beats and bars are converted by the duration itself, so a script can
+	// think in music and pass milliseconds only where the hardware demands it.
+	midi_duration@ beat = keyboard.duration(1.0, MIDI_BEATS);
+	midi_duration@ half_bar = keyboard.duration(0.5, MIDI_BARS);
 	midi_duration@ ticks = midi_duration(96.0, MIDI_TICKS);
 
-	screen_reader_speak("A beat is " + beat.to_ms() + " milliseconds, half a bar is " + half_bar.to_ms() + ".");
+	screen_reader_speak("At " + keyboard.tempo + " bpm a beat is " + beat.to_ms() + " milliseconds, half a bar is " + half_bar.to_ms() + ".");
 
 	array<midi_note@>@ held = chord("60,64,67", 0);
 	held[0].length = ticks;
 	keyboard.play_chord_wait(held);
+
+	// An explicitly qualified unit wins over the class tempo: MUSIC_BEATS_120
+	// is always a beat at 120, whatever keyboard.tempo says. Useful for a
+	// short test that should sound the same on every run.
+	array<midi_note@>@ steady = chord("60,64,67", 0);
+	steady[0].length = keyboard.duration(1.0, MUSIC_BEATS_120);
+	keyboard.play_chord_wait(steady);
 
 	// Every pattern the player knows, on one chord, so the difference between
 	// them is audible in one run.

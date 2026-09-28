@@ -122,13 +122,31 @@ Playing
 - `bool play_chord_wait(array<midi_note@>@ notes)`
 - `bool play_note(const midi_note&in note)`
 - `bool play_note_wait(const midi_note&in note)`
+- `bool play_midi_chord(array<midi_note@>@ notes, const string&in pattern)`
+- `bool play_midi_chord_wait(array<midi_note@>@ notes, const string&in pattern)`
+- `bool play_sequence(array<midi_note@>@ notes)`
 - `uint stop_all_notes()`
 - `uint get_active_notes() const`
 
 These send the notes back out of the port they came from, so a keyboard with a
 built in sound engine makes them heard with no synthesis on this side. RtMidi
 treats an input and an output port as two connections even when they are the
-same socket, so an output is opened for the duration of the chord.
+same socket, so an output is opened for the duration of the chord. The pattern
+names and the schedule behind them are the ones documented under `midi_output`
+below — same player, same behaviour.
+
+Tempo
+
+- `double tempo` — beats per minute, 120 by default
+- `midi_duration duration(double amount, int unit) const` — a length already
+  resolved against this tempo
+
+A note whose length is written in beats, bars or ticks is converted at this
+tempo when it is played, so `in.tempo = 96.0` followed by
+`in.duration(1.0, MUSIC_BEATS)` is one beat at 96 rather than at the 120
+default. Milliseconds ignore the tempo. An explicitly qualified unit —
+`MUSIC_BEATS_90`, `_100`, `_120`, `_140` — carries its own tempo and wins over
+the class one.
 
 Filters, applied through RtMidi's own `ignoreTypes`. Both default to true.
 
@@ -176,6 +194,8 @@ Playing
 - `uint stop_all_notes()` — releases everything the high level layer is
   holding, returns how many that was
 - `uint get_active_notes() const`
+- `double tempo` and `midi_duration duration(double amount, int unit) const` —
+  the same pair `midi_input` has, documented above
 
 Patterns
 
@@ -220,7 +240,11 @@ the later ones arrive.
 - `midi_note@ midi_note_create()`
 
 Unit constants, so a script never has to remember 0..3: `MIDI_MS`,
-`MIDI_TICKS`, `MIDI_BEATS`, `MIDI_BARS`.
+`MIDI_TICKS`, `MIDI_BEATS`, `MIDI_BARS`. `MUSIC_MS`, `MUSIC_TICKS`,
+`MUSIC_BEATS` and `MUSIC_BARS` are the same four values under the name the
+music classes use. `MUSIC_BEATS_90`, `MUSIC_BEATS_100`, `MUSIC_BEATS_120` and
+`MUSIC_BEATS_140` are beats at that tempo, and a length built with one of them
+keeps that tempo whatever the class is set to.
 
 ## Errors
 

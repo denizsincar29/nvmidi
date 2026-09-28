@@ -139,13 +139,34 @@ timer; `play_chord_wait` holds until the chord is over. Same split for
 `spread`, `arpeggio`, `quick`, `fast`, `sequence`, `repeat`, `strum` or plain
 `chord`.
 
+### Tempo
+
+A length written in beats or bars needs a tempo, and repeating it on every
+note is noise. Each music class carries one, and `duration()` builds a length
+already resolved against it:
+
+```angelscript
+in.tempo = 96.0;                                  // bpm, 120 by default
+midi_note@ n = midi_note(60, 100);
+n.length = in.duration(1.0, MUSIC_BEATS);         // a beat at 96, not at 120
+n.length = in.duration(0.5, MUSIC_BARS);          // half a bar at the same tempo
+n.length = in.duration(96.0, MUSIC_TICKS);        // ticks ignore the tempo
+n.length = in.duration(1.0, MUSIC_BEATS_120);     // explicit: always 120
+```
+
+Milliseconds ignore the tempo entirely. A `MUSIC_BEATS_90`, `_100`, `_120` or
+`_140` constant carries its own tempo and beats whatever the class is set to,
+which is what you want for a fixture that must sound the same on every run.
+
 A keyboard with its own sound engine can be played without any synthesis on
-this side: `midi_input` has the same playing functions, and sends the notes
-back out of the port they came from.
+this side: `midi_input` has the same playing functions and the same tempo, and
+sends the notes back out of the port they came from.
 
 ```angelscript
 in.open_config(config);
+in.tempo = 96.0;
 in.play_chord_wait(notes);   // the Nord makes the sound, not this program
+in.play_midi_chord_wait(notes, "arpeggio");
 ```
 
 ## Sending MIDI
@@ -190,6 +211,10 @@ calling on shutdown so a panic does not leave a stuck note sounding.
 - `midi_config@ midi_config_create()`, `midi_duration@ midi_duration_create()`,
   `midi_note@ midi_note_create()` — factories.
 - `MIDI_MS`, `MIDI_TICKS`, `MIDI_BEATS`, `MIDI_BARS` — the duration units.
+  `MUSIC_MS`, `MUSIC_TICKS`, `MUSIC_BEATS`, `MUSIC_BARS` are the same four
+  values under the name the music classes use, and `MUSIC_BEATS_90`,
+  `MUSIC_BEATS_100`, `MUSIC_BEATS_120`, `MUSIC_BEATS_140` are beats at that
+  tempo regardless of what the class is set to.
 
 **midi_message**
 
@@ -210,7 +235,9 @@ the script instead of a file. With no file the defaults are `"nord"` and 0.
 
 **midi_duration** — fields `amount`, `unit`, `tempo` and `ppq`; `to_ms()`
 converts once, using 120 bpm and 96 ppq unless the object says otherwise. A
-beat is a quarter note and a bar is four of them.
+beat is a quarter note and a bar is four of them. A duration made by `tempo`-
+aware code (`n.duration()`) already has the class tempo written into it, so
+`to_ms()` and a later playback agree.
 
 **midi_input**
 
@@ -224,6 +251,12 @@ beat is a quarter note and a bar is four of them.
 - `play_chord(notes)` / `play_chord_wait(notes)` / `play_note(note)` /
   `play_note_wait(note)` — play through the keyboard's own engine, since the
   notes go back out of the port they came from.
+- `play_midi_chord(notes, pattern)` / `play_midi_chord_wait(notes, pattern)` /
+  `play_sequence(notes)` — the same patterns `midi_output` offers, played on
+  the keyboard rather than on a second device.
+- `double tempo` — beats per minute, 120 by default, and
+  `midi_duration duration(double amount, int unit)` — a length already
+  resolved against that tempo.
 - `uint stop_all_notes()`, `uint get_active_notes()`.
 - `void set_ignore_sysex(bool)` / `bool get_ignore_sysex()` — default true.
   Sysex dumps are large and rarely useful in a game.
@@ -251,6 +284,8 @@ Changing either filter takes effect immediately on an open port.
 - Playing, the same four as `midi_input`, plus
   `play_midi_chord(notes, pattern)` / `play_midi_chord_wait(notes, pattern)`
   and `play_sequence(notes)`.
+- `double tempo` and `midi_duration duration(double amount, int unit)` — the
+  same pair `midi_input` has.
 - `uint stop_all_notes()`, `uint get_active_notes()` — what the high level
   layer is currently holding sounding.
 

@@ -33,6 +33,19 @@ const int g_unit_ticks = MIDI_UNIT_TICKS;
 const int g_unit_beats = MIDI_UNIT_BEATS;
 const int g_unit_bars = MIDI_UNIT_BARS;
 
+// The musical spelling of the same units: MUSIC_BEATS is what a script using
+// a class tempo writes, and the MUSIC_BEATS_90 style constants carry the tempo
+// in the word itself, for a length that has to stay at one tempo no matter
+// what the surrounding class is set to.
+const int g_music_ms = MUSIC_MS;
+const int g_music_ticks = MUSIC_TICKS;
+const int g_music_beats = MUSIC_BEATS;
+const int g_music_bars = MUSIC_BARS;
+const int g_music_beats_90 = MUSIC_BEATS_90;
+const int g_music_beats_100 = MUSIC_BEATS_100;
+const int g_music_beats_120 = MUSIC_BEATS_120;
+const int g_music_beats_140 = MUSIC_BEATS_140;
+
 // RtMidi throws on every failure; NVGT scripts should see a return value
 // instead, so every entry point wraps its body in this.
 std::string g_last_error;
@@ -166,6 +179,22 @@ double now_ms() {
 // Collects the notes out of a script array, clamped into range. False when the
 // array is empty or holds something that is not a note at all.
 bool collect_notes(CScriptArray* notes, std::vector<midi_note>& out);
+// The same, but every length is resolved at the given tempo, which is how a
+// music class makes "one beat" mean its own beat.
+bool collect_notes(CScriptArray* notes, double tempo, std::vector<midi_note>& out);
+// The collector the music class calls: read_notes takes the tempo from the
+// class, read_notes_at leaves the tempo written into each note in charge.
+bool read_notes(CScriptArray* notes, double tempo, std::vector<midi_note>& out);
+bool read_notes_at(CScriptArray* notes, std::vector<midi_note>& out);
+// How long the whole group lasts at this tempo. The length of the first note
+// rules, which is what makes a chord of mixed lengths predictable.
+double group_length_at(const std::vector<midi_note>& notes, double tempo);
+// Lays the notes out on the time line at this tempo; the mode numbers are the
+// ones the pattern player uses.
+void build_steps_at(const std::vector<midi_note>& notes, int mode, double tempo, std::vector<note_step>& steps, double& total);
+// Turns a pattern name into the mode number the builders understand; false
+// when the name is not a pattern at all.
+bool mode_of(const std::string& name, int& mode);
 // Brings pitch, velocity and channel into the range a MIDI device accepts.
 void clamp_note(midi_note& note);
 // Reads one note out of a script array by index.
@@ -187,6 +216,48 @@ std::string midi_message::to_string() const {
 static std::string midi_note_pitch_name(int pitch);
 
 
+// What a unit means when a caller wants the standard tempo rather than a
+// particular one: everything except the explicit MUSIC_BEATS_* aliases simply
+// means "that unit", so its tempo is zero and the surrounding default stands.
+double music_unit_tempo(int unit) {
+	switch (unit) {
+		case MUSIC_BEATS_90: return 90.0;
+		case MUSIC_BEATS_100: return 100.0;
+		case MUSIC_BEATS_120: return 120.0;
+		case MUSIC_BEATS_140: return 140.0;
+		default: return 0.0;
+	}
+}
+
+// The conversion the whole plugin shares. A tempo of zero or less means "no
+// opinion", so the caller's own tempo is used and, failing that, 120.
+double midi_duration_to_ms(double amount, int unit, double tempo, double ppq) {
+	double value = amount < 0.0 ? 0.0 : amount;
+	// A duration written as an explicit MUSIC_BEATS_90 wins over both the
+	// class tempo and its own field: the script said the number out loud.
+	const double explicit_tempo = music_unit_tempo(unit);
+	if (explicit_tempo > 0.0) tempo = explicit_tempo;
+	const int plain_unit = (explicit_tempo > 0.0) ? static_cast<int>(MUSIC_BEATS) : unit;
+	const double bpm = tempo > 0.0 ? tempo : 120.0;
+	const double pulses = ppq > 0.0 ? ppq : 96.0;
+	switch (plain_unit) {
+		case MUSIC_TICKS: {
+			// Ticks are counted against the tempo, since a tick only has a
+			// length once a quarter note does. ppq says how many fit in one.
+			return value * (60000.0 / (bpm * pulses));
+		}
+		case MUSIC_BEATS:
+			return value * (60000.0 / bpm);
+		case MUSIC_BARS:
+			// Four beats to the bar, the usual 4/4 assumption.
+			return value * (240000.0 / bpm);
+		case MUSIC_MS:
+		default:
+			return value;
+	}
+}
+
+
 midi_duration::midi_duration() : amount(220.0), unit(MIDI_UNIT_MS), tempo(120.0), ppq(96.0) {}
 
 midi_duration::midi_duration(double amount, int unit)
@@ -196,23 +267,9 @@ midi_duration::midi_duration(double amount, int unit, double tempo)
 	: amount(amount), unit(unit), tempo(tempo > 0.0 ? tempo : 120.0), ppq(96.0) {}
 
 double midi_duration::to_ms() const {
-	double value = amount < 0.0 ? 0.0 : amount;
-	switch (unit) {
-		case MIDI_UNIT_TICKS: {
-			// Ticks are counted against the tempo, since a tick only has a
-			// length once a quarter note does. ppq says how many fit in one.
-			const double per_tick = 60000.0 / ((tempo > 0.0 ? tempo : 120.0) * (ppq > 0.0 ? ppq : 96.0));
-			return value * per_tick;
-		}
-		case MIDI_UNIT_BEATS:
-			return value * (60000.0 / (tempo > 0.0 ? tempo : 120.0));
-		case MIDI_UNIT_BARS:
-			// Four beats to the bar, the usual 4/4 assumption.
-			return value * (240000.0 / (tempo > 0.0 ? tempo : 120.0));
-		case MIDI_UNIT_MS:
-		default:
-			return value;
-	}
+	// The one conversion every other one is written in terms of, so a
+	// duration carries the same tempo no matter who asks or when.
+	return midi_duration_to_ms(amount, unit, tempo, ppq);
 }
 
 std::string midi_duration::to_string() const {
@@ -251,6 +308,10 @@ midi_note::midi_note(int pitch) : pitch(pitch), velocity(100), channel(1), lengt
 midi_note::midi_note(int pitch, int velocity) : pitch(pitch), velocity(velocity), channel(1), length(midi_duration()) {}
 
 double midi_note::duration_ms() const { return length.to_ms(); }
+
+double midi_note::duration_ms_at(double tempo) const {
+	return midi_duration_to_ms(length.amount, length.unit, tempo, length.ppq);
+}
 
 std::string midi_note::to_string() const {
 	std::ostringstream out;
@@ -435,13 +496,14 @@ bool midi_input::play_chord(CScriptArray* notes) {
 		return false;
 	}
 	std::vector<midi_note> collected;
-	if (!collect_notes(notes, collected)) {
+	if (!collect_notes(notes, tempo, collected)) {
 		set_error("no notes to play: the array is empty or holds no note objects");
 		return false;
 	}
 	// The output side is created fresh for the call and closed again, which
 	// keeps it from staying open - and eating the queue - while idle.
 	midi_output output;
+	output.tempo = tempo;
 	if (!output.open(static_cast<unsigned int>(port_index < 0 ? 0 : port_index), "nvmidi playback")) {
 		set_error(std::string("playing through this port needs a matching output port: ") + midi_last_error());
 		return false;
@@ -449,12 +511,100 @@ bool midi_input::play_chord(CScriptArray* notes) {
 	playing = true;
 	for (size_t i = 0; i < collected.size(); ++i) output.send_note_on(static_cast<unsigned int>(collected[i].channel), static_cast<unsigned int>(collected[i].pitch), static_cast<unsigned int>(collected[i].velocity));
 	sounding = collected;
-	wait_until(now_ms() + group_length(collected));
+	wait_until(now_ms() + group_length_at(collected, tempo));
 	for (size_t i = 0; i < sounding.size(); ++i) output.send_note_off(static_cast<unsigned int>(sounding[i].channel), static_cast<unsigned int>(sounding[i].pitch), 0);
 	sounding.clear();
 	playing = false;
 	output.close();
 	return true;
+}
+
+// A length written at this port's tempo. The class knows the tempo, so a
+// script only has to name the unit: input.duration(1.0, MUSIC_BEATS).
+midi_duration midi_input::duration(double amount, int unit) const {
+	const double explicit_tempo = music_unit_tempo(unit);
+	return midi_duration(amount, unit, explicit_tempo > 0.0 ? explicit_tempo : tempo);
+}
+
+// The pattern player, handed to a short lived output on this port. Only the
+// collection differs from midi_output's: the notes are sent back out of the
+// port they would arrive on, so the keyboard's engine does the sounding.
+bool midi_input::play_midi_chord(CScriptArray* notes, const std::string& pattern) {
+	clear_error();
+	if (!midi_in) {
+		set_error("no MIDI input port is open");
+		return false;
+	}
+	std::vector<midi_note> collected;
+	if (!collect_notes(notes, tempo, collected)) {
+		set_error("no notes to play: the array is empty or holds no note objects");
+		return false;
+	}
+	int mode = 0;
+	if (!mode_of(pattern, mode)) {
+		set_error("unknown pattern \"" + pattern + "\"");
+		return false;
+	}
+	midi_output output;
+	output.tempo = tempo;
+	if (!output.open(static_cast<unsigned int>(port_index < 0 ? 0 : port_index), "nvmidi playback")) {
+		set_error(std::string("playing through this port needs a matching output port: ") + midi_last_error());
+		return false;
+	}
+	playing = true;
+	std::vector<note_step> steps;
+	double total = 0.0;
+	build_steps_at(collected, mode, tempo, steps, total);
+
+	// The same schedule midi_output runs: a moment's notes go out together and
+	// each is released at its own moment plus its length at this tempo.
+	const double start = now_ms();
+	std::vector<double> release_at;
+	std::vector<size_t> release_note;
+	size_t i = 0;
+	while (i < steps.size()) {
+		wait_until(start + steps[i].at);
+		const double moment = steps[i].at;
+		while (i < steps.size() && steps[i].at <= moment + 0.0001) {
+			const midi_note& note = collected[steps[i].note];
+			output.send_note_on(static_cast<unsigned int>(note.channel), static_cast<unsigned int>(note.pitch), static_cast<unsigned int>(note.velocity));
+			sounding.push_back(note);
+			release_at.push_back(moment + note.duration_ms_at(tempo));
+			release_note.push_back(steps[i].note);
+			++i;
+		}
+		double until = (i < steps.size()) ? steps[i].at : total;
+		for (size_t k = 0; k < release_at.size(); ++k) {
+			if (release_at[k] < until) until = release_at[k];
+		}
+		wait_until(start + until);
+
+		const double elapsed = now_ms() - start;
+		for (size_t k = 0; k < release_at.size(); ) {
+			if (release_at[k] > elapsed) { ++k; continue; }
+			output.send_note_off(static_cast<unsigned int>(collected[release_note[k]].channel), static_cast<unsigned int>(collected[release_note[k]].pitch), 0);
+			sounding.erase(sounding.begin() + k);
+			release_at.erase(release_at.begin() + k);
+			release_note.erase(release_note.begin() + k);
+		}
+	}
+	for (size_t k = 0; k < release_at.size(); ++k) {
+		wait_until(start + release_at[k]);
+		output.send_note_off(static_cast<unsigned int>(collected[release_note[k]].channel), static_cast<unsigned int>(collected[release_note[k]].pitch), 0);
+	}
+	sounding.clear();
+	playing = false;
+	output.close();
+	return true;
+}
+
+bool midi_input::play_midi_chord_wait(CScriptArray* notes, const std::string& pattern) {
+	return play_midi_chord(notes, pattern);
+}
+
+// One after another, each for its own length.
+bool midi_input::play_sequence(CScriptArray* notes) {
+	return play_midi_chord(notes, "sequence");
 }
 
 // The chord again, but the notes are released here before returning. Clearer
@@ -468,8 +618,53 @@ unsigned int midi_input::get_active_notes() const {
 	return static_cast<unsigned int>(sounding.size());
 }
 
+// Releases whatever the high level layer is holding sounding. The notes are
+// sent through a short lived output on the same port, since an input port
+// cannot transmit; nothing is remembered between calls, so this is the way out
+// of a chord that was started with play_chord and never waited on.
+unsigned int midi_input::stop_all_notes() {
+	const unsigned int count = static_cast<unsigned int>(sounding.size());
+	if (count && midi_in) {
+		midi_output output;
+		output.tempo = tempo;
+		if (output.open(static_cast<unsigned int>(port_index < 0 ? 0 : port_index), "nvmidi playback")) {
+			for (size_t i = 0; i < sounding.size(); ++i) {
+				output.send_note_off(static_cast<unsigned int>(sounding[i].channel), static_cast<unsigned int>(sounding[i].pitch), 0);
+			}
+		}
+	}
+	sounding.clear();
+	return count;
+}
+
+// One note, played through the keyboard's own engine like the chord is: the
+// note goes back out of the port it would arrive on.
+bool midi_input::play_note(const midi_note& note) {
+	clear_error();
+	if (!midi_in) {
+		set_error("no MIDI input port is open");
+		return false;
+	}
+	midi_output output;
+	output.tempo = tempo;
+	if (!output.open(static_cast<unsigned int>(port_index < 0 ? 0 : port_index), "nvmidi playback")) {
+		set_error(std::string("playing through this port needs a matching output port: ") + midi_last_error());
+		return false;
+	}
+	midi_note copy = note;
+	clamp_note(copy);
+	output.send_note_on(static_cast<unsigned int>(copy.channel), static_cast<unsigned int>(copy.pitch), static_cast<unsigned int>(copy.velocity));
+	sounding.clear();
+	sounding.push_back(copy);
+	output.close();
+	return true;
+}
+
 bool midi_input::play_note_wait(const midi_note& note) {
-	return play_note(note);
+	if (!play_note(note)) return false;
+	wait_until(now_ms() + group_length_at(sounding, tempo));
+	stop_all_notes();
+	return true;
 }
 
 
@@ -671,6 +866,91 @@ bool collect_notes(CScriptArray* notes, std::vector<midi_note>& out) {
 	return !out.empty();
 }
 
+// The same collection, but every length is resolved against the tempo of the
+// class that asked, so "one beat" in a music object means one beat of that
+// object. The note keeps whatever unit it was written in; only the tempo
+// changes, which is what lets a class tempo take effect after the fact.
+bool collect_notes(CScriptArray* notes, double tempo, std::vector<midi_note>& out) {
+	out.clear();
+	if (!notes || notes->GetSize() == 0) return false;
+	out.reserve(notes->GetSize());
+	for (asUINT i = 0; i < notes->GetSize(); ++i) {
+		midi_note note;
+		if (!read_note(notes, i, note)) continue;
+		clamp_note(note);
+		if (tempo > 0.0) note.length.tempo = tempo;
+		out.push_back(note);
+	}
+	return !out.empty();
+}
+
+// The named pair the music class uses. Both are the same collection with a
+// different idea of where the tempo comes from, so the two spellings read out
+// loud in a script: read_notes follows the class, read_notes_at follows the
+// number written into each note.
+bool read_notes(CScriptArray* notes, double tempo, std::vector<midi_note>& out) {
+	return collect_notes(notes, tempo, out);
+}
+
+bool read_notes_at(CScriptArray* notes, std::vector<midi_note>& out) {
+	return collect_notes(notes, out);
+}
+
+// The group length and the step layout, both resolved at a tempo the caller
+// names rather than at whatever each note carries. Everything the pattern
+// player does goes through these two.
+double group_length_at(const std::vector<midi_note>& notes, double tempo) {
+	if (notes.empty()) return 0.0;
+	return notes.front().duration_ms_at(tempo);
+}
+
+void build_steps_at(const std::vector<midi_note>& notes, int mode, double tempo, std::vector<note_step>& steps, double& total) {
+	steps.clear();
+	total = 0.0;
+	if (notes.empty()) return;
+
+	if (mode >= 1 && mode <= 4) {
+		double spread = 0.0;
+		switch (mode) {
+			case 1: spread = 0.25; break; // quarter beat
+			case 2: spread = 0.5; break;  // eighth
+			case 3: spread = 0.125; break; // sixteenth
+			case 4: spread = 0.0625; break; // thirty-second
+		}
+		const double length = notes.front().duration_ms_at(tempo);
+		const double step = length * spread;
+		for (size_t i = 0; i < notes.size(); ++i) {
+			note_step s;
+			s.note = i;
+			s.at = step * static_cast<double>(i);
+			steps.push_back(s);
+		}
+		total = steps.back().at + length;
+		return;
+	}
+
+	if (mode == 5) {
+		double at = 0.0;
+		for (size_t i = 0; i < notes.size(); ++i) {
+			note_step s;
+			s.note = i;
+			s.at = at;
+			steps.push_back(s);
+			at += notes[i].duration_ms_at(tempo);
+		}
+		total = at;
+		return;
+	}
+
+	for (size_t i = 0; i < notes.size(); ++i) {
+		note_step s;
+		s.note = i;
+		s.at = 0.0;
+		steps.push_back(s);
+	}
+	total = group_length_at(notes, tempo);
+}
+
 // Waits until the moment is reached, in short hops. A single long wait would
 // freeze the script and, in a game, the whole window with it.
 void wait_until(double moment) {
@@ -750,7 +1030,7 @@ bool midi_output::play_chord(CScriptArray* notes) {
 		return false;
 	}
 	std::vector<midi_note> collected;
-	if (!collect_notes(notes, collected)) {
+	if (!collect_notes(notes, tempo, collected)) {
 		set_error("no notes to play: the array is empty or holds no note objects");
 		return false;
 	}
@@ -758,7 +1038,7 @@ bool midi_output::play_chord(CScriptArray* notes) {
 	// Wait for whatever was still sounding, so two chords never overlap by
 	// accident.
 	if (!sounding.empty()) {
-		const double end = now_ms() + group_length(sounding);
+		const double end = now_ms() + group_length_at(sounding, tempo);
 		wait_until(end);
 		stop_all_notes();
 	}
@@ -784,7 +1064,7 @@ bool midi_output::play_midi_chord_wait(CScriptArray* notes, const std::string& p
 	}
 	stop_all_notes();
 	std::vector<midi_note> collected;
-	if (!collect_notes(notes, collected)) {
+	if (!collect_notes(notes, tempo, collected)) {
 		set_error("no notes to play: the array is empty or holds no note objects");
 		return false;
 	}
@@ -795,7 +1075,7 @@ bool midi_output::play_midi_chord_wait(CScriptArray* notes, const std::string& p
 	}
 	std::vector<note_step> steps;
 	double total = 0.0;
-	build_steps(collected, mode, steps, total);
+	build_steps_at(collected, mode, tempo, steps, total);
 
 	// Notes sharing a moment go out together: a chord sends all of its note
 	// ons in one batch, and from then on every note is released at its own
@@ -812,7 +1092,7 @@ bool midi_output::play_midi_chord_wait(CScriptArray* notes, const std::string& p
 			const midi_note& note = collected[steps[i].note];
 			note_on(note);
 			sounding.push_back(note);
-			release_at.push_back(moment + note.duration_ms());
+			release_at.push_back(moment + note.duration_ms_at(tempo));
 			release_note.push_back(steps[i].note);
 			++i;
 		}
@@ -844,9 +1124,16 @@ bool midi_output::play_midi_chord_wait(CScriptArray* notes, const std::string& p
 
 bool midi_output::play_chord_wait(CScriptArray* notes) {
 	if (!play_chord(notes)) return false;
-	wait_until(now_ms() + group_length(sounding));
+	wait_until(now_ms() + group_length_at(sounding, tempo));
 	stop_all_notes();
 	return true;
+}
+
+// A length written at this port's tempo, so a script names the unit only:
+// music.tempo = 96; music.play_chord(notes written as one beat long);
+midi_duration midi_output::duration(double amount, int unit) const {
+	const double explicit_tempo = music_unit_tempo(unit);
+	return midi_duration(amount, unit, explicit_tempo > 0.0 ? explicit_tempo : tempo);
 }
 
 bool midi_output::play_note(const midi_note& note) {
@@ -856,7 +1143,7 @@ bool midi_output::play_note(const midi_note& note) {
 		return false;
 	}
 	if (!sounding.empty()) {
-		wait_until(now_ms() + group_length(sounding));
+		wait_until(now_ms() + group_length_at(sounding, tempo));
 		stop_all_notes();
 	}
 	midi_note copy = note;
@@ -868,7 +1155,7 @@ bool midi_output::play_note(const midi_note& note) {
 
 bool midi_output::play_note_wait(const midi_note& note) {
 	if (!play_note(note)) return false;
-	wait_until(now_ms() + group_length(sounding));
+	wait_until(now_ms() + group_length_at(sounding, tempo));
 	stop_all_notes();
 	return true;
 }
@@ -1167,6 +1454,11 @@ void register_midi_input(asIScriptEngine* engine) {
 	engine->RegisterObjectMethod("midi_input", "void set_ignore_timing(bool)", asMETHOD(midi_input, set_ignore_timing), asCALL_THISCALL);
 	engine->RegisterObjectMethod("midi_input", "bool get_ignore_timing() const", asMETHOD(midi_input, get_ignore_timing), asCALL_THISCALL);
 	engine->RegisterObjectMethod("midi_input", "uint get_message_queue_size() const", asMETHOD(midi_input, get_pending), asCALL_THISCALL);
+	engine->RegisterObjectMethod("midi_input", "bool play_midi_chord(midi_note@[]@ notes, const string&in pattern)", asMETHOD(midi_input, play_midi_chord), asCALL_THISCALL);
+	engine->RegisterObjectMethod("midi_input", "bool play_midi_chord_wait(midi_note@[]@ notes, const string&in pattern)", asMETHOD(midi_input, play_midi_chord_wait), asCALL_THISCALL);
+	engine->RegisterObjectMethod("midi_input", "bool play_sequence(midi_note@[]@ notes)", asMETHOD(midi_input, play_sequence), asCALL_THISCALL);
+	engine->RegisterObjectMethod("midi_input", "midi_duration duration(double amount, int unit) const", asMETHOD(midi_input, duration), asCALL_THISCALL);
+	engine->RegisterObjectProperty("midi_input", "double tempo", asOFFSET(midi_input, tempo));
 }
 
 void register_midi_output(asIScriptEngine* engine) {
@@ -1198,6 +1490,8 @@ void register_midi_output(asIScriptEngine* engine) {
 	engine->RegisterObjectMethod("midi_output", "void send_sysex(const string&in data)", asMETHOD(midi_output, send_sysex), asCALL_THISCALL);
 	engine->RegisterObjectMethod("midi_output", "void all_notes_off()", asMETHOD(midi_output, all_notes_off), asCALL_THISCALL);
 	engine->RegisterObjectMethod("midi_output", "void reset()", asMETHOD(midi_output, reset), asCALL_THISCALL);
+	engine->RegisterObjectMethod("midi_output", "midi_duration duration(double amount, int unit) const", asMETHOD(midi_output, duration), asCALL_THISCALL);
+	engine->RegisterObjectProperty("midi_output", "double tempo", asOFFSET(midi_output, tempo));
 }
 
 void register_midi_note(asIScriptEngine* engine) {
@@ -1235,6 +1529,17 @@ void register_midi_note(asIScriptEngine* engine) {
 	engine->RegisterGlobalProperty("const int MIDI_TICKS", (void*)&g_unit_ticks);
 	engine->RegisterGlobalProperty("const int MIDI_BEATS", (void*)&g_unit_beats);
 	engine->RegisterGlobalProperty("const int MIDI_BARS", (void*)&g_unit_bars);
+	// The musical units. The plain four mean the same numbers as MIDI_*, so a
+	// script written for one spelling keeps working with the other; the
+	// MUSIC_BEATS_NN constants are extra values that carry their own tempo.
+	engine->RegisterGlobalProperty("const int MUSIC_MS", (void*)&g_music_ms);
+	engine->RegisterGlobalProperty("const int MUSIC_TICKS", (void*)&g_music_ticks);
+	engine->RegisterGlobalProperty("const int MUSIC_BEATS", (void*)&g_music_beats);
+	engine->RegisterGlobalProperty("const int MUSIC_BARS", (void*)&g_music_bars);
+	engine->RegisterGlobalProperty("const int MUSIC_BEATS_90", (void*)&g_music_beats_90);
+	engine->RegisterGlobalProperty("const int MUSIC_BEATS_100", (void*)&g_music_beats_100);
+	engine->RegisterGlobalProperty("const int MUSIC_BEATS_120", (void*)&g_music_beats_120);
+	engine->RegisterGlobalProperty("const int MUSIC_BEATS_140", (void*)&g_music_beats_140);
 }
 
 void register_midi_config(asIScriptEngine* engine) {

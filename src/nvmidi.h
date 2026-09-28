@@ -51,12 +51,36 @@ enum midi_duration_unit {
 	MIDI_UNIT_BARS = 3
 };
 
+// Together with MIDI_UNIT_* so that a script can write the unit and the tempo
+// it belongs to in one word: MUSIC_BEATS instead of (MIDI_BEATS, 120).
+enum midi_music_unit {
+	MUSIC_MS = 0,
+	MUSIC_TICKS = 1,
+	MUSIC_BEATS = 2,
+	MUSIC_BARS = 3,
+	MUSIC_BEATS_120 = 4,
+	MUSIC_BEATS_90 = 5,
+	MUSIC_BEATS_100 = 6,
+	MUSIC_BEATS_140 = 7
+};
+
+// The tempo an explicit MUSIC_BEATS_* constant carries, 0 for the constants
+// that simply mean "the unit, at whatever tempo the class is set to".
+double music_unit_tempo(int unit);
+
+// Works out what a duration's amount really is in milliseconds, given the
+// class tempo that stands in for the 120 default. Shared by midi_duration and
+// the music class so both convert identically.
+double midi_duration_to_ms(double amount, int unit, double tempo, double ppq);
+
 struct midi_duration {
 	// How many units this length is made of. Fractional beats and bars are
 	// allowed, a half beat is 0.5.
 	double amount;
 	int unit; // one of the MIDI_UNIT_* values
 	// Beats per minute, used by the beats and bars units. Defaults to 120.
+	// The music class overwrites it when a note is played, so a duration made
+	// there does not have to be written at the class tempo by hand.
 	double tempo;
 	// Pulses per quarter note, used by the ticks unit. Defaults to 96, which
 	// is what most MIDI files assume.
@@ -92,6 +116,10 @@ struct midi_note {
 	// The length in milliseconds, which is what the layer below actually
 	// needs. Handy for a script that wants to show or print it.
 	double duration_ms() const;
+	// The same, but the tempo argument wins over the one written into the
+	// length itself. The music class uses this to play a note written as
+	// "one beat" at the tempo the class is currently set to.
+	double duration_ms_at(double tempo) const;
 
 	midi_note();
 	midi_note(int pitch);
@@ -102,6 +130,12 @@ midi_note* midi_note_create();
 midi_note* midi_note_create_full(int pitch, int velocity, int channel);
 // Takes the length straight in milliseconds, the unit every clock agrees on.
 midi_note* midi_note_create_ms(int pitch, int velocity, double duration_ms);
+
+// Copies the notes that go to a music class, resolving every length against
+// that class's tempo: read_notes overloads the tempo from the class while
+// read_notes_at leaves the tempo written into each note in charge.
+bool read_notes(CScriptArray* notes, double tempo, std::vector<midi_note>& out);
+bool read_notes_at(CScriptArray* notes, std::vector<midi_note>& out);
 
 // One MIDI message queued for the script to read.
 // Messages arrive on RtMidi's own thread, so they are buffered here and
@@ -125,6 +159,19 @@ public:
 	bool play_chord_wait(CScriptArray* notes);
 	bool play_note(const midi_note& note);
 	bool play_note_wait(const midi_note& note);
+	// The same patterns midi_output offers, played through the keyboard's own
+	// engine: the notes go back out of the port they came from, so a script
+	// that only ever talks to one device needs this class alone.
+	bool play_midi_chord(CScriptArray* notes, const std::string& pattern);
+	bool play_midi_chord_wait(CScriptArray* notes, const std::string& pattern);
+	// The notes one after another, each for its own length.
+	bool play_sequence(CScriptArray* notes);
+	// A duration written at this class's tempo: a chord whose length is
+	// "one beat" is one beat at the tempo set here, not always at 120.
+	midi_duration duration(double amount, int unit) const;
+	// Beats per minute, used when a note's length is written in beats, bars or
+	// ticks. Milliseconds ignore it. Defaults to 120.
+	double tempo;
 	// Releases everything this port is holding sounding, returns how many.
 	unsigned int stop_all_notes();
 	unsigned int get_active_notes() const;
@@ -214,6 +261,14 @@ public:
 	// the release, play_note_wait returns when the note has finished.
 	bool play_note(const midi_note& note);
 	bool play_note_wait(const midi_note& note);
+
+	// A duration written at this class's tempo: music.duration(1.0, MUSIC_BEATS)
+	// is one beat at whatever music.tempo currently is, so the tempo does not
+	// have to be repeated on every note.
+	midi_duration duration(double amount, int unit) const;
+	// Beats per minute, used when a note's length is written in beats, bars or
+	// ticks. Milliseconds ignore it. Defaults to 120.
+	double tempo;
 
 	// Releases everything the high level layer has sounding right now, and
 	// returns how many notes that was.
