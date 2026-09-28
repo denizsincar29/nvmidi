@@ -17,6 +17,10 @@ CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -fPIC -Wall -Wextra
 INCLUDES  = -Isrc -Ithird_party/rtmidi -Ithird_party/angelscript
 
+# scriptarray.cpp is the add-on behind RegisterScriptArray. nvgt and the
+# host already carry these symbols, so the plugin never links it; the
+# `check` target compiles it alongside the plugin to prove the vendored
+# headers and the plugin source still agree.
 SOURCES   = src/nvmidi.cpp third_party/rtmidi/RtMidi.cpp
 
 # Backend selection. RtMidi compiles exactly one of these in.
@@ -42,10 +46,11 @@ all: $(TARGET)
 $(TARGET): $(SOURCES) src/nvmidi.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $(SOURCES) -o $(TARGET) $(LDFLAGS) $(LIBS)
 
-# Compiles the plugin source alone, without RtMidi. Fast way to catch a
-# typo in the Angelscript bindings without waiting for the full build.
+# Compiles the plugin source and the add-on without RtMidi, and without
+# emitting an object: a fast way to catch a typo in the Angelscript
+# bindings before waiting for the link.
 check:
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -fsyntax-only src/nvmidi.cpp
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -fsyntax-only src/nvmidi.cpp third_party/angelscript/scriptarray.cpp
 
 clean:
 	$(RM) $(TARGET)
