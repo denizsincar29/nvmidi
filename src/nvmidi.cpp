@@ -1618,9 +1618,12 @@ void register_nvmidi(asIScriptEngine* engine) {
 	// The note, duration and config types first: the port classes name them in
 	// their own method declarations, so the engine has to know them by then.
 	register_midi_note(engine, &reg);
-	register_midi_config(engine, &reg);
+	// Both port types are declared before the config functions, because the
+	// free functions in there take and return them by handle.
 	register_midi_input(engine, &reg);
 	register_midi_output(engine, &reg);
+	register_midi_config(engine, &reg);
+	register_midi_config(engine, &reg);
 	register_midi_globals(engine, &reg);
 }
 

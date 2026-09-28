@@ -47,7 +47,7 @@ void main() {
 	while (!key_pressed(KEY_ESCAPE)) {
 		midi_message@ m;
 		while (input.next_message(m)) {
-			uchar command = m.status & 0xf0;
+			uint command = m.status & 0xf0;
 
 			if (command == 0x90 && m.data2 > 0) {
 				// Note on. Transpose up an octave, but keep it in range.
