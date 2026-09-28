@@ -231,6 +231,21 @@ jobs:
         if: always()
         shell: bash
         run: |
+          # The engine is looked up again here, and the lookup is asserted.
+          # Every step is its own shell, so a variable set in an earlier step
+          # is simply gone in this one: the first version of this loop ran
+          # "timeout 120 '' script", which returns 127 without a log, and an
+          # empty log passes the error grep below - the whole step reported
+          # success while running nothing at all. A missing engine is now a
+          # hard failure with that reason, not a silent no-op.
+          nvgt="$(find engine -type f -name nvgt | head -n1)"
+          if [ -z "$nvgt" ]; then
+            echo "::error title=no engine::the engine binary was not found under engine/, so no script was actually run"
+            exit 1
+          fi
+          chmod +x "$nvgt"
+          echo "engine: $nvgt"
+
           # screen reader has nothing to say on a headless runner, and that is
           # fine - what is being checked is that it builds, and that no name in
           # it has drifted from the engine's own api.
@@ -245,16 +260,25 @@ jobs:
             timeout 120 "$nvgt" "$script" 2>&1 | tee "$log"
             rc="${PIPESTATUS[0]}"
             set -e
-            # rc is reported, never asserted. Measured: the engine calls
-            # screen_reader_speak only when a screen reader is actually there,
-            # and with no reader on the other end the call aborts the process
-            # (SIGABRT, rc=134) instead of returning. That is a property of the
-            # runner - a headless machine has no reader - and not of the
-            # script, so every talking script in this repository exits non-zero
-            # on it. The script's real health is the log: it must be free of
-            # the engine's own error format, which is what is checked below.
+            # 127 is not a verdict about the script: it means the engine was
+            # never executed. Asserted separately so that a broken runner can
+            # never again read as a clean run.
+            if [ "$rc" -eq 127 ]; then
+              echo "::error file=$script::the engine could not be executed, so $script was not tested"
+              cat "$log"
+              status=1
+              echo "::endgroup::"
+              continue
+            fi
+            # Any other rc is reported, never asserted. Measured: the engine
+            # calls screen_reader_speak only when a screen reader is actually
+            # there, and with no reader on the other end the call aborts the
+            # process (SIGABRT, rc=134) instead of returning. That is a
+            # property of the runner and not of the script, and the scripts now
+            # fall back to the engine's alert box so they normally exit 0. The
+            # log is what decides either way.
             if [ "$rc" -ne 0 ]; then
-              echo "note: $script exited $rc (headless screen reader); the log decides the outcome"
+              echo "note: $script exited $rc; the log decides the outcome"
             fi
             if grep -qE 'ERROR:|Unexpected token|No matching signatures' "$log"; then
               echo "::error file=$script::the engine reported an error in $script"
