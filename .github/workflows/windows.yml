@@ -12,3 +12,13 @@ jobs:
       - name: build
         shell: cmd
         run: mingw32-make
+
+      # The dll on its own is not evidence: it says the plugin compiled and
+      # linked, nothing about whether the types it registers are types the
+      # engine will accept. Keep it so the next step can be a real host.
+      - name: keep the dll
+        uses: actions/upload-artifact@v4
+        with:
+          name: nvmidi-dll
+          path: nvmidi.dll
+          if-no-files-found: error
