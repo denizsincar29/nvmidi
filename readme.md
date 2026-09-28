@@ -149,11 +149,11 @@ whichever unit you think in:
 
 ```angelscript
 array<midi_note@>@ notes = array<midi_note@>();
-midi_note@ n = midi_note(60, 100);          // middle C, velocity 100
+midi_note@ n = midi_note_create(60, 100);          // middle C, velocity 100
 n.length = midi_duration(1.0, MIDI_BEATS);  // one beat at the default 120 bpm
 notes.insert_last(n);
-notes.insert_last(midi_note(midi_note_number("E4"), 100));
-notes.insert_last(midi_note(midi_note_number("G4"), 100));
+notes.insert_last(midi_note_create(midi_note_number("E4"), 100));
+notes.insert_last(midi_note_create(midi_note_number("G4"), 100));
 
 out.play_chord_wait(notes);                 // sounds, then returns
 out.play_midi_chord_wait(notes, "arpeggio");
@@ -173,7 +173,7 @@ already resolved against it:
 
 ```angelscript
 in.tempo = 96.0;                                  // bpm, 120 by default
-midi_note@ n = midi_note(60, 100);
+midi_note@ n = midi_note_create(60, 100);
 n.length = in.duration(1.0, MUSIC_BEATS);         // a beat at 96, not at 120
 n.length = in.duration(0.5, MUSIC_BARS);          // half a bar at the same tempo
 n.length = in.duration(96.0, MUSIC_TICKS);        // ticks ignore the tempo

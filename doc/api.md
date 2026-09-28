@@ -49,7 +49,7 @@ keeps its own tempo map converts to milliseconds itself and passes `MIDI_MS`.
 
 ### midi_note
 
-One note of a chord. A handle type: `midi_note@ n = midi_note(60, 100);`
+One note of a chord. A handle type: `midi_note@ n = midi_note_create(60, 100);`
 points at the object rather than copying it, so changing `n.velocity` later
 really changes the note that is played.
 

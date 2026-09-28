@@ -1566,7 +1566,7 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterGlobalFunction("midi_duration midi_duration_create(double amount, int unit)", asFUNCTION(midi_duration_create_full), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_duration midi_duration_create(double amount, int unit, double tempo)", asFUNCTION(midi_duration_create_tempo), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 
-	// A handle type: a script writes note@ n = midi_note(60, 100); and the
+	// A handle type: a script writes note@ n = midi_note_create(60, 100); and the
 	// handle points at the object rather than copying it, which is what makes
 	// changing n.velocity later actually change the note that is played.
 	reg->check( engine->RegisterObjectType("midi_note", 0, asOBJ_REF | asOBJ_NOCOUNT), "RegisterObjectType", __LINE__);
@@ -1576,14 +1576,16 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectProperty("midi_note", "midi_duration length", asOFFSET(midi_note, length)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_note", "double duration_ms", asOFFSET(midi_note, length) + offsetof(midi_duration, amount)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_note", "string to_string() const", asMETHOD(midi_note, to_string), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	// The object form of the factory. A script writes midi_note(60, 100) as
-	// naturally as it writes midi_duration(1.0, MUSIC_BEATS), and without this
-	// that line is compiled as a value object: "Data type can't be 'midi_note'",
-	// because a midi_note is a handle type and cannot live on the stack.
-	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note()", asFUNCTION(midi_note_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note(int pitch)", asFUNCTIONPR(midi_note_create_pitch, (int), midi_note*), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note(int pitch, int velocity)", asFUNCTIONPR(midi_note_create_velocity, (int, int), midi_note*), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	// A factory per arity, because the engine will not give this plugin the
+	// name midi_note: nvgt is an audio toolkit with its own midi support and
+	// its engine already owns that name, so RegisterGlobalFunction reports
+	// asNAME_TAKEN (-9) and the whole interface is rejected. The names below
+	// are the ones doc/api.md told scripts to call all along.
+	// asFUNCTIONPR is required for the overloaded C++ helper: an overloaded
+	// name cannot be resolved by asFUNCTION, only by its parameter list.
 	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note_create()", asFUNCTION(midi_note_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note_create(int pitch)", asFUNCTIONPR(midi_note_create_pitch, (int), midi_note*), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note_create(int pitch, int velocity)", asFUNCTIONPR(midi_note_create_velocity, (int, int), midi_note*), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note_create(int pitch, int velocity, int channel)", asFUNCTION(midi_note_create_full), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_note@ midi_note_create_ms(int pitch, int velocity, double duration_ms)", asFUNCTION(midi_note_create_ms), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("int midi_note_number(const string&in name)", asFUNCTION(midi_note_number), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
