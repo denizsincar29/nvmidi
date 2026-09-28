@@ -1,0 +1,72 @@
+# Builds the library and leaves it as a downloadable artifact - no release, no
+# tag, no assets. A release is a promise to everyone; this is a build for one
+# person testing one keyboard.
+#
+# The windows job runs the same Makefile the release runs, so the dll here is
+# the same dll a release would carry: MinGW, -static, linking winmm. The one
+# thing that differs from a release is where the file ends up.
+name: artifacts
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build
+        shell: cmd
+        run: mingw32-make
+
+      # The import table is asserted for the same reason the release asserts
+      # it: a dll naming a library the user's machine does not have is refused
+      # whole by the loader, and nvgt's only words for that are
+      # "failed to load plugin" with no script run at all.
+      - name: assert the dll asks the system for nothing it does not have
+        shell: pwsh
+        run: |
+          $allowed = 'KERNEL32.dll','WINMM.dll','ole32.dll','SETUPAPI.dll','ksuser.dll'
+          $bytes = [IO.File]::ReadAllBytes('nvmidi.dll')
+          $peOff = [BitConverter]::ToInt32($bytes, 0x3c)
+          $optOff = $peOff + 24
+          $magic = [BitConverter]::ToUInt16($bytes, $optOff)
+          $ddOff = if ($magic -eq 0x20b) { $optOff + 112 } else { $optOff + 96 }
+          $impRva = [BitConverter]::ToInt32($bytes, $ddOff + 8)
+          $nsec = [BitConverter]::ToUInt16($bytes, $peOff + 6)
+          $secOff = $optOff + [BitConverter]::ToUInt16($bytes, $peOff + 20)
+          function RvaToOff($rva) {
+            for ($i = 0; $i -lt $nsec; $i++) {
+              $s = $secOff + $i * 40
+              $va = [BitConverter]::ToInt32($bytes, $s + 12)
+              $sz = [BitConverter]::ToInt32($bytes, $s + 8)
+              $raw = [BitConverter]::ToInt32($bytes, $s + 20)
+              if ($rva -ge $va -and $rva -lt ($va + $sz)) { return $rva - $va + $raw }
+            }
+            return -1
+          }
+          $off = RvaToOff $impRva
+          $bad = @()
+          while ($true) {
+            $nameRva = [BitConverter]::ToInt32($bytes, $off + 12)
+            if ($nameRva -eq 0) { break }
+            $no = RvaToOff $nameRva
+            $sb = New-Object Text.StringBuilder
+            while ($bytes[$no] -ne 0) { [void]$sb.Append([char]$bytes[$no]); $no++ }
+            $name = $sb.ToString()
+            if ($name -notin $allowed -and $name -notlike 'api-ms-win-*' -and $name -notlike 'ext-ms-win-*') { $bad += $name }
+            $off += 20
+          }
+          if ($bad.Count -gt 0) {
+            Write-Error "the dll imports libraries that are not part of a stock windows: $($bad -join ', ')"
+            exit 1
+          }
+          Write-Host "import table clean"
+
+      - name: keep the dll
+        uses: actions/upload-artifact@v4
+        with:
+          name: nvmidi-dll
+          path: nvmidi.dll
+          retention-days: 1
