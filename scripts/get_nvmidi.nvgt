@@ -277,5 +277,11 @@ void main() {
 	file_copy(temporary, destination, true);
 	file_delete(temporary);
 
-	announce("Installed " + ASSET + " " + target + " into " + lib + ". Start nvgt to load it.");
+	// The size is reported, not assumed. A copy that lands zero bytes produces
+	// no error of its own, and nvgt's only words for the library it cannot
+	// open are "failed to load plugin" - which names neither the file nor the
+	// reason. Printing the number here means a person who then sees that
+	// message can tell a truncated download from a library the engine refused.
+	int64 installed = file_get_size(destination);
+	announce("Installed " + ASSET + " " + target + ", " + installed + " bytes, into " + lib + ".");
 }
