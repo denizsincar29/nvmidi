@@ -72,6 +72,22 @@ void announce(const string&in text) {
 	alert(text, "nvmidi");
 }
 
+// A numbered note on the console, for pointing at a step.
+//
+// This exists because the engine has exactly one way of reporting a fault in a
+// script - "Yikes! System exception" - and it carries no reason, no line and
+// no name, so a script that dies leaves nothing behind to work from. print
+// goes to the console the script was started from, and these numbers walk the
+// work in order, so the first one missing names the step that did not finish.
+//
+// Not decoration, and not a substitute for the sentences announce() writes:
+// those are for the person, these are for the trail. Both are printed, because
+// a screen reader user who starts a script by activating it never sees the
+// console, and a person at a console should not have to dismiss a box per step.
+void mark(const string&in where) {
+	print("NVGT_TRACE " + where);
+}
+
 string asset_for(string engine_path) {
 	string ext = "";
 	int dot = engine_path.find_last_of(".");
@@ -175,8 +191,10 @@ void main() {
 	// yet, and the download would then fail at the write with a bare errno. A
 	// directory that already exists is not an error here, so this is safe to
 	// call unconditionally.
+	mark("1 before lib folder");
 	if (!directory_exists(lib))
 		directory_create(lib);
+	mark("1 after lib folder");
 	if (!directory_exists(lib)) {
 		// Under the workspace path the os can also refuse to create a third
 		// level up; say which folder we could not make rather than reporting a
@@ -199,6 +217,7 @@ void main() {
 		}
 	}
 
+	mark("2 before download");
 	announce("Downloading nvmidi " + target + " from " + REPO + ".");
 
 	// The download lands in a temporary name first, so a transfer that dies
@@ -213,6 +232,7 @@ void main() {
 	// need the address of the asset rather than the asset itself, and nothing
 	// about the dll passes through this text step.
 	announce("Asking github for release " + target + ".");
+	mark("3 before listing");
 	http client;
 	string asset_url = "";
 	bool listed = false;
@@ -256,12 +276,14 @@ void main() {
 		}
 	}
 
+	mark("4 after listing " + asset_url);
 	if (!listed || asset_url.length() == 0) {
 		announce("Github gave no download address for release " + target + " of " + REPO + ".");
 		return;
 	}
 
 	if (client.get(asset_url)) {
+		mark("5 request sent");
 		file part(temporary, "wb");
 		if (part.active) {
 			// h.wait() blocks until the request is done. The reference also
@@ -272,10 +294,12 @@ void main() {
 			// indistinguishable from a hang, so we say what we are doing.
 			announce("Download started, this can take a moment.");
 			client.wait();
+			mark("6 response back");
 			string body = client.response_body;
 			part.write(body);
 			int64 size = part.size;
 			part.close();
+			mark("7 written " + size + " bytes");
 			// The size checks are belt and braces: a truncated dll must never
 			// land under the name nvgt loads.
 			if (client.status_code == 200 && size > 1024 && file_get_size(temporary) == size)
@@ -351,6 +375,7 @@ void main() {
 	}
 
 	string magic = "";
+	mark("8 before magic");
 	{
 		file head(temporary, "rb");
 		if (head.active) {
@@ -358,6 +383,7 @@ void main() {
 			head.close();
 		}
 	}
+	mark("9 magic read " + magic.length());
 
 	// A stream that would not open is not a verdict about the file, so it is
 	// reported as what it is rather than as a wrong platform.
@@ -374,6 +400,7 @@ void main() {
 		return;
 	}
 
+	mark("10 copying into " + destination);
 	// Only now is the old copy touched, and only once the new one is complete.
 	if (file_exists(destination))
 		file_delete(destination);
