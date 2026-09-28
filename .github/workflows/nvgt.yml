@@ -25,6 +25,18 @@ jobs:
       - name: install the engine's runtime dependency
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libssl3
 
+      # The plugin is what the scripts are testing, so it has to exist before
+      # they are compiled. nvgt loads plugins from its own lib/ folder when it
+      # starts and registers them before the script is parsed, which means a
+      # script that names a plugin type fails to compile unless the library is
+      # already sitting there - there is no dllload line to call first. A
+      # fresh checkout therefore cannot run these scripts at all without this
+      # step, and the check would report every example as broken.
+      - name: build the plugin
+        run: |
+          sudo apt-get install -y -qq g++ libasound2-dev
+          make
+
       # The engine is a c++ binary that dlopens its own lib/ folder, so it has
       # to keep the directory layout it ships with. nvgt itself needs no
       # additional packages on a current ubuntu runner.
@@ -63,6 +75,17 @@ jobs:
           fi
           chmod +x "$nvgt"
           echo "engine: $nvgt"
+
+          # nvgt looks for a plugin in the lib/ folder beside the engine
+          # binary, so the freshly built one is copied there - the same place
+          # get_nvmidi.nvgt installs a release into.
+          plugin="$(find . -maxdepth 1 -name 'nvmidi.so' | head -n1)"
+          if [ -z "$plugin" ]; then
+            echo "::error::the plugin did not build, so the scripts cannot be compiled against it"
+            exit 1
+          fi
+          cp "$plugin" "$(dirname "$nvgt")/lib/nvmidi.so"
+          ls -la "$(dirname "$nvgt")/lib/nvmidi.so"
           # The engine needs libcrypto.so.3, which a plain runner image does
           # not carry. Fail here with a readable line rather than letting each
           # script fail with a loader message.
