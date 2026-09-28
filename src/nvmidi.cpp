@@ -1623,6 +1623,22 @@ void register_nvmidi(asIScriptEngine* engine) {
 	g_registration_engine = engine;
 	registration reg(engine);
 	register_midi_message(engine, &reg);
+	{
+		asIScriptEngine* e = engine;
+		const char* decls[] = {
+			"midi_message", "midi_message@", "midi_input", "midi_input@",
+			"midi_config", "midi_config@", "midi_note", "midi_note@", "midi_duration"
+		};
+		for (int i = 0; i < 9; i++) {
+			asITypeInfo* ti = e->GetTypeInfoByDecl(decls[i]);
+			fprintf(stderr, "nvmidi probe: decl '%-16s' -> %s", decls[i], ti ? "TYPE" : "none");
+			if (ti) fprintf(stderr, " (name=%s flags=0x%x size=%u props=%u methods=%u)",
+				ti->GetName(), (unsigned)ti->GetFlags(), (unsigned)ti->GetSize(),
+				(unsigned)ti->GetPropertyCount(), (unsigned)ti->GetMethodCount());
+			fprintf(stderr, "\n");
+		}
+		fflush(stderr);
+	}
 	// Every type a later declaration names has to exist first. The port
 	// classes' open_config takes a midi_config@, and their playing methods
 	// take midi_note and midi_duration, so all three come before them. The
