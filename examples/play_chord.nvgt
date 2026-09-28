@@ -23,7 +23,7 @@ array<midi_note@>@ chord(const string&in pitches, double length_ms) {
 			@note = midi_note(parse_int(parts[i].trim_whitespace()));
 		note.velocity = 100;
 		note.length = midi_duration(length_ms, MIDI_MS);
-		notes.insertLast(note);
+		notes.insert_last(note);
 	}
 	return notes;
 }

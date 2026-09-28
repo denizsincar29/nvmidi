@@ -93,73 +93,12 @@ std::string trim(const std::string& text) {
 }
 
 
-// The whole time schedule of a chord, worked out before a single byte is
-// sent: every gap ends up as an absolute moment, so playback does not drift
-// when a step takes a little longer than planned.
+// The whole time schedule of a chord: every gap ends up as an absolute moment,
+// so playback does not drift when a step takes a little longer than planned.
 struct note_step {
 	size_t note;
 	double at;      // milliseconds from the start of the chord
 };
-
-// How long the whole group lasts. The length of the first note rules, which
-// is the one rule that makes a chord of mixed note lengths predictable.
-double group_length(const std::vector<midi_note>& notes) {
-	if (notes.empty()) return 0.0;
-	return notes.front().duration_ms();
-}
-
-// Lays the notes out on the time line pointed at by mode: 0 sounds them all
-// at once, 1..3 spread them, 4 hands each one over to the next after its own
-// release, 5 repeats the whole group.
-void build_steps(const std::vector<midi_note>& notes, int mode, std::vector<note_step>& steps, double& total) {
-	steps.clear();
-	total = 0.0;
-	if (notes.empty()) return;
-
-	if (mode >= 1 && mode <= 4) {
-		// Spread the entries; the chord still ends when the last note does,
-		// which is the first note's length from its own start.
-		double spread = 0.0;
-		switch (mode) {
-			case 1: spread = 0.25; break; // quarter beat
-			case 2: spread = 0.5; break;  // eighth
-			case 3: spread = 0.125; break; // sixteenth
-			case 4: spread = 0.0625; break; // thirty-second
-		}
-		const double step = notes.front().duration_ms() * spread;
-		for (size_t i = 0; i < notes.size(); ++i) {
-			note_step s;
-			s.note = i;
-			s.at = step * static_cast<double>(i);
-			steps.push_back(s);
-		}
-		total = steps.back().at + notes.front().duration_ms();
-		return;
-	}
-
-	if (mode == 5) {
-		// One after another: each note starts when the previous one ends.
-		double at = 0.0;
-		for (size_t i = 0; i < notes.size(); ++i) {
-			note_step s;
-			s.note = i;
-			s.at = at;
-			steps.push_back(s);
-			at += notes[i].duration_ms();
-		}
-		total = at;
-		return;
-	}
-
-	// Everything at once.
-	for (size_t i = 0; i < notes.size(); ++i) {
-		note_step s;
-		s.note = i;
-		s.at = 0.0;
-		steps.push_back(s);
-	}
-	total = group_length(notes);
-}
 
 double now_ms() {
 #if defined(_WIN32)

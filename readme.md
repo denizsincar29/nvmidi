@@ -125,9 +125,9 @@ whichever unit you think in:
 array<midi_note@>@ notes = array<midi_note@>();
 midi_note@ n = midi_note(60, 100);          // middle C, velocity 100
 n.length = midi_duration(1.0, MIDI_BEATS);  // one beat at the default 120 bpm
-notes.insertLast(n);
-notes.insertLast(midi_note(midi_note_number("E4"), 100));
-notes.insertLast(midi_note(midi_note_number("G4"), 100));
+notes.insert_last(n);
+notes.insert_last(midi_note(midi_note_number("E4"), 100));
+notes.insert_last(midi_note(midi_note_number("G4"), 100));
 
 out.play_chord_wait(notes);                 // sounds, then returns
 out.play_midi_chord_wait(notes, "arpeggio");
