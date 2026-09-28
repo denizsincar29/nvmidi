@@ -1623,7 +1623,6 @@ void register_nvmidi(asIScriptEngine* engine) {
 	register_midi_input(engine, &reg);
 	register_midi_output(engine, &reg);
 	register_midi_config(engine, &reg);
-	register_midi_config(engine, &reg);
 	register_midi_globals(engine, &reg);
 }
 
