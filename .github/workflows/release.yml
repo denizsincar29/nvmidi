@@ -1,12 +1,18 @@
 name: release
-# Cuts a GitHub Release carrying nvmidi.dll when a version tag is pushed.
+# Cuts a GitHub Release carrying the built plugin when a version tag is pushed.
 #
-# The downloader in examples/ resolves the "latest" release and pulls the dll
-# out of it, so the asset name here is a contract, not a detail: it is
-# nvmidi.dll, and it has to stay nvmidi.dll.
+# The downloader in scripts/get_nvmidi.nvgt resolves the "latest" release and
+# pulls the library out of it, so the asset names here are a contract, not a
+# detail: they are nvmidi.dll and libnvmidi.so, and they have to stay those.
 #
 # The tag is the version. v0.7.0 makes a release named v0.7.0 - there is no
 # second place to write the number down, so it cannot drift from the tag.
+#
+# Both platforms are built. The plugin is not windows-only: the engine loads
+# nvmidi.dll on windows and libnvmidi.so everywhere else, and a release that
+# ships only the dll quietly leaves half the users with nothing to download.
+# The two jobs are independent, so they run in parallel; each one uploads its
+# artifact and the release job then attaches both files.
 on:
   push:
     tags:
@@ -17,7 +23,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,16 +39,52 @@ jobs:
           path: nvmidi.dll
           if-no-files-found: error
 
-      # Only a tag push makes a release. A manual dispatch of this workflow
-      # still gets the artifact above, but must not invent a version number -
-      # a release with a guessed tag is worse than no release.
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The linux build needs ALSA, both to compile against and to link
+      # -lasound. A bare runner image does not carry it.
+      - name: install alsa
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      - name: build
+        run: make
+
+      - name: keep the so
+        uses: actions/upload-artifact@v4
+        with:
+          name: nvmidi-so
+          path: libnvmidi.so
+          if-no-files-found: error
+
+  # Only a tag push makes a release. A manual dispatch of this workflow still
+  # gets the artifacts above, but must not invent a version number - a release
+  # with a guessed tag is worse than no release.
+  release:
+    needs: [windows, linux]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nvmidi-dll
+          path: assets
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: nvmidi-so
+          path: assets
+
       - name: release
-        if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release create "$GITHUB_REF_NAME" nvmidi.dll \
+          ls -l assets
+          gh release create "$GITHUB_REF_NAME" assets/nvmidi.dll assets/libnvmidi.so \
+            --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes
