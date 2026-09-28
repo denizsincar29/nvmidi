@@ -556,7 +556,7 @@ jobs:
           # has no sequencer at all there is no port to send into, and the
           # script says so itself - that is a failure of the assertion, not of
           # the plugin, and the sink step has already warned about the cause.
-          if ! grep -q '^E2E_HEARD' logs/e2e_midi.log; then
+          if ! grep -q 'E2E_HEARD' logs/e2e_midi.log; then
             if [ "${NVGT_MIDI_SINK:-none}" = "none" ]; then
               echo "::warning title=the inbound note was not tested::this runner has no midi bus, so no other process could send one. The plugin's own accounting below still has to pass."
             else
@@ -566,24 +566,30 @@ jobs:
           fi
 
           echo "--- what the plugin said about itself"
-          grep -E '^E2E_' logs/e2e_midi.log || echo "(no E2E_ lines at all: the script never reached its first print)"
+          grep -o 'E2E_[A-Z_]*' logs/e2e_midi.log || echo "(no E2E_ lines at all: the script never reached its first print)"
 
           failed=${failed_note:-0}
           if grep -q 'failed to load plugin' logs/e2e_midi.log; then
             echo "::error title=plugin does not load::the engine refused the alsa library, so nothing was tested"
             failed=1
           fi
-          if ! grep -q '^E2E_BEGIN' logs/e2e_midi.log; then
+          if ! grep -q 'E2E_BEGIN' logs/e2e_midi.log; then
             echo "::error title=script never ran::e2e_midi.nvgt did not reach its first line"
             failed=1
           fi
-          if ! grep -q '^E2E_OK LOADED' logs/e2e_midi.log; then
+          # Anchored matches do not survive this script: it writes a step with
+          # print() and the engine does not end every print with a newline, so
+          # two adjacent steps arrive as one line ("E2E_BEGINnvmidi e2e is
+          # openE2E_OK LOADED nvmidi/ALSA"). The step names are distinctive
+          # enough to find without an anchor, and the log says so on its own -
+          # "LOADED" without a backend name cannot be produced by this script.
+          if ! grep -q 'E2E_OK LOADED' logs/e2e_midi.log; then
             echo "::error title=plugin never registered::the library loaded but reported no backend"
             failed=1
           fi
-          if grep -q '^E2E_FAIL' logs/e2e_midi.log; then
+          if grep -q 'E2E_FAIL' logs/e2e_midi.log; then
             echo "::error title=the plugin failed its own test::every line below is a thing it could not do"
-            grep '^E2E_FAIL' logs/e2e_midi.log
+            grep -o 'E2E_FAIL[^E]*' logs/e2e_midi.log
             failed=1
           fi
           # The count is the summary; the greps above are the accusation.
@@ -593,9 +599,9 @@ jobs:
           # absence of the closing line is not a failure there - but it must be
           # the *only* thing missing, which is why the bus case still has to
           # have passed every check above it.
-          if grep -q '^E2E_NO_BUS' logs/e2e_midi.log; then
+          if grep -q 'E2E_NO_BUS' logs/e2e_midi.log; then
             echo "::notice title=no midi bus on this runner::the port and playback assertions were not reachable here and were not claimed; everything above this line is what did run."
-            grep -q '^E2E_FAIL' logs/e2e_midi.log && failed=1
+            grep -q 'E2E_FAIL' logs/e2e_midi.log && failed=1
           else
             tail -1 logs/e2e_midi.log | grep -q 'failures=0' || {
               echo "::error::e2e_midi.nvgt did not end with failures=0"
