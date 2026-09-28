@@ -135,6 +135,20 @@ void main() {
 		}
 	}
 
+	// The tag carries a leading v and the api will not find it without one:
+	// asking for tags/0.8.1 answers "Not Found", which this script used to
+	// report as "github gave no download address" - true, but it sends the
+	// reader looking at the release rather than at the name they typed. The
+	// tag is written v0.8.1, so a version that starts with a digit is taken as
+	// the same thing with the v put back.
+	if (target != "latest" && target.length() > 0) {
+		string first = target.substr(0, 1);
+		if (first == "0" || first == "1" || first == "2" || first == "3" ||
+			first == "4" || first == "5" || first == "6" || first == "7" ||
+			first == "8" || first == "9")
+			target = "v" + target;
+	}
+
 	if (target == "latest") {
 		string asked = input_box("Which nvmidi release do you want? Leave it as latest for the newest one, or type a tag such as v0.7.1.", "nvmidi", "latest");
 		asked = asked.trim_whitespace();
@@ -207,15 +221,36 @@ void main() {
 		string json = client.response_body;
 		listed = client.status_code == 200;
 		if (listed) {
-			// Every asset is described by a block beginning "url": - and it is
-			// the last such block when more than one asset was uploaded. We
-			// keep the last match because the freshest asset is listed last.
+			// The address is chosen by name, and the name is the file this
+			// script asked for. It used to keep the *last* address the api
+			// listed, on the reasoning that the freshest asset is listed last.
+			// The api does not order by freshness, it orders by name - so with
+			// nvmidi.dll and nvmidi.so in one release, the last entry is always
+			// nvmidi.so. A windows user therefore downloaded the linux library
+			// and this script wrote it under the name nvmidi.dll, every time,
+			// for two releases. nvgt opened it, saw something that is not a
+			// portable executable, and could only say
+			//
+			//     line: 0 (0)
+			//     ERROR: failed to load plugin
+			//
+			// which is exactly what a missing plugin says - so the mistake was
+			// invisible from the user's side, and the size printed by this
+			// script (267312, the linux library) was the only clue in the log.
+			// Every address is still walked, but the one whose path ends in the
+			// wanted file name is the one kept.
 			int at = json.find("\"browser_download_url\":");
 			while (at >= 0) {
 				int q1 = json.find("\"", at + 23);
 				int q2 = q1 >= 0 ? json.find("\"", q1 + 1) : -1;
-				if (q1 >= 0 && q2 > q1)
-					asset_url = json.substr(q1 + 1, q2 - q1 - 1);
+				if (q1 >= 0 && q2 > q1) {
+					string candidate = json.substr(q1 + 1, q2 - q1 - 1);
+					// Matched on the tail of the address rather than anywhere
+					// inside it, so a release that also carried, say,
+					// nvmidi.dll.sha256 could not be mistaken for the library.
+					if (candidate.find("/" + ASSET) >= 0)
+						asset_url = candidate;
+				}
 				at = json.find("\"browser_download_url\":", at + 1);
 			}
 		}
@@ -269,6 +304,29 @@ void main() {
 		file_delete(temporary);
 		announce("The file github sent is too small to be a library. The release may have no " + ASSET + " attached.");
 		return;
+	}
+
+	// What was downloaded is checked against what the engine will expect, and
+	// the check is on the first bytes because that is where the two platforms
+	// disagree. A windows engine loads a PE file, which starts "MZ"; a linux
+	// engine loads an ELF, which starts with 0x7f then "ELF". This is the check
+	// that was missing when the wrong asset was picked: a linux library written
+	// under the name nvmidi.dll is present, is complete, is the right sort of
+	// size, and cannot possibly load - and the engine's only words for that are
+	// "failed to load plugin", which names neither the file nor the reason. Two
+	// releases went out that way. Refusing here costs one sentence and saves a
+	// person an evening of swapping files.
+	file head(temporary, "rb");
+	if (head.active) {
+		string magic = head.read(2);
+		head.close();
+		bool windows_wanted = ASSET == "nvmidi.dll";
+		string looks_like = magic == "MZ" ? "a windows library" : "not a windows library";
+		if (windows_wanted && magic != "MZ") {
+			file_delete(temporary);
+			announce("Github sent " + looks_like + " for " + ASSET + ". This is a bug in this script or in the release, not something you did - do not install it by hand.");
+			return;
+		}
 	}
 
 	// Only now is the old copy touched, and only once the new one is complete.
