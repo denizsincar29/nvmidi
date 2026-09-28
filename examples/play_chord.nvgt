@@ -1,0 +1,71 @@
+// play_chord.nvgt - play chords and patterns on the keyboard's own sound.
+//
+// This is the high level layer on its own: no synthesis, no second device.
+// The notes are sent back out of the same keyboard, so its built in engine
+// makes them heard. The port comes from midi_config.txt next to this script.
+
+midi_config@ config;
+midi_input@ keyboard;
+
+// Builds an array of notes out of a comma separated list, so a test can be
+// written as "60,64,67" instead of four lines of object juggling.
+array<midi_note@>@ chord(const string&in pitches, double length_ms) {
+	array<midi_note@>@ notes = array<midi_note@>();
+	string[]@ parts = pitches.split(",");
+	for (uint i = 0; i < parts.length(); i++) {
+		midi_note@ note = midi_note_number(parts[i].trim()) >= 0
+			? midi_note(midi_note_number(parts[i].trim()))
+			: midi_note(parseInt(trim(parts[i])));
+		note.velocity = 100;
+		note.length = midi_duration(length_ms, MIDI_MS);
+		notes.insertLast(note);
+	}
+	return notes;
+}
+
+void main() {
+	config = midi_config_create();
+	config.load_if_present("midi_config.txt");
+
+	int port = config.find_input_port();
+	if (port < 0) {
+		screen_reader_speak("No port matches " + config.match + " and the fallback is empty. Check midi_config.txt.");
+		return;
+	}
+
+	keyboard = midi_input_create();
+	if (!keyboard.open_config(config, "nvmidi chord test")) {
+		screen_reader_speak("Cannot open: " + midi_last_error());
+		return;
+	}
+	screen_reader_speak("Playing on " + config.describe());
+
+	// A major chord, all notes at once, held for a second.
+	keyboard.play_chord_wait(chord("60,64,67", 1000));
+
+	// The same chord in every unit the duration object understands: a beat
+	// at 120, half a bar, and a length counted in MIDI ticks. Beats and bars
+	// are converted by the duration itself, so a script can think in music
+	// and pass milliseconds only where the hardware demands them.
+	midi_duration@ beat = midi_duration(1.0, MIDI_BEATS);
+	midi_duration@ half_bar = midi_duration(0.5, MIDI_BARS);
+	midi_duration@ ticks = midi_duration(96.0, MIDI_TICKS);
+
+	screen_reader_speak("A beat is " + beat.to_ms() + " milliseconds, half a bar is " + half_bar.to_ms() + ".");
+
+	array<midi_note@>@ held = chord("60,64,67", 0);
+	held[0].length = ticks;
+	keyboard.play_chord_wait(held);
+
+	// Every pattern the player knows, on one chord, so the difference between
+	// them is audible in one run.
+	string[]@ patterns = {"chord", "spread", "arpeggio", "quick", "fast", "strum", "repeat"};
+	for (uint i = 0; i < patterns.length(); i++) {
+		screen_reader_speak(patterns[i]);
+		keyboard.play_midi_chord_wait(chord("60,64,67,71", 220), patterns[i]);
+	}
+
+	screen_reader_speak("Done.");
+	keyboard.close();
+	wait(500);
+}

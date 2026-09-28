@@ -17,6 +17,7 @@
 
 class asIScriptEngine;
 class CScriptArray;
+class midi_config;
 
 // A single MIDI message as received from or sent to a device.
 // status is the command byte (note on/off, control change, ...), data1 and
@@ -30,6 +31,78 @@ struct midi_message {
 	std::string to_string() const;
 };
 
+// ---------------------------------------------------------------------------
+// midi_duration - how long something lasts, built from a unit and a count
+// ---------------------------------------------------------------------------
+//
+// A length the script writes in whichever unit it thinks in, and the plugin
+// converts once. Beats and bars need a tempo, which only the caller knows, so
+// they carry a tempo field; milliseconds and ticks do not use it.
+//
+// The low level port does not know what a beat is at a given moment either,
+// so the conversion is deliberately simple: a beat is one quarter note, and a
+// bar is four beats, the usual 4/4 assumption. A script that keeps its own
+// tempo map converts to milliseconds itself and passes MS.
+
+enum midi_duration_unit {
+	MIDI_UNIT_MS = 0,
+	MIDI_UNIT_TICKS = 1,
+	MIDI_UNIT_BEATS = 2,
+	MIDI_UNIT_BARS = 3
+};
+
+struct midi_duration {
+	// How many units this length is made of. Fractional beats and bars are
+	// allowed, a half beat is 0.5.
+	double amount;
+	int unit; // one of the MIDI_UNIT_* values
+	// Beats per minute, used by the beats and bars units. Defaults to 120.
+	double tempo;
+	// Pulses per quarter note, used by the ticks unit. Defaults to 96, which
+	// is what most MIDI files assume.
+	double ppq;
+
+	std::string to_string() const;
+	// The length in milliseconds, after the unit conversion.
+	double to_ms() const;
+
+	midi_duration();
+	midi_duration(double amount, int unit);
+	midi_duration(double amount, int unit, double tempo);
+};
+
+midi_duration* midi_duration_create();
+midi_duration* midi_duration_create_full(double amount, int unit);
+midi_duration* midi_duration_create_tempo(double amount, int unit, double tempo);
+
+// ---------------------------------------------------------------------------
+// midi_note - one note, with its pitch and its length
+// ---------------------------------------------------------------------------
+//
+// One note of a chord, as the high level layer speaks it.
+// pitch follows the MIDI convention, 60 is middle C, 0..127.
+struct midi_note {
+	int pitch;
+	int velocity;
+	int channel; // 1..16
+	// How long the note sounds. When a whole chord is played, the length of
+	// the first note is the one that counts; the others are ignored.
+	midi_duration length;
+	std::string to_string() const;
+	// The length in milliseconds, which is what the layer below actually
+	// needs. Handy for a script that wants to show or print it.
+	double duration_ms() const;
+
+	midi_note();
+	midi_note(int pitch);
+	midi_note(int pitch, int velocity);
+};
+
+midi_note* midi_note_create();
+midi_note* midi_note_create_full(int pitch, int velocity, int channel);
+// Takes the length straight in milliseconds, the unit every clock agrees on.
+midi_note* midi_note_create_ms(int pitch, int velocity, double duration_ms);
+
 // One MIDI message queued for the script to read.
 // Messages arrive on RtMidi's own thread, so they are buffered here and
 // handed to the script only when it asks (next_message / poll).
@@ -40,6 +113,21 @@ public:
 
 	// Opens the input port at the given index of the enumerated device list.
 	bool open(unsigned int port, const std::string& name = "nvmidi");
+	// Opens the first port whose name contains the substring, ignoring case.
+	bool open_by_name(const std::string& substring, const std::string& name = "nvmidi");
+	// Opens whatever the configuration points at.
+	bool open_config(midi_config* config, const std::string& name = "nvmidi");
+	// Plays the notes itself, on the device the port belongs to: the notes are
+	// sent back out and the keyboard's own sound engine makes them heard. For
+	// a keyboard with a built in synth this is the shortest way to sound a
+	// chord without writing any synthesis. Blocks until the chord is over.
+	bool play_chord(CScriptArray* notes);
+	bool play_chord_wait(CScriptArray* notes);
+	bool play_note(const midi_note& note);
+	bool play_note_wait(const midi_note& note);
+	// Releases everything this port is holding sounding, returns how many.
+	unsigned int stop_all_notes();
+	unsigned int get_active_notes() const;
 	void close();
 	bool is_open() const;
 	int get_port() const; // index of the open port, -1 when closed
@@ -74,6 +162,11 @@ private:
 	std::deque<midi_message> queue;
 	unsigned int queue_limit;
 	double opened_at;
+	// Set while the high level layer is playing, so a callback that arrives
+	// meanwhile is tolerated rather than treated as a surprise.
+	bool playing;
+	// The notes the high level layer is holding sounding.
+	std::vector<midi_note> sounding;
 };
 
 // An open MIDI output port.
@@ -83,10 +176,65 @@ public:
 	~midi_output();
 
 	bool open(unsigned int port, const std::string& name = "nvmidi");
+	// Opens the first port whose name contains the substring, ignoring case.
+	bool open_by_name(const std::string& substring, const std::string& name = "nvmidi");
+	// Opens whatever the configuration points at.
+	bool open_config(midi_config* config, const std::string& name = "nvmidi");
 	void close();
 	bool is_open() const;
 	int get_port() const;
 	std::string get_port_name() const;
+
+	// -----------------------------------------------------------------
+	// High level playing
+	// -----------------------------------------------------------------
+	//
+	// These build the note on / note off pairs for you and keep track of what
+	// is still sounding, so a chord cannot be left hanging by a mistake in
+	// the script.
+
+	// Plays a chord: every note at once, then they are released when the
+	// length of the first note is over.
+	//
+	// play_chord returns as soon as the notes are out and leaves the release
+	// to a timer — the script keeps running, which is what an interactive
+	// program wants. The timer only fires while the script is still running,
+	// so a script that ends right after the call cuts the chord short.
+	//
+	// play_chord_wait instead waits for the whole chord here and releases the
+	// notes before returning. The obvious function to use for a test or for
+	// playing a progression step by step.
+	//
+	// Both return false when there is no open port or the array is empty,
+	// with midi_last_error() saying which.
+	bool play_chord(CScriptArray* notes);
+	bool play_chord_wait(CScriptArray* notes);
+
+	// One note, with the same split: play_note returns at once and schedules
+	// the release, play_note_wait returns when the note has finished.
+	bool play_note(const midi_note& note);
+	bool play_note_wait(const midi_note& note);
+
+	// Releases everything the high level layer has sounding right now, and
+	// returns how many notes that was.
+	unsigned int stop_all_notes();
+	// How many notes of the high level layer are sounding right now.
+	unsigned int get_active_notes() const;
+
+	// Plays the notes according to a named pattern: "chord", "spread",
+	// "arpeggio", "quick", "fast", "sequence", "repeat", "strum".
+	//
+	// Both wait: the sequence of note ons and releases is run to its end
+	// before returning, so the script continues exactly when the last note
+	// has been released. A script that wants to do something while a pattern
+	// plays should call the non waiting variants or drive the raw send_*
+	// calls from its own clock.
+	bool play_midi_chord(CScriptArray* notes, const std::string& pattern);
+	bool play_midi_chord_wait(CScriptArray* notes, const std::string& pattern);
+
+	// Plays the notes one after another, each for its own length. Blocking,
+	// so a scale sounds as a scale and not as a chord.
+	bool play_sequence(CScriptArray* notes);
 
 	// Sends one message. The three bytes are the raw MIDI bytes, so
 	// send(0x90, 60, 100) is a note-on on channel 1.
@@ -112,6 +260,15 @@ private:
 	void* midi_out; // RtMidiOut*
 	int port_index;
 	bool virtual_port;
+	// Send helper shared by the high level functions; builds a note on or a
+	// note off from a midi_note without going through the script.
+	void note_on(const midi_note& note);
+	void note_off(const midi_note& note);
+	// Releases one note and forgets it, so stop_all_notes() does not send a
+	// second note off for the same key.
+	void release_one(const midi_note& note);
+	// The chord the high level layer is currently holding sounding.
+	std::vector<midi_note> sounding;
 };
 
 // Free functions registered with Angelscript.
@@ -120,6 +277,12 @@ unsigned int midi_output_port_count();
 std::string midi_input_port_name(unsigned int port);
 std::string midi_output_port_name(unsigned int port);
 std::string midi_api_name();
+
+// Case insensitive search for a port whose name contains something.
+// Returns the index of the first match, or -1 when nothing matches. The
+// whole search is done on lower cased copies, so "nord" finds "Nord Piano 6".
+int midi_find_input_port(const std::string& substring);
+int midi_find_output_port(const std::string& substring);
 // Return a fresh array<string>; the script owns the reference.
 CScriptArray* midi_input_port_names();
 CScriptArray* midi_output_port_names();
@@ -134,6 +297,72 @@ std::string midi_last_error();
 
 // Builds a human readable name for a message, e.g. "note on, channel 1, note 60, velocity 100".
 std::string midi_message_name(const midi_message& m);
+
+// ---------------------------------------------------------------------------
+// Port configuration
+// ---------------------------------------------------------------------------
+//
+// Reads a small text file that says which port to look for. The format is one
+// "key = value" per line, # starts a comment:
+//
+//     match = nord          # substring of the port name, case insensitive
+//     port = 0              # fall back to this index
+//
+// Both keys are optional. When the file is missing or unreadable the config
+// keeps its defaults: match "nord", port 0. The examples ship such a file
+// next to the script, so someone testing another keyboard edits the file
+// instead of the code.
+class midi_config {
+public:
+	midi_config();
+
+	// Loads path, replacing the current values. Returns false when the file
+	// cannot be read, with the reason in midi_last_error(); the defaults
+	// stay in place. A key that is not understood is reported and skipped,
+	// so one typo does not throw the whole config away.
+	bool load(const std::string& path);
+	// Same, but a missing file is not an error: the defaults simply stand.
+	bool load_if_present(const std::string& path);
+
+	// Looks for the configured substring, case insensitively, and falls back
+	// to the configured index when nothing matches. Returns the index of the
+	// port to open, or -1 when neither the name nor the index finds anything.
+	int find_input_port() const;
+	int find_output_port() const;
+
+	// The index the search ended on last time, -1 when it found nothing.
+	int get_last_port() const { return last_port; }
+	// "Nord Piano 6" when the search matched by name, "port 0 (fallback)"
+	// when it fell back to the index. Meant to be spoken by a screen reader.
+	std::string describe() const;
+	std::string get_path() const { return path; }
+
+	// The substring searched for, "nord" unless the file says otherwise.
+	std::string match;
+	int port; // index used when the substring finds nothing
+
+private:
+	int pick(bool input);
+	std::string path;
+	int last_port;
+};
+
+midi_config* midi_config_create();
+
+// Turns a note name such as "C4", "F#3" or "Bb5" into a MIDI note number.
+// Returns -1 when the name is not understood.
+int midi_note_number(const std::string& name);
+
+// ---------------------------------------------------------------------------
+// High level layer
+// ---------------------------------------------------------------------------
+//
+// The playing functions live on midi_input and midi_output and take arrays of
+// notes. Angelscript declares those as array<midi_note@>@: the elements are
+// handles to midi_note written by the script (midi_note(60, 100) is enough),
+// and the array is owned by the script while the call runs. The plugin never
+// keeps a reference to it and never touches it from another thread.
+
 
 // Trampoline handed to RtMidi; defined in nvmidi.cpp.
 void midi_input_callback(double delta, std::vector<unsigned char>* message, void* user_data);

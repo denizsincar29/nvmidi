@@ -5,7 +5,7 @@
 // and with the velocity scaled. Shows both directions working at once.
 //
 // Press escape to stop. On the way out every note is released, so nothing is
-// left sounding.
+// left sounding. Both ports come from midi_config.txt next to this script.
 
 midi_input@ in;
 midi_output@ out;
@@ -23,15 +23,18 @@ void main() {
 		return;
 	}
 
+	midi_config@ config = midi_config_create();
+	config.load_if_present("midi_config.txt");
+
 	in = midi_input_create();
 	out = midi_output_create();
 
-	if (!in.open(0)) {
-		screen_reader_speak("Input: " + midi_last_error());
+	if (!in.open_config(config, "nvmidi forward in")) {
+		screen_reader_speak("Input (" + config.describe() + "): " + midi_last_error());
 		return;
 	}
-	if (!out.open(0)) {
-		screen_reader_speak("Output: " + midi_last_error());
+	if (!out.open_config(config, "nvmidi forward out")) {
+		screen_reader_speak("Output (" + config.describe() + "): " + midi_last_error());
 		in.close();
 		return;
 	}

@@ -3,6 +3,9 @@
 // The quickest way to confirm input works end to end. Play a few notes, turn
 // a knob, move the pitch wheel, and listen to what arrives.
 //
+// The port comes from midi_config.txt next to this script, so pointing it at
+// another keyboard is a matter of editing that file.
+//
 // Press escape to stop.
 
 midi_input@ keyboard;
@@ -13,9 +16,12 @@ void main() {
 		return;
 	}
 
+	midi_config@ config = midi_config_create();
+	config.load_if_present("midi_config.txt");
+
 	keyboard = midi_input_create();
-	if (!keyboard.open(0)) {
-		screen_reader_speak("Could not open port 0: " + midi_last_error());
+	if (!keyboard.open_config(config, "nvmidi echo")) {
+		screen_reader_speak("Cannot open " + config.describe() + ": " + midi_last_error());
 		return;
 	}
 	screen_reader_speak("Listening on " + keyboard.get_port_name());

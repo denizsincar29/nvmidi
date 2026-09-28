@@ -1,7 +1,8 @@
 // list_ports.nvgt - print every MIDI port on this machine.
 //
 // Run this first when something is not working: it tells you which port
-// number your keyboard actually landed on, and which backend RtMidi picked.
+// number your keyboard actually landed on, which backend RtMidi picked, and
+// which port midi_config.txt selects.
 
 void main() {
 	screen_reader_speak("MIDI backend: " + midi_api_name());
@@ -25,6 +26,14 @@ void main() {
 			screen_reader_speak("Output " + i + ": " + midi_output_port_name(i));
 		}
 	}
+
+	// What the other examples will open, so a mismatch is visible right here.
+	midi_config@ config = midi_config_create();
+	config.load_if_present("midi_config.txt");
+	screen_reader_speak("Looking for \"" + config.match + "\".");
+	screen_reader_speak("Input: " + (config.find_input_port() >= 0 ? config.describe() : "nothing found, not even the fallback port " + config.port + "."));
+	int out_port = config.find_output_port();
+	screen_reader_speak("Output: " + (out_port >= 0 ? midi_output_port_name(out_port) : "nothing found."));
 
 	wait(500);
 }
