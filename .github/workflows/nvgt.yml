@@ -40,28 +40,20 @@ jobs:
       # The engine is a c++ binary that dlopens its own lib/ folder, so it has
       # to keep the directory layout it ships with. nvgt itself needs no
       # additional packages on a current ubuntu runner.
-      - name: fetch the nvgt engine
+      #
+      # The engine is the rolling prerelease, not the "stable" release on the
+      # download page. Those are different builds: the plugin is compiled
+      # against the vendored src/nvgt_plugin.h, which is pinned to the
+      # prerelease tag, and a plugin whose API version does not match the
+      # running engine is simply not registered - the script then fails with
+      # "Identifier 'midi_input' is not a data type" even though the library is
+      # sitting in lib/ next to the engine. scripts/nvgt_pin.sh owns that
+      # choice: it fetches the pinned build and refuses if the vendored header
+      # has drifted from it, so a mismatch is a named failure here instead of a
+      # confusing one further down.
+      - name: fetch the pinned nvgt engine
         shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p engine
-          # The published builds live under downloads/ as
-          # nvgt_<version>_<channel>.tar.gz - there is no nvgt_linux.zip, and
-          # the download page has to be read to learn the current version. The
-          # version below is the one that was verified to exist and to unpack
-          # into a runnable engine.
-          url="https://nvgt.dev/downloads/nvgt_0.89.1_beta.tar.gz"
-          echo "downloading $url"
-          curl -fsSL "$url" -o engine.tar.gz || {
-            echo "::error::could not download the nvgt engine from $url"
-            exit 1
-          }
-          # The engine binary sits at the top level of the tarball next to its
-          # own lib/ folder, and it dlopens out of that folder by a path
-          # relative to itself, so the layout is unpacked as shipped.
-          tar xzf engine.tar.gz -C engine
-          ls -la engine
-          find engine -maxdepth 2 -name 'nvgt' -type f
+        run: ./scripts/nvgt_pin.sh fetch engine
 
       - name: compile every script
         shell: bash
@@ -75,6 +67,7 @@ jobs:
           fi
           chmod +x "$nvgt"
           echo "engine: $nvgt"
+          "$nvgt" --version 2>&1 | head -3 || true
 
           # nvgt looks for a plugin in the lib/ folder beside the engine
           # binary, so the freshly built one is copied there - the same place
@@ -86,10 +79,6 @@ jobs:
           fi
           cp "$plugin" "$(dirname "$nvgt")/lib/nvmidi.so"
           ls -la "$(dirname "$nvgt")/lib/nvmidi.so"
-          # The engine needs libcrypto.so.3, which a plain runner image does
-          # not carry. Fail here with a readable line rather than letting each
-          # script fail with a loader message.
-          "$nvgt" --version 2>&1 | head -3 || true
 
           # Every script must at least compile. A script that speaks through a
           # screen reader has nothing to say on a headless runner, and that is
