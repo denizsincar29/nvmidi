@@ -45,19 +45,47 @@ jobs:
           submodules: recursive
 
       # nvgt itself, for the windows runner. scripts/nvgt_pin.sh cannot do
-      # this: it fetches the .tar.gz asset and untars it, and the windows
-      # release asset is a .zip. Fetching the archive through the release API
-      # rather than a hardcoded url means the job follows whatever `latest`
-      # points at, the same as the pin script does on linux.
+      # this - it fetches the .tar.gz asset and untars it, and the windows
+      # asset is not a tar. Two things about that asset are easy to get wrong
+      # and were wrong here first:
+      #
+      #   the release. nvgt's "latest" is a prerelease, and github excludes
+      #   prereleases from /releases/latest, which answers 404. The endpoint
+      #   that works is /releases/tags/latest - the same one the pin script
+      #   uses, which is why the linux job never hit this.
+      #
+      #   the format. There is no .zip asset. The windows one is
+      #   nvgt_<version>_dev.exe, a self-extracting 7-Zip (SFX) archive: 7-Zip's
+      #   own module, not an installer, so it takes 7-Zip's switches and the
+      #   process exits as soon as the files are on disk. That is why -y is
+      #   passed - without it 7-Zip asks for confirmation on stdin, which on a
+      #   runner is nobody, and the step dies before saying why.
+      #
+      # Fetching through the release API rather than a hardcoded url means the
+      # job follows whatever `latest` points at, the same as the pin script.
       - name: fetch nvgt
         shell: pwsh
         run: |
-          $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/samtupy/nvgt/releases/latest' -Headers @{ 'User-Agent' = 'nvmidi-ci' }
-          $asset = $rel.assets | Where-Object { $_.name -like '*.zip' } | Select-Object -First 1
-          if (-not $asset) { throw "no .zip asset in release $($rel.tag_name)" }
-          Write-Host "nvgt $($rel.tag_name): $($asset.name)"
-          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile nvgt.zip
-          Expand-Archive -Path nvgt.zip -DestinationPath nvgt-dl -Force
+          # 7-Zip is on every github windows runner; the path is asserted
+          # rather than assumed because everything below depends on it.
+          $sevenZip = 'C:\Program Files\7-Zip\7z.exe'
+          if (-not (Test-Path $sevenZip)) { throw "7-Zip is not at $sevenZip on this runner" }
+
+          $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/samtupy/nvgt/releases/tags/latest' -Headers @{ 'User-Agent' = 'nvmidi-ci' }
+          Write-Host "nvgt release: $($rel.tag_name) ($($rel.name))"
+          Write-Host "assets: $(($rel.assets | ForEach-Object { $_.name }) -join ', ')"
+          $asset = $rel.assets | Where-Object { $_.name -like '*.exe' } | Select-Object -First 1
+          if (-not $asset) { throw "no .exe asset in release $($rel.tag_name)" }
+          Write-Host "using $($asset.name) ($($asset.size) bytes)"
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile nvgt-sfx.exe -UseBasicParsing
+          # A truncated download unpacks into a directory of half written files
+          # and the failure surfaces later as a missing dll. Checked here.
+          $got = (Get-Item nvgt-sfx.exe).Length
+          Write-Host "downloaded $got bytes"
+          if ($got -ne $asset.size) { throw "download is $got bytes, release says $($asset.size)" }
+
+          & $sevenZip x nvgt-sfx.exe -onvgt-dl -y | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw "7-Zip could not unpack $($asset.name): exit $LASTEXITCODE" }
           # The archive wraps everything in a directory named after the build.
           # Flattening it means one path for the rest of the job whether upstream
           # changes that name or not.
@@ -66,6 +94,7 @@ jobs:
           $dir = $exe.DirectoryName
           Copy-Item "$dir\*" -Destination . -Recurse -Force
           Write-Host "nvgt at $(Resolve-Path .\nvgt.exe)"
+          Write-Host "nvgt's own directory holds: $(($(Get-ChildItem $dir -Recurse | ForEach-Object { $_.Name }) -join ', '))"
           # The evidence for everything that follows: if this is not the engine
           # the plugin was built against, every later failure is unreadable.
           .\nvgt.exe -v
