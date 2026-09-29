@@ -51,19 +51,16 @@ case "$mode" in
     cp "$outdir/late_midi.dll" "$outdir/late_midi_as_exe.dll"
     ;;
   exe)
-    # -Wl,--out-implib keeps the export address table. The other two probes get
-    # one through -Wl,--out-implib on the late build; this one did not, and
-    # that absence is what made the two executables unable to report on
-    # themselves. Measured on run 36594797122: both wrote
-    #   ATTACH dllmain=0 done=0 env=ok dll=(unset)
-    # which cannot all be true of a single copy of the statics - env=ok says
-    # GetEnvironmentVariableA ran and returned a character count, the write to
-    # g_path sits in the same block under the same condition, and main still
-    # reads it empty. With the export table present the executable's DllMain is
-    # reached through the import descriptor instead, which is the form the
-    # loader resolves inside the image, and the statics are then shared.
-    "$CC" $FLAGS -o "$outdir/probe_exe.exe" "$here/probe_exe.c" $LIBS \
-      -Wl,--out-implib,"$outdir/libprobe_exe.a"
+    # No import library, and that is deliberate rather than an omission. One
+    # was added here to test the theory that its absence was why the two
+    # executables could not report on themselves (commit 8631427, run
+    # 36595721249): the output came back byte-identical to the run without it,
+    # ATTACH dllmain=0 done=0 env=ok dll=(unset). An import library does not
+    # create a second copy of an image's statics, and with that branch closed
+    # the line is back to the plain link. What the statics question actually
+    # needs is the PROBE_ENTRY line in probe_exe.c, which is reached from both
+    # the entry point and DllMain and so can say which copy is running.
+    "$CC" $FLAGS -o "$outdir/probe_exe.exe" "$here/probe_exe.c" $LIBS
     ;;
   noexe)
     # No -lwinmm on the link line, so no import table entry names winmm, and

@@ -77,17 +77,24 @@ static char g_path[MAX_PATH];
  * block under the same condition; and main still reads an empty g_path. A
  * single copy of the variable cannot both be written and read back empty.
  *
- * The cause is in the link, not in this file. probe_exe is built with -static
- * but without an import library, so its DllMain is reached through the export
- * address that the loader records - and at least GetEnvironmentVariableA comes
- * from a second copy of the C runtime image that is not the one main's code
- * runs in. Each copy gets its own zero-initialised section, so the flag set in
- * one is read as 0 in the other. This is the same class of mistake the driver
- * hit with its own -o handling: a build line that is never stated instead of
- * derived from the thing it builds.
+ * The cause is NOT the link, which was the first guess and it is refuted:
+ * probe_exe was rebuilt with -Wl,--out-implib added (commit 8631427, run
+ * 36595721249) and the output was byte-identical - ATTACH dllmain=0 done=0
+ * env=ok dll=(unset), the same six fields in the same order. An import library
+ * changes who resolves what at link time; it does not give an image two copies
+ * of its statics, and adding one changed nothing. The claim that it did, and
+ * the -o-handling analogy it was built on, are withdrawn.
  *
- * The instrument is unaffected. late_midi.c has no such boundary, only one
- * load of it exists in the process, and every LATE_PROBE line is written from
+ * What the marker does show, once the --out-implib branch is off the table, is
+ * that a process whose main never ran did run this file's DllMain far enough to
+ * call GetEnvironmentVariableA successfully - and the same process then wrote
+ * dllmain=0, which is the flag value read from a variable that DllMain had
+ * already set to 1 or 2 by the line above. Since run 36594797122 both
+ * executables have agreed on those three readings, so the divergence is stable
+ * rather than a race.
+ *
+ * The instrument is unaffected. late_midi.c crosses no image boundary at all:
+ * one copy of it exists per process, and every LATE_PROBE line is written from
  * one function in one image. The negative readings it gave - the port
  * republishes, OpenDriver answers before any drive, midiOutGetNumDevs reports
  * 0 - were measured from the plugin's own path and stand. */
@@ -125,13 +132,34 @@ static DWORD g_env_rc = 0;
  * fault, not an exit, which is why this now records before it can fault. */
 #define ATTACH_FAILED (-1L)
 
-static void fail_and_exit(const char *what, HMODULE m) {
+/* One call, two callers, and which one can reach it is the measurement.
+ *
+ * main calls it with what == NULL. DllMain can only call it with a non-NULL
+ * what, and it does so from inside the private address space described at
+ * g_attach_done. So a non-NULL what arriving in the file means main has no
+ * copy of this function and something else is running a copy of this file -
+ * which is the thing the marker's dllmain=0 kept suggesting and could not
+ * prove, because e9=env=ok and g_path being empty sat awkwardly together.
+ *
+ * The environment call is made on the DllMain path with a NULL buffer, which
+ * returns the length of the variable and does not touch memory, so it decides
+ * nothing by itself and cannot disturb the state it is reporting on. */
+static void probe_load_failed(const char *what, HMODULE m) {
 	DWORD le = GetLastError();
 	char path[MAX_PATH * 2];
 	char msg[512];
 	FILE *f;
 
 	GetModuleFileNameA(NULL, path, MAX_PATH);
+	if (!what) {
+		snprintf(msg, sizeof(msg), "PROBE_ENTRY caller=main seen=%lu path=%s\n",
+			(unsigned long)GetEnvironmentVariableA("NVPROBE_DLL", NULL, 0),
+			g_path[0] ? g_path : "(unset)");
+		f = fopen("C:\\probe_entry.txt", "ab");
+		if (f) { fputs(msg, f); fclose(f); }
+		fflush(stdout);
+		return;
+	}
 	snprintf(msg, sizeof(msg), "PROBE_LOAD_FAIL what=%s err=%lu path=%s\n",
 		what, (unsigned long)le, g_path);
 	/* Two places, because neither is guaranteed on its own: the module's own
@@ -169,7 +197,7 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
 		 * of DllMain can never be mistaken for a load that never happened. */
 		if (g_path[0]) {
 			HMODULE m = LoadLibraryExA(g_path, NULL, 0);
-			if (!m) fail_and_exit("LoadLibraryExA", NULL);
+			if (!m) probe_load_failed("LoadLibraryExA", NULL);
 		}
 		InterlockedExchange(&g_attach_done, 1);
 	}
@@ -216,6 +244,15 @@ int main(int argc, char **argv) {
 			fclose(af);
 		}
 	}
+	/* A second entry-point marker, through the same function DllMain fails
+	 * through, so that the file holds one line per reachable path instead of a
+	 * line that only ever has one explanation. Until this call existed the file
+	 * was written from exactly one place - fopen in main above - and a missing
+	 * line therefore had two readings: main never ran, or main ran and the
+	 * runner never got there. This call is the one that makes those
+	 * two readings separable, and it is the reason the function takes NULL:
+	 * NULL is main asking, a name is DllMain reporting a failure. */
+	probe_load_failed(NULL, NULL);
 	/* Pulled in here, after the dll named by the environment has attached.
 	 * The order this program is testing is that the dll was up first. */
 	/* The mapper is opened rather than a device index, so winmm has to ask
