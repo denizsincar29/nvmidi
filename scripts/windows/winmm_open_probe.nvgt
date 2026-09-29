@@ -84,18 +84,27 @@ void main() {
 		}
 		print("W_IN_" + i + " " + n);
 	}
-	midi_input@ port_in = midi_input_create();
 	bool in_opened = false;
-	if (midi_input_port_count() > 0) in_opened = port_in.open(0, "probe");
+	if (midi_input_port_count() > 0) in_opened = midi_input_open_probe();
 	print("W_INPUT_OPEN " + in_opened);
 	print("W_INPUT_OPEN_ERROR " + bytes_of_last_error());
-	if (in_opened) port_in.close();
 
 	// The final reading. A failure that is about the output direction alone
 	// shows up here as W_INPUT_OPEN true next to W_OPEN false.
 	print("W_VERDICT output=" + opened + " input=" + in_opened
 		+ " synth_index=" + synth_index + " outputs=" + OUTPUTS);
 	print("W_END");
+}
+
+// The input direction, opened the same way the plugin opens it. It lives in
+// its own function because this engine compiles the second NAMED plugin type in
+// a script body as "Identifier 'midi_input' is not a data type" - measured, run
+// 36558508514. One named type in a body is accepted, two are not.
+bool midi_input_open_probe() {
+	midi_input@ port_in = midi_input_create();
+	if (!port_in.open(0, "probe")) return false;
+	port_in.close();
+	return true;
 }
 
 // One byte as one character, by range. The engine's own string(byte) gives the
