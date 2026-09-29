@@ -1,4 +1,10 @@
 // probe: n_handle
+#pragma plugin nvmidi
+
+// Like n_whole.nvgt, this file used to carry no pragma while the probe it is
+// read against did, which made a load failure and a syntax refusal look the
+// same. The pragma is here now; the only difference from n_type.nvgt is that
+// these are handles and no value type is named.
 
 // Each name alone, so a refusal names one word and not a list.
 void main() {

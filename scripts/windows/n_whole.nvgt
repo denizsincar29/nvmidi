@@ -1,4 +1,12 @@
 // probe: n_whole
+#pragma plugin nvmidi
+
+// This file used to carry no pragma at all, while n_type.nvgt - the probe it is
+// meant to be read against - did. Two scripts differing in two ways cannot
+// attribute a refusal to either one: a name that is not a data type because no
+// plugin registered it and a name that is not a data type because the
+// declaration is wrong print the same sentence. The pragma is here now, so the
+// only difference left between this file and n_type.nvgt is the declarations.
 
 // Each name alone, so a refusal names one word and not a list.
 void main() {

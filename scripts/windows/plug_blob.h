@@ -1,15 +1,14 @@
 // A stand-in for whatever the engine hands a plugin's entry point.
 //
-// Nothing includes this any more. It was written for a probe that called the
-// entry point once per candidate version with this struct in hand, and that
-// probe no longer calls the entry point at all: src/nvgt_plugin.h exports
-// nvgt_plugin_version(), which returns the compiled-in api version directly,
-// so the question is answered by a zero-argument call rather than by handing
-// the plugin a fabricated struct and reading the bool that comes back.
+// One include, from plug_api.c. The struct is not there to answer the version
+// question - src/nvgt_plugin.h exports nvgt_plugin_version(), which returns the
+// compiled-in api version directly, so that question is answered by a
+// zero-argument call. It is there for the second half of the probe, which hands
+// the entry point a deliberately wrong version: prepare_plugin reads only this
+// field before returning false (src/nvgt_plugin.h:157), so only this field has
+// to be right.
 //
-// It stays in the tree only because removing it and the line that copies it
-// into the probe directory is part of the same cleanup as removing the probe
-// itself. Do not build anything on it.
+// It goes away together with plug_api.c once attribution is settled.
 //
 // Two things it got wrong, recorded so the next reader does not repeat them:
 // the plugin's exported symbol is nvgt_plugin, not plugin_main; and a version
