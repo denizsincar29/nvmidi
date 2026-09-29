@@ -122,3 +122,152 @@ string bytes_of_last_error() {
 	}
 	return s;
 }
+void main() {
+	print("E2E_BEGIN");
+	// The one thing this script has to say to another process. It is printed
+	// on its own line as well, because the ci job greps for the bare port name
+	// while the line above stays readable by a person.
+	print("nvmidi e2e is open");
+
+	string api = "";
+	for (int i = 0; i < midi_api_name_byte_count(); i++) api += char_of(midi_api_name_byte(i));
+	if (api == "") {
+		fail("midi_api_name returned nothing, so the plugin is not registered");
+		print("E2E_END failures=" + failures);
+		return;
+	}
+	ok("LOADED " + api);
+	if (api.find("Dummy") >= 0)
+		fail("the library in use is the Dummy backend: it compiles and loads, but it can never reach a port");
+
+	// --- 2. what this machine offers ---------------------------------------
+	const uint ins = midi_input_port_count();
+	const uint outs = midi_output_port_count();
+	print("E2E_INPUT_PORTS " + ins);
+	print("E2E_OUTPUT_PORTS " + outs);
+	for (uint i = 0; i < outs; i++) print("E2E_OUTPUT_PORT " + i + " " + bytes_of_port_name(i));
+	for (uint i = 0; i < ins; i++) print("E2E_INPUT_PORT " + i + " " + bytes_of_input_port_name(i));
+
+	// --- 3. listen for the name this process is about to publish ------------
+	//
+	// Order matters here, and the reason is in rtmidi's alsa layer rather than
+	// in this plugin. A RtMidiIn connects to every port that exists at the
+	// moment it is constructed, and its getPortCount()/openPort() are
+	// no-ops for a reader that is already connected (RtMidi.h, the inline
+	// rtapi_ delegators). So a reader built *after* the port it is meant to
+	// hear from never attaches to it: the port did not exist when the scan
+	// ran, and the scan does not run again.
+	//
+	// This is measured behaviour of the vendored copy, not a guess, and it is
+	// the same trap a user falls into with a real keyboard - open the input
+	// first, then plug the instrument in, or reopen it after doing so.
+	midi_input@ reader = midi_input_create();
+	if (!reader.open_by_name("nvmidi e2e", "nvmidi e2e reader")) {
+		// Two very different reasons live behind this one false, and the
+		// difference is measurable rather than guessable: when the machine has
+		// no midi bus at all, it also lists no ports. On such a machine the
+		// virtual-port half of this test is not a thing that can be asked for,
+		// so it is reported as a fallback - the machine's shape, not the
+		// plugin's behaviour - and the caller reads E2E_NO_BUS rather than a
+		// failure the plugin did not commit.
+		if (outs == 0 && ins == 0) {
+			have_bus = false;
+			print("E2E_NO_BUS " + bytes_of_last_error());
+			note("this machine has no midi bus: no ports exist and none can be published, so the port part of this test cannot run here");
+		} else {
+			fail("could not open a reader for the test port: " + bytes_of_last_error());
+		}
+		print("E2E_END failures=" + failures);
+		return;
+	}
+	ok("READER OPEN " + bytes_of_object_port_name(reader));
+
+	// --- 4. publish a port of this process's own ----------------------------
+	midi_output@ vport = midi_output_create();
+	vport.set_virtual_port(true);
+	if (!vport.open(0, "nvmidi e2e")) {
+		fail("could not create a virtual output port: " + bytes_of_last_error());
+		// No port of our own means nothing can be sent into this process, so
+		// there is nothing left to test. Reported, not skipped silently.
+		reader.close();
+		print("E2E_END failures=" + failures);
+		return;
+	}
+	ok("MADE PORT " + bytes_of_object_port_name(vport));
+
+	// --- 5. hear what arrives from outside ----------------------------------
+	note("waiting up to 10000 ms for another process to send a note into the port");
+	const uint deadline = ticks() + 10000;
+	bool heard = false;
+	while (ticks() < deadline && !heard) {
+		while (reader.has_message()) {
+			midi_message m;
+			if (!reader.next_message(m)) break;
+			string text = "";
+			for (int bi = 0; bi < midi_message_name_byte_count(m); bi++) text += char_of(midi_message_name_byte(m, bi));
+			print("E2E_HEARD " + text);
+			if (text.find("note on") >= 0) {
+				ok("HEARD " + text);
+				heard = true;
+			}
+		}
+		if (!heard) wait(20);
+	}
+	if (!heard) fail("nothing was heard in 10000 ms; no other process connected to the port, or the port does not deliver");
+	reader.close();
+
+	// --- 6. send ------------------------------------------------------------
+	vport.send_note_on(0, 60, 100);
+	vport.send_note_off(0, 60, 0);
+	vport.send_control_change(0, 7, 100);
+	vport.send_program_change(0, 0);
+	vport.send_pitch_bend(0, 8192);
+	vport.send_sysex("\\xF0\\x7E\\x7F\\x09\\x01\\xF7");
+	note("sent a note on, a note off, cc, program change, pitch bend and a sysex");
+	if (vport.is_open()) ok("OUTPUT OK " + bytes_of_object_port_name(vport));
+	else fail("the output port reports itself closed right after sending");
+
+	// --- 7. the high level layer, which is the point of the whole plugin ----
+	// play_chord opens an output at the *same port index* the input was opened
+	// at, so this needs the same port this process just published: the plugin
+	// plays back through itself. That is why the port above is the test's
+	// subject and its destination at once.
+	midi_input@ instrument = midi_input_create();
+	if (!instrument.open_by_name("nvmidi e2e", "nvmidi e2e playback")) {
+		fail("cannot open the test port for playing: " + bytes_of_last_error());
+	} else {
+		instrument.tempo = 96.0;
+
+		array<midi_note@>@ chord = array<midi_note@>();
+		string[]@ pitches = {"60", "64", "67"};
+		for (uint i = 0; i < pitches.length(); i++) {
+			midi_note@ n = nvmidi_note_create(parse_int(pitches[i]));
+			// velocity and length are the only two fields this test needs to see
+			// travel: the note factory is a separate registration from the input
+			// and output ones, so it is exercised here rather than assumed.
+			n.velocity = 100;
+			n.length = midi_duration(60, MIDI_MS);
+			chord.insert_last(@n);
+		}
+		note("tempo 96: a beat is " + instrument.duration(1.0, MIDI_BEATS).to_ms() + " ms, half a bar is " + instrument.duration(0.5, MIDI_BARS).to_ms() + " ms");
+
+		if (instrument.play_chord_wait(chord)) ok("PLAYED chord");
+		else fail("play_chord_wait refused: " + bytes_of_last_error());
+
+		string[]@ patterns = {"chord", "spread", "arpeggio", "quick", "fast", "strum", "repeat"};
+		for (uint i = 0; i < patterns.length(); i++) {
+			if (instrument.play_midi_chord_wait(chord, patterns[i])) ok("PLAYED " + patterns[i]);
+			else fail("pattern " + patterns[i] + " refused: " + bytes_of_last_error());
+		}
+		note("active notes after the patterns: " + instrument.get_active_notes());
+		instrument.close();
+	}
+
+	vport.close();
+	print("E2E_END failures=" + failures);
+	// A non-zero exit is the one signal a ci step cannot misread, but the
+	// engine's own exit code is about the engine, so the count is printed and
+	// the job greps for it. wait() lets the last lines reach the console
+	// before the process goes away.
+	wait(300);
+}
