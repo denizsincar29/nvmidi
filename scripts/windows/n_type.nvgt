@@ -1,0 +1,20 @@
+// Every name the plugin registers, asked for as a declared type in a script
+// that makes no call at all. c_handle shows that a declaration of the output
+// type is refused with "Expected ';'" / "Instead found '@'", and k_lit shows
+// that the same declaration with a built in type is accepted. This probe says
+// which of the registered names the engine actually has as types.
+#pragma plugin nvmidi
+
+void main() {
+	print("N_BEGIN");
+	string s;
+	int i = 0;
+	double d = 0;
+	midi_message m;
+	midi_duration u;
+	midi_note@ n = null;
+	midi_config@ c = null;
+	midi_input@ in = null;
+	midi_output@ out = null;
+	print("N_END " + s + i + d);
+}

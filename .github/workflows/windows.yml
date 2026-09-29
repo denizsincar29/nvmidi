@@ -877,7 +877,7 @@ jobs:
           # so a compile failure shows up here as a line the job log has been
           # carrying all along and nothing has read.
           $probeSrc = Join-Path $env:GITHUB_WORKSPACE 'scripts\windows'
-          foreach ($case in @('l_int', 'm_str', 'k_lit', 'c_handle', 'e2e_min', 'i_var', 'j_pragma', 'e2e_types', 'a_bare', 'b_decl', 'd_call', 'e_call', 'f_open', 'g_float')) {
+          foreach ($case in @('n_type', 'l_int', 'm_str', 'k_lit', 'c_handle', 'e2e_min', 'i_var', 'j_pragma', 'e2e_types', 'a_bare', 'b_decl', 'd_call', 'e_call', 'f_open', 'g_float')) {
             $p2src  = Join-Path $probeSrc "$case.nvgt"
             $p2log  = Join-Path $env:GITHUB_WORKSPACE "$case.log"
             $p2err  = "$p2log.err"
