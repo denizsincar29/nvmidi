@@ -477,6 +477,21 @@ def main(argv):
         listener.close()
         return 2
 
+    # Input-only mode ends here, and that is the whole point of the mode: there
+    # is no name, so nothing is coming, and the value of the run is the load
+    # above and the two lists. Waiting the deadline out would only hold the
+    # step open. Measured on run 36573157386: this mode was given 5 seconds and
+    # the step still took 25, because the driver status never appeared and the
+    # twenty second wait for it ran first - and the listener's failure then
+    # skipped every step after it, so the sender's own log was never read at
+    # all. A diagnostic that hides the thing it was added to explain is worse
+    # than no diagnostic.
+    if inputs_only:
+        listener.close()
+        print("INPUTS_ONLY done: the route is proven by SELFTEST_OK and no port"
+              " name was published, so there is nothing to wait for")
+        return 0
+
     # The wait. The script under test is already playing by the time the ci job
     # starts this process - it launches the script first and finds the port
     # name in the script's log - so the deadline only has to cover a runner

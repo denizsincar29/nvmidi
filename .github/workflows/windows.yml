@@ -278,22 +278,16 @@ jobs:
           $lib = Join-Path $env:NVGT_DIR 'lib'
           New-Item -ItemType Directory -Force -Path $lib | Out-Null
 
-          # The engine ships a plugin under this same name. Measured, from this
-          # step's own listing in an earlier run:
-          #
-          #     nvmidi.dll   2976551    <- ours, after the copy below
-          #     ...and one from the installer under the same name before it
-          #
-          # so the copy does not add a plugin beside the engine's, it replaces
-          # it. Both are called for by `#pragma plugin nvmidi`, so both are
-          # loaded, and the engine's registration calls then land on whichever
-          # module the loader resolved first. Whichever of the two that is, it
-          # is not a thing this job may leave to chance: the plugin under test
-          # has to be the one the script gets.
-          #
-          # The engine's copy is moved aside rather than deleted - it is the
-          # installer's file, and the next step that needs to know what was here
-          # should be able to look.
+          # The engine may ship a plugin under this same name, and the check
+          # below is what says whether it did. It is written as a move rather
+          # than a delete because the installer's file is not this job's to
+          # throw away, and because whichever answer this run gets is worth
+          # having in the log: the last two runs both printed `the engine
+          # shipped no nvmidi.dll of its own`, so on this runner there is no
+          # second module for `#pragma plugin nvmidi` to resolve to - the
+          # collision this guard exists for is not happening today. The guard
+          # stays because that is a fact about one installer build and not a
+          # property of the engine.
           $shipped = Join-Path $lib 'nvmidi.dll'
           if (Test-Path $shipped) {
             $keep = Join-Path $env:NVGT_DIR 'lib\..\nvmidi.engine.dll.bak'
@@ -485,6 +479,15 @@ jobs:
         # fault. `--inputs-only` keeps the load and the lists, and skips only
         # the wait.
         if: ${{ env.LOOPBACK_DLL != '' }}
+        # A listener that fails is a finding, not a reason to stop measuring.
+        # Without this, its non-zero exit skips every step below it - measured
+        # on run 36573157386, where `build the plugin`, `play the melody` and
+        # `read both logs` were absent from the step list and the verdict steps
+        # then reported on a sender whose log had never been read. The verdict
+        # step further down already reads LISTEN_EXIT and decides what the
+        # listener's own failure means, so swallowing the exit code here loses
+        # nothing and keeps the two halves independent.
+        continue-on-error: true
         shell: pwsh
         run: |
           $indexArgs = @()
