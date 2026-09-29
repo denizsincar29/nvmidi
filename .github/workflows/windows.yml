@@ -224,66 +224,90 @@ jobs:
           if ($before) { $before | ForEach-Object { Write-Host "  $($_.Name)" } }
           else { Write-Host "  (none)" }
 
-          $candidates = @(
-            # LoopBe1 first: a plain installer, and /S is Inno's silent switch
-            # for it, so it cannot put up a dialog on a machine with nobody at
-            # the screen. A dialog is what a hung step looks like from here.
-            @{ Name = 'LoopBe1'; Url = 'https://www.nerds.de/data/setuploopbe1.exe'; Args = '/S' },
-            # loopMIDI is the fallback but it is an *elevated* installer that
-            # runs as its own process and will not be silenced by /VERYSILENT
-            # the way a plain Inno setup is, so it is bounded rather than
-            # waited on. It is started without -Wait for that reason.
-            @{ Name = 'loopMIDI'; Url = 'https://www.tobias-erichsen.de/wp-content/uploads/2020/01/loopMIDISetup_1_0_16_27.zip'; Args = '/VERYSILENT /NORESTART'; Bounded = $true }
-          )
-
-          foreach ($c in $candidates) {
-            if ((Get-Date) -gt $deadline) {
-              Write-Host "out of time for $($c.Name) - the whole step is capped and LoopBe1 has used it"
-              break
-            }
+          # LoopBe1 first. It is vendor locked to the interactive user (it
+          # refuses to run as a service, by design, because it is a user mode
+          # driver), so installing it under a service token is not certain and
+          # a dead install must not eat the step's whole budget.
+          $loopbe = Join-Path $env:TEMP 'setuploopbe1.exe'
+          if ((Get-Date) -lt $deadline) {
             try {
-              Write-Host "trying $($c.Name) (url $($c.Url))"
-              $f = Join-Path $env:TEMP ($c.Name + [System.IO.Path]::GetExtension($c.Url))
-              # Bounded too: a download that stalls is the other way this step
-              # can hang, and the runner has no network watchdog.
-              $dl = Invoke-WebRequest -Uri $c.Url -OutFile $f -UseBasicParsing -TimeoutSec 90
-              Write-Host "downloaded $((Get-Item $f).Length) bytes to $f"
-              if ($f -like '*.zip') {
-                Expand-Archive -Path $f -DestinationPath (Join-Path $env:TEMP $c.Name) -Force
-                $f = Get-ChildItem (Join-Path $env:TEMP $c.Name) -Recurse -Include '*.exe','*.msi' | Select-Object -First 1 -ExpandProperty FullName
-              }
-              if ($f -like '*.msi') {
-                $p = Start-Process msiexec.exe -ArgumentList "/i `"$f`" /qn /norestart" -Wait -PassThru
-                Write-Host "$($c.Name) installer exited $($p.ExitCode)"
-              } elseif ($c.Bounded) {
-                $p = Start-Process $f -ArgumentList $c.Args -PassThru
-                Write-Host "$($c.Name) started as pid $($p.Id), not waited on - it elevates"
+              Write-Host "downloading LoopBe1"
+              Invoke-WebRequest -Uri 'https://www.nerds.de/data/setuploopbe1.exe' -OutFile $loopbe -UseBasicParsing -TimeoutSec 60
+              Write-Host "downloaded $((Get-Item $loopbe).Length) bytes to $loopbe"
+              # /S is Inno's silent switch: an installer that puts up a dialog
+              # on a machine with nobody at the screen is what a hung step is.
+              # A two minute cap, because LoopBe1 is the one that hung for
+              # twenty six minutes when it was given no bound at all.
+              $p = Start-Process -FilePath $loopbe -ArgumentList '/S' -PassThru
+              if (-not $p.WaitForExit(120000)) {
+                Write-Host "the LoopBe1 installer is still running after two minutes; leaving it"
               } else {
-                $p = Start-Process $f -ArgumentList $c.Args -Wait -PassThru
-                Write-Host "$($c.Name) installer exited $($p.ExitCode)"
+                Write-Host "LoopBe1 installer exited $($p.ExitCode)"
               }
-              # An installer exiting zero is not evidence the driver is there.
-              # The list of midi devices is, and that is what is asked - in a
-              # loop, because a driver appears to the device list some time
-              # after its installer returns.
-              $devs = $null
-              for ($i = 0; $i -lt 12; $i++) {
-                Start-Sleep -Seconds 5
-                $devs = Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
-                  Where-Object { $_.Name -match 'loop|midi' }
-                if ($devs) { break }
-                Write-Host "  waiting for a midi device ($(($i + 1) * 5)s)"
-              }
-              if ($devs) {
-                Write-Host "midi-ish devices now present:"
-                $devs | ForEach-Object { Write-Host "  $($_.Name)" }
-                $installed = $true
-                break
-              }
-              Write-Host "$($c.Name) installed but no midi device appeared"
             } catch {
-              Write-Host "$($c.Name) did not install: $_"
+              Write-Host "LoopBe1 did not install: $_"
             }
+          } else {
+            Write-Host "no time left for LoopBe1"
+          }
+
+          # An installer exiting zero is not evidence the driver is there. The
+          # list of midi devices is, and that is what is asked - in a loop,
+          # because a driver appears to the device list some time after its
+          # installer returns.
+          $devs = $null
+          for ($i = 0; $i -lt 12; $i++) {
+            $devs = Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -match 'loop|midi' }
+            if ($devs) { break }
+            Write-Host "  waiting for a midi device ($(($i + 1) * 5)s)"
+            Start-Sleep -Seconds 5
+          }
+
+          # The fallback shares what is left of the deadline rather than the
+          # other way round: a dead first candidate must not cost the second
+          # its chance, which is exactly what happened when the budget was
+          # spent in a plain foreach.
+          if (-not $devs) {
+            Write-Host "no midi device from LoopBe1; trying loopMIDI"
+            $zip = Join-Path $env:TEMP 'loopMIDI.zip'
+            try {
+              $left = [Math]::Max(30, [int]($deadline - (Get-Date)).TotalSeconds)
+              Write-Host "loopMIDI gets $left seconds"
+              Invoke-WebRequest -Uri 'https://www.tobias-erichsen.de/wp-content/uploads/2020/01/loopMIDISetup_1_0_16_27.zip' -OutFile $zip -UseBasicParsing -TimeoutSec $left
+              Write-Host "downloaded $((Get-Item $zip).Length) bytes to $zip"
+              Expand-Archive -Path $zip -DestinationPath (Join-Path $env:TEMP 'loopMIDI') -Force
+              $inner = Get-ChildItem (Join-Path $env:TEMP 'loopMIDI') -Recurse -Include '*.exe','*.msi' | Select-Object -First 1 -ExpandProperty FullName
+              Write-Host "extracted $inner"
+              if ($inner -like '*.msi') {
+                $p = Start-Process msiexec.exe -ArgumentList "/i `"$inner`" /qn /norestart" -PassThru
+              } else {
+                $p = Start-Process -FilePath $inner -ArgumentList '/VERYSILENT','/NORESTART' -PassThru
+              }
+              # Not waited on to completion: loopMIDI's installer elevates, and
+              # an elevation prompt nobody can answer is the second way this
+              # step can hang. Bounded, and then the device list decides.
+              if (-not $p.WaitForExit(90000)) {
+                Write-Host "the loopMIDI installer is still running after ninety seconds; leaving it"
+              } else {
+                Write-Host "loopMIDI installer exited $($p.ExitCode)"
+              }
+            } catch {
+              Write-Host "loopMIDI did not install: $_"
+            }
+            for ($i = 0; $i -lt 8; $i++) {
+              $devs = Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match 'loop|midi' }
+              if ($devs) { break }
+              Write-Host "  waiting for a midi device from loopMIDI ($(($i + 1) * 5)s)"
+              Start-Sleep -Seconds 5
+            }
+          }
+
+          if ($devs) {
+            Write-Host "midi-ish devices now present:"
+            $devs | ForEach-Object { Write-Host "  $($_.Name)" }
+            $installed = $true
           }
           if (-not $installed) {
             Write-Host "::error::no loopback midi driver could be installed on this runner, so the receiving half of the end-to-end test has no port to listen on. This is the runner's shape, not the plugin's - rerun, or pin a runner image that carries one."
