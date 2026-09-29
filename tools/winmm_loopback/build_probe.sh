@@ -29,7 +29,16 @@ outdir=${2:?output directory}
 # as the driver's own -o handling one file over, and it is fixed the same way.
 here=$(cd -- "$(dirname -- "$0")" && pwd)
 
-FLAGS="-O1 -g -fno-omit-frame-pointer -DUNICODE -D_UNICODE"
+# -static: every one of these is a mingw image, and a mingw image that is not
+# static links libwinpthread-1.dll, libgcc_s_seh-1.dll and libstdc++-6.dll by
+# name. Those sit in the same directory as the cross compiler on the runner,
+# which is not on the dll search path, so a probe that is not static fails to
+# start at all - and a process that never starts writes nothing anywhere. That
+# is one of the two ways the matrix step can print no probe output and still
+# look like it ran (measured: run 36585811967, four binaries built, zero
+# LATE_PROBE lines and zero probe_* lines). Static linking removes the
+# question rather than answering it.
+FLAGS="-O1 -g -fno-omit-frame-pointer -DUNICODE -D_UNICODE -static"
 LIBS="-lwinmm -luser32 -lgdi32"
 
 mkdir -p "$outdir"
@@ -65,3 +74,16 @@ case "$mode" in
 esac
 
 ls -l "$outdir"
+
+# What each binary actually imports. -static is there because a probe that
+# cannot start is indistinguishable from a probe that ran and wrote nothing,
+# and the import table is the whole reason: dumpbin is not installed on the
+# runner but llvm-objdump usually is, and grep for a bare dll name finds it in
+# the import table wherever the section sits.
+if command -v llvm-objdump >/dev/null 2>&1; then
+  for f in "$outdir"/*.exe "$outdir"/*.dll; do
+    [ -e "$f" ] || continue
+    echo "--- imports of $(basename "$f") ---"
+    llvm-objdump -p "$f" 2>/dev/null | grep -i "DLL Name" || echo "(none listed)"
+  done
+fi

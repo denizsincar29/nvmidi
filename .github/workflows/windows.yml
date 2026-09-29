@@ -144,18 +144,40 @@ jobs:
           Copy-Item "$env:SystemRoot\System32\winmm.dll" "$dlls\winmm.dll" -Force
           python -c "print('python ok')" 2>&1 | ForEach-Object { Write-Host "  $_" }
 
-          Write-Host "=== 3. our dll loaded before winmm is touched, no winmm import ==="
-          $env:NVPROBE_DLL = "$probe\late_midi_as_exe.dll"
-          & "$probe\probe_noexe.exe" 2>&1 | ForEach-Object { Write-Host "  $_" }
-          Get-ChildItem $play -Filter late_midi.status -ErrorAction SilentlyContinue | ForEach-Object {
-            Write-Host "  $($_.FullName):"; Get-Content $_.FullName | ForEach-Object { Write-Host "    $_" }
+          # Run one probe and say out loud what came back. The previous version
+          # of this step called the binary and printed its output, and printed
+          # nothing at all for both cases - which is the same picture whether
+          # the process never started, started and wrote nothing, or wrote
+          # somewhere this step does not look. A missing file and an exit code
+          # are what tell those apart, so both are printed for every case
+          # before any status file is read.
+          function Run-Probe($label, $exe, $dll) {
+            Write-Host $label
+            if (-not (Test-Path $exe)) { Write-Host "  MISSING BINARY: $exe"; return }
+            if ($dll) { $env:NVPROBE_DLL = $dll }
+            $out = & $exe 2>&1
+            $code = $LASTEXITCODE
+            if ($out) { $out | ForEach-Object { Write-Host "  $_" } }
+            else { Write-Host "  (no stdout)" }
+            Write-Host "  exit code: $code"
           }
 
-          Write-Host "=== 4. same dll, executable that links winmm ==="
-          & "$probe\probe_exe.exe" 2>&1 | ForEach-Object { Write-Host "  $_" }
+          Write-Host "=== 3. our dll loaded before winmm is touched, no winmm import ==="
+          # Late-bound, because NVPROBE_DLL is read inside DllMain and that
+          # runs before main() ever sees argv - the environment is the only
+          # channel that is filled in that early.
+          Run-Probe "  probe_noexe, no winmm import" "$probe\probe_noexe.exe" "$probe\late_midi_as_exe.dll"
           Get-ChildItem $play -Filter late_midi.status -ErrorAction SilentlyContinue | ForEach-Object {
             Write-Host "  $($_.FullName):"; Get-Content $_.FullName | ForEach-Object { Write-Host "    $_" }
           }
+          if (-not (Test-Path "$play\late_midi.status")) { Write-Host "  no late_midi.status in $play" }
+
+          Write-Host "=== 4. same dll, executable that links winmm ==="
+          Run-Probe "  probe_exe, winmm in the import table" "$probe\probe_exe.exe" $null
+          Get-ChildItem $play -Filter late_midi.status -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "  $($_.FullName):"; Get-Content $_.FullName | ForEach-Object { Write-Host "    $_" }
+          }
+          if (-not (Test-Path "$play\late_midi.status")) { Write-Host "  no late_midi.status in $play" }
 
           Write-Host "=== 5. a fresh winmm, slot already in the registry ==="
           Write-Host "(python has never run in this step until now, so its winmm is loaded here)"
