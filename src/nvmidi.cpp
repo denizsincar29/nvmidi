@@ -1821,19 +1821,26 @@ void register_midi_globals(asIScriptEngine* engine, registration* reg) {
 	// plugin calls, or it does not, and the plugin was compiled with a
 	// different Angelscript version than the engine was. Both are printed, so
 	// one run names the fault instead of two runs guessing at it.
+	// NOT GetStringFactoryReturnTypeId. That call was written here first and did
+	// not compile - "class asIScriptEngine has no member named" - because the
+	// Angelscript headers vendored in third_party/ only declare it inside
+	// `#ifdef AS_DEPRECATED`, so it is compiled out unless that macro is
+	// defined. `GetStringFactory` is the live replacement and is unconditional.
+	//
+	// This matters beyond style: whether these headers describe the same
+	// Angelscript the running engine was built from is not knowable from here.
+	// If they do not, a string returned from this plugin is being copied using
+	// a layout the engine's own `string` does not have, which would corrupt
+	// every string return at once and leave literals in the script untouched -
+	// exactly the split measured on the runner.
 	{
 		std::cerr << "NVSTR plugin_angelscript=" << ANGELSCRIPT_VERSION_STRING
 		          << " (" << ANGELSCRIPT_VERSION << ")" << std::endl;
-		// The engine is asked for its own answer rather than trusted to have
-		// one: the same call the script's runtime relies on, made through the
-		// pointer NVGT handed this plugin. A non-null factory with a non-zero
-		// type id means the engine does publish a string type - and if it does,
-		// this plugin's strings are being copied into the wrong one.
 		asDWORD mods = 0;
 		asIStringFactory* factory = nullptr;
-		const int r = engine->GetStringFactoryReturnTypeId(&mods, &factory);
-		std::cerr << "NVSTR GetStringFactoryReturnTypeId ret=" << r
-		          << " typeid=" << mods
+		const int r = engine->GetStringFactory(&mods, &factory);
+		std::cerr << "NVSTR GetStringFactory ret=" << r
+		          << " typeModifiers=" << mods
 		          << " factory=" << (void*)factory << std::endl;
 	}
 	reg->check( engine->RegisterGlobalFunction("midi_input@ midi_input_create()", asFUNCTION(midi_input_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
