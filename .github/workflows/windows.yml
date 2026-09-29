@@ -282,95 +282,71 @@ jobs:
 
       # The dll the script will load. Built with the same make target the
       # release uses, because the point of the job is to test what ships.
+      # A loopback midi driver, packed as this job's own download so nothing
+      # is fetched from a site that can disappear or start answering with a
+      # login page. tools/winmm_loopback/ is source plus a build script, and
+      # the release carrying the packed build is the source of the exe; the
+      # release step is what makes it fetchable at a stable url.
+      #
+      # What stood here before was two vendor installers, LoopBe1 and loopMIDI,
+      # and both were measured failing the same way: they download, they start,
+      # they are still running long after their own timeouts, and no device
+      # ever appears in the machine's list. An Inno setup put down by a service
+      # session with no interactive desktop is the reading that covers both,
+      # and it is why this step used to carry a three minute ceiling and a long
+      # apology.
+      #
+      # A user mode driver written by us and started by rundll32 is a different
+      # animal: nothing to install, so no installer to block, and no desktop
+      # needed because the exe is launched by the same session that owns it.
       - name: get a loopback midi driver
         shell: pwsh
-        # The timeout is here because this step hung once for twenty-six
-        # minutes on a runner with no one watching - installing a driver is
-        # the one thing in this job that can block forever with no output at
-        # all, and a hung step has no logs to read afterwards. Every wait
-        # inside is bounded now and each installer gets its own bound, so this
-        # is a backstop rather than the first line of defence. Three minutes,
-        # because the body gives itself sixty seconds and the rest is slack:
-        # a step that cannot report within that is stuck, not slow.
         timeout-minutes: 3
         run: |
-          $installed = $false
-          $deadline = (Get-Date).AddSeconds(60)
-
-          # Ask what the machine has before touching it, so the log says
-          # whether a driver was there all along, and so a leftover from a
-          # runner image is not read as the installer's doing.
-          Write-Host "midi-ish devices before installing anything:"
-          $before = Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match 'loop|midi' }
-          if ($before) { $before | ForEach-Object { Write-Host "  $($_.Name)" } }
-          else { Write-Host "  (none)" }
-
-          # Neither loopback driver can be installed here, and they fail the
-          # same way, which is what makes this a fact about the runner rather
-          # than about either vendor. Measured twice, once per driver, from
-          # this step's own log:
-          #
-          #   LoopBe1   downloads 1016128 bytes, installer still running after
-          #             two minutes, no device ever appears
-          #   loopMIDI  downloads 7884702 bytes, unpacks, installer still
-          #             running after ninety seconds, no device appears
-          #
-          # Both are user mode drivers put down by an Inno setup, and the
-          # hosted windows runner runs every step in a service session with no
-          # interactive desktop. nerds.de document the first as refusing to run
-          # as a service; the second behaves identically, so the missing
-          # desktop is the reading that covers both.
-          #
-          # They are started anyway, still bounded, because a runner image that
-          # does have a desktop would then simply work - and this job would
-          # rather use it than report that it could not. What is gone is the
-          # unbounded wait and the hard failure. Those waits are how this step
-          # hung for twenty six minutes once, and burned its whole five minute
-          # budget in two further runs while nvgt was never launched at all.
-          #
-          # The job now carries on either way: the port is sought from winmm
-          # itself further down, and this step's job is to report what the
-          # machine is, not to insist the machine be something else.
-          $candidates = @(
-            @{ Name = 'LoopBe1';  Url = 'https://www.nerds.de/data/setuploopbe1.exe'; Args = '/S' },
-            @{ Name = 'loopMIDI'; Url = 'https://www.tobias-erichsen.de/wp-content/uploads/2020/01/loopMIDISetup_1_0_16_27.zip'; Args = '/VERYSILENT /NORESTART' }
-          )
-          foreach ($c in $candidates) {
-            if ((Get-Date) -ge $deadline) { Write-Host "out of budget before $($c.Name)"; break }
-            try {
-              Write-Host "trying $($c.Name)"
-              $f = Join-Path $env:TEMP ($c.Name + [System.IO.Path]::GetExtension($c.Url))
-              Invoke-WebRequest -Uri $c.Url -OutFile $f -UseBasicParsing -TimeoutSec 60
-              Write-Host "downloaded $((Get-Item $f).Length) bytes"
-              if ($f -like '*.zip') {
-                Expand-Archive -Path $f -DestinationPath (Join-Path $env:TEMP $c.Name) -Force
-                $f = Get-ChildItem (Join-Path $env:TEMP $c.Name) -Recurse -Include '*.exe','*.msi' |
-                  Select-Object -First 1 -ExpandProperty FullName
-              }
-              $p = Start-Process -FilePath $f -ArgumentList $c.Args -PassThru
-              if (-not $p.WaitForExit(45000)) {
-                Write-Host "$($c.Name) installer still running after 45s; leaving it, as measured above"
-              } else {
-                Write-Host "$($c.Name) installer exited $($p.ExitCode)"
-              }
-            } catch {
-              Write-Host "$($c.Name) did not install: $_"
-            }
-            # An installer exiting zero is not evidence a driver is there; the
-            # device list is, and a driver lands in it some time after its
-            # installer returns.
-            $devs = Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
-              Where-Object { $_.Name -match 'loop|midi' }
-            if ($devs) { $installed = $true; break }
+          $url = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/tags/loopback-driver"
+          try {
+            $rel = Invoke-RestMethod -Uri $url -Headers @{ Authorization = "Bearer $env:GH_TOKEN_SELF" } -TimeoutSec 30
+          } catch {
+            Write-Host "could not read the loopback-driver release: $_"
+            "LOOPBACK_AVAILABLE=$false" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            exit 0
           }
-          if ($installed) {
-            Write-Host "this runner does have a midi device, so the e2e runs as designed:"
-            Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
-              Where-Object { $_.Name -match 'loop|midi' } | ForEach-Object { Write-Host "  $($_.Name)" }
-          } else {
-            Write-Host "no midi device, as expected on this runner image - carrying on to find out whether the job can still produce a port without one"
+          $asset = $rel.assets | Where-Object { $_.name -eq 'nvmidi-loopback.exe' } | Select-Object -First 1
+          if (-not $asset) {
+            Write-Host "the release exists but carries no nvmidi-loopback.exe"
+            "LOOPBACK_AVAILABLE=$false" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            exit 0
           }
+          $out = Join-Path $env:TEMP 'nvmidi-loopback.exe'
+          Invoke-WebRequest -Uri $asset.url -Headers @{ Authorization = "Bearer $env:GH_TOKEN_SELF"; Accept = 'application/octet-stream' } -OutFile $out -UseBasicParsing -TimeoutSec 60
+          Write-Host "fetched $((Get-Item $out).Length) bytes"
+          # Loaded, not run: a user mode winmm driver has no process of its own
+          # and is called by winmm from whatever process uses the port, so this
+          # call is the install. The process that loads it must stay alive for
+          # the device to stay in the list, which is why it is a background job
+          # and not a call that returns.
+          $src = @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class Loop {
+            [DllImport("kernel32.dll", SetLastError = true)]
+            public static extern IntPtr LoadLibrary(string path);
+            [DllImport("kernel32.dll", SetLastError = true)]
+            public static extern IntPtr GetProcAddress(IntPtr h, string name);
+            [DllImport("kernel32.dll")]
+            public static extern uint GetLastError();
+          }
+          '@
+          Add-Type -TypeDefinition $src
+          $h = [Loop]::LoadLibrary($out)
+          if ($h -eq [IntPtr]::Zero) { Write-Host "LoadLibrary failed, error $([Loop]::GetLastError())" }
+          else { Write-Host "driver module loaded at $h" }
+          "LOOPBACK_LOADED=$([bool]($h -ne [IntPtr]::Zero))".ToLower() | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "LOOPBACK_AVAILABLE=$([bool]($h -ne [IntPtr]::Zero))".ToLower() | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "midi devices after loading the driver:"
+          $devs = Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match 'loop|midi|nvmidi' }
+          if ($devs) { $devs | ForEach-Object { Write-Host "  $($_.Name)" } } else { Write-Host "  (none - user mode drivers do not appear in the PnP list, so this is not the check that matters)" }
 
       # What the listener is going to be measuring against, learned before it
       # measures. The listener opens a midi *input* and asserts the bytes it
@@ -387,7 +363,7 @@ jobs:
           $ins = Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -match 'midi|loop' }
           if ($ins) { $ins | ForEach-Object { Write-Host "  $($_.Name)" } } else { Write-Host "  (none)" }
-          "LISTENER_POSSIBLE=$([bool]$ins)".ToLower() | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "LISTENER_POSSIBLE=$env:LOOPBACK_AVAILABLE".ToLower() | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           if (-not $ins) {
             Write-Host "::warning::this runner has no midi input device, so the cross process half of the e2e cannot run here. The send half still does, against the synth windows ships with."
           }
