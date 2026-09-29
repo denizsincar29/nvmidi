@@ -1,4 +1,5 @@
 // probe: pragma_only
+#pragma plugin nvmidi
 //
 // The control that everything above was missing.
 //
