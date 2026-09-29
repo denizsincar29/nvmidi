@@ -1357,33 +1357,12 @@ std::string midi_input_port_name(unsigned int port) {
 }
 
 std::string midi_output_port_name(unsigned int port) {
-	// TEMPORARY INSTRUMENTATION - remove once the string-return fault is found.
-	//
-	// Measured on the windows runner: this call, a control with no expression
-	// in it, returns garbage to the script exactly as midi_api_name does. Both
-	// are declared `string ... (asCALL_CDECL)` over a function returning
-	// std::string. The question this narration is here to answer, from inside
-	// the plugin where the value is still a real std::string: is RtMidi itself
-	// returning garbage, or is the value good here and mangled at the boundary?
-	// It is printed with its length and its bytes spelled out, so the log
-	// answers it without a second run.
 	try {
 		return with_port<RtMidiOut>([port](RtMidiOut& out) -> std::string {
-			std::cerr << "NVPORT port=" << port
-			          << " count=" << out.getPortCount();
-			if (port >= out.getPortCount()) {
-				std::cerr << " out_of_range" << std::endl;
-				return "";
-			}
-			const std::string name = out.getPortName(port);
-			std::cerr << " len=" << name.size() << " bytes=";
-			for (size_t i = 0; i < name.size(); i++)
-				std::cerr << std::hex << (int)(unsigned char)name[i] << std::dec << " ";
-			std::cerr << "raw=[" << name << "]" << std::endl;
-			return name;
+			if (port >= out.getPortCount()) return "";
+			return out.getPortName(port);
 		});
-	} catch (RtMidiError& e) {
-		std::cerr << "NVPORT rtmidi_error=" << e.getMessage() << std::endl;
+	} catch (RtMidiError&) {
 		return "";
 	}
 }
@@ -1820,6 +1799,43 @@ void register_midi_globals(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterGlobalFunction("string midi_message_name(const midi_message&in m)", asFUNCTION(midi_message_name), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("string midi_last_error()", asFUNCTION(midi_last_error), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("string midi_first_error()", asFUNCTION(midi_first_error), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	// Why every string-returning function in this plugin hands the script
+	// garbage, measured on the windows runner rather than reasoned about.
+	//
+	// RtMidi is clean. Printed from inside midi_output_port_name, which is
+	// itself one of the broken calls:
+	//
+	//     NVPORT port=0 count=1 len=30
+	//     bytes=4d 69 63 72 6f 73 6f 66 74 20 47 53 20 57 61 76 65 74 61 62 6c 65 20 53 79 6e 74 68 20 30
+	//     raw=[Microsoft GS Wavetable Synth 0]
+	//
+	// 30 bytes, correct, inside the plugin. The same value reaches the script
+	// as `??9??^A^@^@...`. So the characters are fine and the marshalling is
+	// not: Angelscript copies a returned string in the ABI the script's own
+	// `string` uses, which it learns from the engine. When the engine and the
+	// plugin disagree about that ABI the result is not an error and not a null
+	// - it is quietly wrong bytes, which is exactly what this looks like.
+	//
+	// The two facts below are what settles which half disagrees, and they cost
+	// nothing: the engine either exposes a string factory through the vtable the
+	// plugin calls, or it does not, and the plugin was compiled with a
+	// different Angelscript version than the engine was. Both are printed, so
+	// one run names the fault instead of two runs guessing at it.
+	{
+		std::cerr << "NVSTR plugin_angelscript=" << ANGELSCRIPT_VERSION_STRING
+		          << " (" << ANGELSCRIPT_VERSION << ")" << std::endl;
+		// The engine is asked for its own answer rather than trusted to have
+		// one: the same call the script's runtime relies on, made through the
+		// pointer NVGT handed this plugin. A non-null factory with a non-zero
+		// type id means the engine does publish a string type - and if it does,
+		// this plugin's strings are being copied into the wrong one.
+		asDWORD mods = 0;
+		asIStringFactory* factory = nullptr;
+		const int r = engine->GetStringFactoryReturnTypeId(&mods, &factory);
+		std::cerr << "NVSTR GetStringFactoryReturnTypeId ret=" << r
+		          << " typeid=" << mods
+		          << " factory=" << (void*)factory << std::endl;
+	}
 	reg->check( engine->RegisterGlobalFunction("midi_input@ midi_input_create()", asFUNCTION(midi_input_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_output@ midi_output_create()", asFUNCTION(midi_output_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 }
