@@ -88,8 +88,16 @@ void main() {
 	// is in how the result is built; if both are equally broken, the fault is
 	// in how a string return is declared to the engine, which is a change in
 	// nvmidi.cpp beside the registration and not in any script.
+	// Empty argument on purpose. Measured, run 36541458301: this call returned
+	// garbage while the literal around it stayed intact, which is the one
+	// clean observation in that run. Calling it twice - once with a port that
+	// exists and once with one that does not - separates "RtMidi handed back
+	// garbage" from "the script asked for something out of range", and neither
+	// answer depends on the string surviving the boundary, which it does not.
 	print("PROBE_OTHER_BEGIN");
 	print(midi_output_port_name(0));
+	print("PROBE_OTHER_MID");
+	print(midi_output_port_name(9999));
 	print("PROBE_OTHER_END");
 
 	string api = midi_api_name();

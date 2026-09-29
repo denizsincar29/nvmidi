@@ -1357,12 +1357,33 @@ std::string midi_input_port_name(unsigned int port) {
 }
 
 std::string midi_output_port_name(unsigned int port) {
+	// TEMPORARY INSTRUMENTATION - remove once the string-return fault is found.
+	//
+	// Measured on the windows runner: this call, a control with no expression
+	// in it, returns garbage to the script exactly as midi_api_name does. Both
+	// are declared `string ... (asCALL_CDECL)` over a function returning
+	// std::string. The question this narration is here to answer, from inside
+	// the plugin where the value is still a real std::string: is RtMidi itself
+	// returning garbage, or is the value good here and mangled at the boundary?
+	// It is printed with its length and its bytes spelled out, so the log
+	// answers it without a second run.
 	try {
 		return with_port<RtMidiOut>([port](RtMidiOut& out) -> std::string {
-			if (port >= out.getPortCount()) return "";
-			return out.getPortName(port);
+			std::cerr << "NVPORT port=" << port
+			          << " count=" << out.getPortCount();
+			if (port >= out.getPortCount()) {
+				std::cerr << " out_of_range" << std::endl;
+				return "";
+			}
+			const std::string name = out.getPortName(port);
+			std::cerr << " len=" << name.size() << " bytes=";
+			for (size_t i = 0; i < name.size(); i++)
+				std::cerr << std::hex << (int)(unsigned char)name[i] << std::dec << " ";
+			std::cerr << "raw=[" << name << "]" << std::endl;
+			return name;
 		});
-	} catch (RtMidiError&) {
+	} catch (RtMidiError& e) {
+		std::cerr << "NVPORT rtmidi_error=" << e.getMessage() << std::endl;
 		return "";
 	}
 }
