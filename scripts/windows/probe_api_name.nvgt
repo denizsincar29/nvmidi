@@ -77,6 +77,21 @@ void main() {
 	// not consult the length in this engine - the e2e script prints "E2E_BEGIN"
 	// and other bare literals with no arithmetic anywhere - and if that is
 	// wrong too, the crash moves up one line and says so.
+	// A second string-returning call, registered with the same convention and
+	// no string arithmetic of its own, as a control against midi_api_name.
+	//
+	// The two differ in exactly one way: midi_api_name builds its result as
+	// `"nvmidi/" + RtMidiIn::getApiDisplayName(...)`, so the value crosses the
+	// boundary as a temporary produced by operator+. midi_output_port_name
+	// returns a std::string that came straight out of RtMidi with no expression
+	// involved. If the control survives and midi_api_name does not, the fault
+	// is in how the result is built; if both are equally broken, the fault is
+	// in how a string return is declared to the engine, which is a change in
+	// nvmidi.cpp beside the registration and not in any script.
+	print("PROBE_OTHER_BEGIN");
+	print(midi_output_port_name(0));
+	print("PROBE_OTHER_END");
+
 	string api = midi_api_name();
 	print(api);
 	// `api` is deliberately never mentioned again below this point.
