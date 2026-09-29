@@ -1780,12 +1780,6 @@ void register_midi_message(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectProperty("midi_message", "uint8 data2", asOFFSET(midi_message, data2)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_message", "int channel", asOFFSET(midi_message, channel)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_message", "double timestamp", asOFFSET(midi_message, timestamp)), "RegisterObjectProperty", __LINE__);
-	// Registered as bytes, and under these names deliberately, so the API the
-	// scripts already call did not move: midi_message::to_string() is here,
-	// spelled the way the rest of the plugin spells a string now. See the byte
-	// views above for what the measurement forced.
-	reg->check( engine->RegisterObjectMethod("midi_message", "int to_string_byte_count() const", asMETHOD(midi_message, to_string_byte_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_message", "int to_string_byte(uint index) const", asMETHOD(midi_message, to_string_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 }
 
 void register_midi_input(asIScriptEngine* engine, registration* reg) {
@@ -1881,8 +1875,6 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectProperty("midi_duration", "double tempo", asOFFSET(midi_duration, tempo)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_duration", "double ppq", asOFFSET(midi_duration, ppq)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_duration", "double to_ms() const", asMETHOD(midi_duration, to_ms), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_duration", "int to_string_byte_count() const", asMETHOD(midi_duration, to_string_byte_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_duration", "int to_string_byte(uint index) const", asMETHOD(midi_duration, to_string_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_duration", "midi_duration& opAssign(const midi_duration&in other)", asMETHODPR(midi_duration, opAssign, (const midi_duration&), midi_duration&), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_duration", "midi_duration& opAssign(double amount)", asMETHODPR(midi_duration, opAssign, (double), midi_duration&), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	// By value, not midi_duration@ - see the comment above the type.
@@ -1899,8 +1891,6 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectProperty("midi_note", "int channel", asOFFSET(midi_note, channel)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_note", "midi_duration length", asOFFSET(midi_note, length)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_note", "double duration_ms", asOFFSET(midi_note, length) + offsetof(midi_duration, amount)), "RegisterObjectProperty", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_note", "int to_string_byte_count() const", asMETHOD(midi_note, to_string_byte_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_note", "int to_string_byte(uint index) const", asMETHOD(midi_note, to_string_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	// A factory per arity, because the engine will not give this plugin the
 	// name midi_note: nvgt is an audio toolkit with its own midi support and
 	// its engine already owns that name, so RegisterGlobalFunction reports
@@ -2015,16 +2005,13 @@ void register_midi_globals(asIScriptEngine* engine, registration* reg) {
 	// string return is registered here any more.
 	reg->check( engine->RegisterGlobalFunction("int midi_output_port_name_byte_count(uint port)", asFUNCTION(midi_output_port_name_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("int midi_output_port_name_byte(uint port, uint index)", asFUNCTION(midi_output_port_name_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	// Every other string this plugin hands out, exposed the same way: a length
-	// and an indexed byte, so a string never crosses this boundary at all.
-	//
-	// These are registered BESIDE the original string methods, not instead of
-	// them, for one run. That run is the measurement that says whether the
-	// string form of each is broken too, or whether only the port name was -
-	// and it costs nothing, because both spellings are reachable from the
-	// script. Once the script has read a correct name through the byte pair,
-	// the string methods above come out and the byte pair takes their place,
-	// with their names.
+	// Every string this plugin hands out, exposed the same way: a length and an
+	// indexed byte, so a string never crosses this boundary at all. This is the
+	// only place any of them is registered - the object methods above were
+	// removed rather than kept beside these, because registering both is how
+	// this block produced six asALREADY_REGISTERED errors on a runner: the
+	// engine rejects the whole interface over a duplicate, so a second copy is
+	// not a harmless redundancy, it is a plugin that will not load.
 	reg->check( engine->RegisterObjectMethod("midi_message", "int to_string_byte_count() const", asMETHOD(midi_message, to_string_byte_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_message", "int to_string_byte(uint index) const", asMETHOD(midi_message, to_string_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_duration", "int to_string_byte_count() const", asMETHOD(midi_duration, to_string_byte_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
