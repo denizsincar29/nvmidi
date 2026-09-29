@@ -19,6 +19,13 @@
 // port and it does not declare a note - if the plugin's registration were
 // intact, the pragma alone would still be a legal script.
 void main() {
-	print("PRAGMASTART");
-	print("PRAGMAEND");
+	print("PFIRST");
+	print("PCHORD");
+	// The question is where the call happens, not whether the object survives,
+	// so nothing is checked after it and no handle is held: the only thing this
+	// line is allowed to answer is whether the process is alive on the far side
+	// of it. A bare call, exactly as the plugin's own examples make it.
+	midi_output_create();
+	print("POUT");
+	print("PLAST");
 }
