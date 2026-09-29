@@ -238,15 +238,23 @@ string bytes_of_last_error_as_numbers() {
 	}
 	return s;
 }
-// midi_output is a handle type - asOBJ_REF | asOBJ_NOCOUNT - so a plain
-// `midi_output o;` here is a value variable of a type the engine cannot copy:
-// nvgt refuses `o` with "No default constructor, copy constructor or factory
-// for type 'midi_output'", and the handle form `midi_output@ o` is refused at
-// the declaration by the same compiler. The object can only be produced by a
-// factory, and the factory's result is a handle that the compiler will carry
-// as a temporary - so the parameter is declared bare, the way upstream's own
-// plugin examples declare the objects they take.
-string bytes_of_object_port_name(midi_output o) {
+// This parameter used to be declared bare - `midi_output o` - on the strength
+// of a reading that turned out to be wrong twice over.
+//
+// Run 36641160523 measured both halves of that reading. The plugin is not
+// broken: probe_pragma_only.nvgt is a pragma and two prints, and it exits 0
+// having run, so the registration is intact and a whole script compiles
+// against it. What the engine rejects is the bare value spelling and the
+// handle spelling alike - `midi_output o` and `midi_output@ o` produce the
+// same "Expected ';' / Instead found '@'" the port declarations produced,
+// because a type with no registered constructor has no value form.
+//
+// The spelling that is measured to work is the one main() already uses three
+// hundred lines down: bind the factory's result to a name and let the compiler
+// infer the handle, `midi_output port = midi_output_create();`. The parameter
+// below is written the same way, and the two call sites pass the handle they
+// already hold.
+string bytes_of_object_port_name(midi_output@ o) {
 	string s = "";
 	for (int i = 0; i < o.get_port_name_byte_count(); i++) {
 		int b = o.get_port_name_byte(i);
