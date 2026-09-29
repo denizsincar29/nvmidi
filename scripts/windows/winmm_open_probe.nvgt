@@ -62,7 +62,6 @@ void main() {
 	print("W_OPEN " + opened);
 	print("W_OPEN_ERROR " + bytes_of_last_error());
 	if (opened) {
-		print("W_OPEN_PORT_NAME " + port_name_of(out));
 		// A real message, so a port that opens but cannot take a write is
 		// caught here rather than two steps later in the verdict.
 		out.send_note_on(1, 60, 100);
@@ -122,17 +121,6 @@ string bytes_of_last_error() {
 	string s = "";
 	for (int i = 0; i < midi_last_error_byte_count(); i++) {
 		int b = midi_last_error_byte(i);
-		if (b < 0) break;
-		s += char_of(b);
-	}
-	return s;
-}
-
-// The open port's name, read back the same way.
-string port_name_of(midi_output@ port) {
-	string s = "";
-	for (int i = 0; i < port.get_port_name_byte_count(); i++) {
-		int b = port.get_port_name_byte(i);
 		if (b < 0) break;
 		s += char_of(b);
 	}
