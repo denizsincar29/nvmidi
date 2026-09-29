@@ -1,127 +1,132 @@
-# The string boundary — what was measured, and what it cost
+# Probe findings
 
-Three runs, each answering the question the one before it raised. Kept because
-the conclusion is counterintuitive enough that someone will otherwise re-derive
-it the expensive way.
+Measured on GitHub Actions runners via `.github/workflows/windows.yml`.
+Every line below names the run it came from. Nothing here is inferred from
+the source; where a reading is a hypothesis it says so.
 
-## Run 36541458301 (commit 6dcc6e5) — rule out the dll collision
+## What the runner does with a script that does not compile
 
-    the engine shipped no nvmidi.dll of its own
-    probe engine exited 0
-    PROBE_BEGIN PROBE_OTHER_BEGIN <garbage> PROBE_OTHER_END <garbage> PROBE_END
+nvgt writes its AngelScript diagnostics to **stdout** and leaves stderr at
+0 bytes, with exit code **65 (0x41)**. Measured on every probe that fails to
+compile, across runs 36612782413, 36613545609, 36614248662.
 
-The engine ships no `nvmidi.dll` of its own, so the earlier startup crash
-(`-1073740791` / `0xC0000409`, before `main`) was a name collision: two modules
-claiming `#pragma plugin nvmidi` under one filename. With that fixed the engine
-exits 0 and runs the script. But both script literals survive intact while
-every value that came out of the plugin is garbage — including
-`midi_output_port_name(0)`, which does no string building of its own, just
-returns what `RtMidiOut::getPortName()` hands back.
+That is why `logs_e2e.txt.err` was always empty: the fault was never on that
+stream. The file that carries it is the plain `.log`.
 
-That killed the `operator+` / temporary-lifetime theory a prior commit message
-had called settled: the two functions differ in construction style and fail
-identically.
+## Line attribution
 
-## Run 36544610694 (commit 4a11831) — ask the engine about its strings
+Raw stdout of `c_handle.nvgt` (run 36614248662):
 
-    NVSTR plugin_angelscript=2.39.0 WIP (23900)
-    NVSTR GetStringFactory ret=67108876  (-2 = asINVALID_ARG)  typeModifiers=0  factory=0
+    Compilation error: file: .../c_handle.nvgt
+    line: 3 (1)
+    INFO: Compiling void main()
+    file: .../c_handle.nvgt
+    line: 5 (13)
+    ERROR: Expected ';'
 
-`67108876` as a signed int is `-2` = `asINVALID_ARG`. The engine publishes no
-string factory. NVGT's `string` is a built-in reference type with the engine's
-own layout, not an `asIStringFactory` string.
+and the same again with `ERROR: Instead found '@'`.
 
-So a plugin returning `std::string` or `const char*` registered as `string`
-hands back bytes in the wrong layout, and the engine writes them where its own
-string object is not. The address is nonzero, so it does not fault cleanly — it
-corrupts and surfaces later as a stack overrun.
+The script is 7 lines: 1 `#pragma`, 2 blank, 3 `void main() {`, 4 the
+`print("C1");`, 5 the handle declaration, 6 `print("C2");`, 7 `}`.
+`line: 3 (1)` is the opening brace of `main`. `line: 5 (13)` is column 13 of
+line 5 — which is the last character of `print("C1")` plus its semicolon.
 
-The return *type* was checked and is not the fault: run 36544974785 registered
-the function returning `const char*` instead and died at `-1073740791` before
-its first print, with no output file at all. No spelling of a string return
-survives.
+The engine reports the fault at the closing semicolon of the statement
+**before** the one it cannot parse, and names the offending token — `@` —
+from the statement after it.
 
-## Run 36546349372 — one process, both ways, same second
+`a_bare` and `b_decl` print the identical pair from the same column, and they
+open differently (`midi_output@ out = midi_output();` and three bare
+declarations respectively). So the fault travels with the plugin's type
+appearing in a declaration, not with any particular statement.
 
-This is the decisive one, and the reason this file is short. One process read
-the api name through both paths:
+## The pragma is not the cause
 
-    byte path    110118109105100105478710511010011111911532771171081161057710110010597
-                 → nvmidi/Windows MultiMedia  (25 bytes, exact)
+`j_pragma.nvgt` (`#pragma plugin nosuchplugin_zzz`) exits 65 with a
+different diagnostic entirely: `Compilation error: file: nosuchplugin_zzz`,
+`line: 0 (0)`, `ERROR: failed to load plugin`. A pragma that cannot be
+satisfied does not produce the `@` pair.
 
-    string path  PROBE_API_STR 0u??z     (garbage)
+This is counter-evidence to the hypothesis that a load failure clears the
+registered types before the script is parsed. A missing plugin is reported as
+a missing plugin.
 
-Same call, same underlying value, same second. The defect is not specific to
-the port name, not to RtMidi, and not to this plugin's string building: it is
-the return slot itself.
+## i_var
 
-With the byte path the port name also came through exactly —
-`PROBE_BYTE_COUNT 30` decoding to `Microsoft GS Wavetable Synth 0` — and the
-process exited 0.
+`i_var.nvgt` is four lines: pragma, blank, `void main() {`, `string h;`,
+`print("I_BEGIN");`. It exits **0** with 7 bytes on stdout: `I_BEGIN`.
 
-## What the plugin does about it
+An earlier reading of this file recorded 8 lines of leading `//` comments and
+the marker `H_BEGIN`. Both were wrong: the file in the checkout carries no
+comments and prints `I_BEGIN`, which is what the runner measured. The
+`H_BEGIN` reading came from a version that no longer exists.
 
-Integers cross the boundary; strings do not. Every string surface is a pair:
-`_byte_count()` returning the length, `_byte(uint index)` returning one byte, or
-**-1** when there is no byte at that index. `-1` rather than 0 because a name
-may legitimately contain a zero byte, so "no such byte" has to stay
-distinguishable from "an actual NUL".
+## The real script
 
-`register_nvmidi()` asks for the string factory and, if a future engine ever
-publishes one, prints a warning saying the byte path has become unnecessary and
-must be re-measured rather than trusted either way.
+`E2E_RAN_SECONDS: 0.2` and `logs_e2e.txt: 0 bytes` on every run of this
+session (`36a2bb9`, `34d35b9`). Its `E2E_EXIT_HEX: 0xC0000005` is not a
+measurement of the script: that wait step times out without writing
+`E2E_EXIT_CODE`, so the value printed is the previous step's environment
+leaking forward. The step's own log line says "the script never named a port
+within 60s".
 
-See the readme section "Strings arrive as bytes" for the four-line script-side
-helper that reassembles the text, where the engine's own strings are intact.
+The reason it always sat the full 60 s is a malformed regex — `'E2E_PORT\s'`
+with no capture, `'E2E_END'` unanchored — both of which are true from the
+first read of an empty file. The step never broke early and never printed the
+log it was there to print. Corrected in 776770d.
 
-## substr() on a literal, and what the byte path cost to find (measured 2026-09-29)
+## Probes measured, with their verdicts
 
-The byte protocol was never the fault. The backend name the plugin hands over
-is right, and the runner now rebuilds it exactly:
+| probe | exit | stdout |
+|---|---|---|
+| `l_int` | 0 | `L_OK` |
+| `m_str` | 0 | `M1M2` |
+| `k_lit` | 0 | `K1K2` |
+| `c_handle` | 65 | 428 B, `@` at line 5 (13) |
+| `e2e_min` | 0 | `MIN_BEGINMIN_END` |
+| `i_var` | 0 | `I_BEGIN` |
+| `j_pragma` | 65 | `failed to load plugin`, line 0 (0) |
+| `e2e_types` | 65 | 434 B, `@` at line 14 (13) |
+| `a_bare` | 65 | 420 B, `@` at line 5 (13) |
+| `b_decl` | 65 | 420 B, `@` at line 5 (13) |
+| `d_call` | 0xC0000005 | 0 B |
+| `e_call` | 0 | `E1E2 api_bytes=25E3` |
+| `f_open` | 0xC0000005 | 0 B |
+| `g_float` | 0 | `G_BEGING_END` |
 
-    E2E_API_TEXT nvmidi/Windows MultiMedia
-    E2E_API_FIND_WINDOWS 7
+`l_int`, `m_str` and `k_lit` were added in 776770d and their column is filled
+from that run. They exist to separate "the plugin type" from "a statement
+after a print" as the thing the parser refuses.
 
-What was wrong was the test harness rebuilding a string out of those bytes, in
-three successive ways, each measured rather than argued:
+## Retracted
 
-    string(byte)                gives the decimal digits: a 25 byte name came
-                                back as "110118109105100105...".
-    byte_letters.substr(b, 1)   is not the character at b. Measured on a 68
-                                character literal: index 32 answers 'W', index
-                                65 answers '-', index 47 answers 'l', and
-                                substr(67, 1) is empty although length() is 68.
-                                So in-range reads give wrong characters, above
-                                roughly the midpoint they give nothing, and the
-                                last character is unreachable. The offsets are
-                                not a constant (32→'W' and 65→'-' are different
-                                shifts), so the mechanism is still UNMEASURED
-                                and is not claimed anywhere in the code.
-    byte_letters.find(one)      was blamed for answering 0 for every character.
-                                That blame was wrong. Measured: find() answers 1
-                                for "1", 10 for "A", 62 for "/", and -1 for a
-                                miss. It was never the fault.
+- **A "60.4 s hang" of the real script.** There was no hang. The step above
+  could not end and the process was observed only at the deadline. See the
+  regex note above.
+- **"The call boundary is what takes the process down."** Written into the
+  message of commit 36a2bb9. `c_handle` makes no plugin call at all — it has
+  three statements, one print, one declaration, one print — so it cannot die
+  on one. The `0xC0000005` cited as evidence for it was the env leakage
+  described above. The error was mine and is corrected here.
+- **A `h_decl`/`c_handle` reproducibility fault.** Refuted: the worktree
+  bytes, the committed blob and the GitHub blob hash identically for
+  `c_handle`, `h_decl`, `g_float` and `e2e_min`. The runner got the committed
+  bytes.
 
-The fix that works is not a lookup at all: a branch over the byte, reading only
-the first ten and first twenty six characters of a literal (the two ranges this
-engine does read correctly, find("1")=1 and find("A")=10), and returning the
-punctuation a backend name is made of one byte at a time.
+## Closed
 
-### Engine facts learned on the way
+- `midi_duration` and `asCALL_CDECL_OBJLAST` as the fault.
+- Global initialisers as the fault: `g_float` declares nine of them, including
+  an array handle, and exits 0.
+- "One named type per script body": `e2e_types` and `a_bare` each name one.
+- A missing plugin DLL: `e2e_min` requests the plugin and exits 0.
 
-    `b >= '0'`                  "No conversion from 'const string' to math type
-                                available" - a character literal is a one
-                                character string, not a code. Every bound in the
-                                conversion is the number.
-    int x[25] = {...}           "Expected '('" / "Instead found identifier" - a
-                                sized array with an initialiser list on one line
-                                is rejected. Fill it one element at a time.
-    find()                      index for a hit, -1 for a miss, 0 for the empty
-                                needle: sound.
-    probe stdout                lands in the JOB LOG, not in the uploaded
-                                artifact. Engine prints carry no trailing
-                                newline, so a probe's output has to be split on
-                                its own markers, not on lines.
-    PowerShell                  Get-Content -Raw on an empty file answers $null
-                                and a method call on $null kills the step:
-                                guard with `.Trim().Length -gt 0`.
+## Still open
+
+- Why a declaration of a plugin handle is refused while a declaration of
+  `string` in the same position is accepted. `k_lit` is the probe that
+  decides whether the refusal is about the type at all.
+- `open-failed slot=midi1 error=0` and `W_VERDICT input=false` — the question
+  the whole apparatus exists to answer.
+- The loopback driver was not built on run 36603915214; the listener's verdict
+  is not trustworthy until that is understood.
