@@ -83,7 +83,11 @@ jobs:
       - name: fetch nvgt
         shell: pwsh
         run: |
-          $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/samtupy/nvgt/releases/tags/latest' -Headers @{ 'User-Agent' = 'nvmidi-ci' }
+          # Unauthenticated calls to this endpoint are rate limited per runner
+          # IP, and a limited call throws - which the step below then reports as
+          # "nvgt never installed", a fact about github's rate limiter dressed as
+          # a fact about the engine. The job's own token raises the ceiling.
+          $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/samtupy/nvgt/releases/tags/latest' -Headers @{ 'User-Agent' = 'nvmidi-ci'; 'Authorization' = "Bearer ${{ github.token }}" }
           Write-Host "nvgt release: $($rel.tag_name) ($($rel.name))"
           Write-Host "assets: $(($rel.assets | ForEach-Object { $_.name }) -join ', ')"
           $asset = $rel.assets | Where-Object { $_.name -like '*.exe' } | Select-Object -First 1
@@ -174,22 +178,6 @@ jobs:
       # ANGELSCRIPT_DLL_MANUAL_IMPORT having left the symbol null - the plugin
       # is dllexported and --kill-at deflates it, so nvgt resolves these on
       # its side, not ours.
-      - name: probe the plugin api name
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          $src = Join-Path $env:GITHUB_WORKSPACE 'scripts/windows/probe_api_name.nvgt'
-          $out = Join-Path $env:GITHUB_WORKSPACE 'probe_api_name.txt'
-          $exe = Join-Path $env:NVGT_DIR 'nvgt.exe'
-          $log = Join-Path $env:GITHUB_WORKSPACE 'probe_raw.txt'
-          $p = Start-Process -FilePath $exe -ArgumentList @($src) -Wait -PassThru -NoNewWindow -RedirectStandardOutput $log -RedirectStandardError "$log.err"
-          Write-Host "probe engine exited $($p.ExitCode)"
-          if (Test-Path $log) { Get-Content $log | Write-Host }
-          if (Test-Path "$log.err") { Write-Host '--- stderr ---'; Get-Content "$log.err" | Write-Host }
-          if (Test-Path $out) { Get-Content $out | Write-Host } else { Write-Host 'SILENT the probe wrote no output file' }
-
-      # The dll the script will load. Built with the same make target the
-      # release uses, because the point of the job is to test what ships.
       - name: build the plugin
         shell: cmd
         run: mingw32-make
@@ -227,6 +215,22 @@ jobs:
       # its port immediately. loopMIDI is the fallback because its installer
       # is known to leave the driver unloaded until a user launches the
       # application, which a runner has no one to do.
+      - name: probe the plugin api name
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $src = Join-Path $env:GITHUB_WORKSPACE 'scripts/windows/probe_api_name.nvgt'
+          $out = Join-Path $env:GITHUB_WORKSPACE 'probe_api_name.txt'
+          $exe = Join-Path $env:NVGT_DIR 'nvgt.exe'
+          $log = Join-Path $env:GITHUB_WORKSPACE 'probe_raw.txt'
+          $p = Start-Process -FilePath $exe -ArgumentList @($src) -Wait -PassThru -NoNewWindow -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+          Write-Host "probe engine exited $($p.ExitCode)"
+          if (Test-Path $log) { Get-Content $log | Write-Host }
+          if (Test-Path "$log.err") { Write-Host '--- stderr ---'; Get-Content "$log.err" | Write-Host }
+          if (Test-Path $out) { Get-Content $out | Write-Host } else { Write-Host 'SILENT the probe wrote no output file' }
+
+      # The dll the script will load. Built with the same make target the
+      # release uses, because the point of the job is to test what ships.
       - name: get a loopback midi driver
         shell: pwsh
         # The timeout is here because this step hung once for twenty-six
