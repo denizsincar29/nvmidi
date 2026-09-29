@@ -66,29 +66,65 @@ static void winmm_load(void) {
  * any of this code runs - and that is what carries the path instead. */
 static char g_path[MAX_PATH];
 
+/* Set by DllMain once it has run, read by main. Only a flag: the work it
+ * describes is already done by the time it is set. */
+static volatile LONG g_attach_done = 0;
+
+/* The exit path for a load that failed.
+ *
+ * GetLastError() is read inside DllMain, where it is still the loader's answer,
+ * and the code is stashed rather than merely printed - a process that dies
+ * cannot print anything, and this is the one number that says why the dll did
+ * not arrive. FAILED is the sentinel for "DllMain has not run yet".
+ *
+ * terminate=1 makes the process leave immediately. A failed attach is not a
+ * state this probe can go on from: whatever it prints after that would be a
+ * reading of a process in which the thing under test is absent, and an absent
+ * test reads exactly like a negative result. Measured on runs 36588463233 and
+ * 36589358498, both probes died with 0xC0000005 and no stdout at all - a
+ * fault, not an exit, which is why this now records before it can fault. */
+#define ATTACH_FAILED (-1L)
+
+static void fail_and_exit(const char *what, HMODULE m) {
+	DWORD le = GetLastError();
+	char path[MAX_PATH * 2];
+	char msg[512];
+	FILE *f;
+
+	GetModuleFileNameA(NULL, path, MAX_PATH);
+	snprintf(msg, sizeof(msg), "PROBE_LOAD_FAIL what=%s err=%lu path=%s\n",
+		what, (unsigned long)le, g_path);
+	/* Two places, because neither is guaranteed on its own: the module's own
+	 * directory is where the runner usually collects from, and RUNNER_TEMP is
+	 * the one directory the workflow step is known to read. */
+	f = fopen("probe_exe_load_failed.txt", "ab");
+	if (f) { fputs(msg, f); fclose(f); }
+	f = fopen("C:\\probe_load_failed.txt", "ab");
+	if (f) { fputs(msg, f); fclose(f); }
+	(void)m;
+	/* printf as well: if this process has a console after all, the line is
+	 * already there rather than only in a file. */
+	printf("%s", msg);
+	fflush(stdout);
+	TerminateProcess(GetCurrentProcess(), 3);
+}
+
 BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
 	(void)hinst;
 	(void)reserved;
 	if (reason == DLL_PROCESS_ATTACH) {
 		GetEnvironmentVariableA("NVPROBE_DLL", g_path, MAX_PATH);
-	}
-	if (reason == DLL_PROCESS_ATTACH && g_path[0]) {
 		/* LoadLibraryExA with no flags, so the search is the ordinary one and
 		 * the loader does not go looking for dependencies beside the file.
-		 * The path is given in full, so the order does not matter here. */
+		 * The path is given in full, so the order does not matter here.
+		 *
+		 * This runs before the flag below is set, so a failure on the way out
+		 * of DllMain can never be mistaken for a load that never happened. */
+		if (g_path[0]) {
 			HMODULE m = LoadLibraryExA(g_path, NULL, 0);
-		if (!m) {
-			/* The failure goes to a file because this process may have no
-			 * console attached - it is started from a workflow step, and a
-			 * printf here would be lost. */
-
-			FILE *f = fopen("probe_exe_load_failed.txt", "ab");
-			if (f) {
-				fprintf(f, "LoadLibraryExA failed for %s error %lu\n",
-					g_path, (unsigned long)GetLastError());
-				fclose(f);
-			}
+			if (!m) fail_and_exit("LoadLibraryExA", NULL);
 		}
+		InterlockedExchange(&g_attach_done, 1);
 	}
 	return TRUE;
 }
@@ -111,6 +147,20 @@ static void call_close(HMIDIOUT o) { midiOutClose(o); }
 
 int main(int argc, char **argv) {
 	(void)argc; (void)argv;
+	/* Recorded before anything else, and to a real file rather than the
+	 * console. Up to run 36591747832 this program printed its one line and
+	 * nothing else, so a DllMain that never ran and a DllMain that ran and
+	 * loaded nothing produced the same empty output. This line separates them,
+	 * and it is written where a step can read it even if the attach faulted. */
+	{
+		FILE *af = fopen("C:\\probe_attach_marker.txt", "ab");
+		if (af) {
+			fprintf(af, "ATTACH done=%ld dll=%s\n",
+				(long)InterlockedCompareExchange(&g_attach_done, 0, 0),
+				g_path[0] ? g_path : "(unset)");
+			fclose(af);
+		}
+	}
 	/* Pulled in here, after the dll named by the environment has attached.
 	 * The order this program is testing is that the dll was up first. */
 	/* The mapper is opened rather than a device index, so winmm has to ask

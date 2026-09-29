@@ -166,6 +166,13 @@ jobs:
           # somewhere this step does not look. A missing file and an exit code
           # are what tell those apart, so both are printed for every case
           # before any status file is read.
+          function Show-File($path, $label) {
+            if (Test-Path $path) {
+              Write-Host "  ${label}:"
+              Get-Content $path | ForEach-Object { Write-Host "    $_" }
+            } else { Write-Host "  ${label}: absent" }
+          }
+
           function Run-Probe($label, $exe, $dll) {
             Write-Host $label
             if (-not (Test-Path $exe)) { Write-Host "  MISSING BINARY: $exe"; return }
@@ -186,9 +193,13 @@ jobs:
             Write-Host "  $($_.FullName):"; Get-Content $_.FullName | ForEach-Object { Write-Host "    $_" }
           }
           if (-not (Test-Path "$play\late_midi.status")) { Write-Host "  no late_midi.status in $play" }
+          Show-File 'C:\probe_attach_marker.txt' 'probe_attach_marker.txt'
+          Show-File 'C:\probe_load_failed.txt' 'probe_load_failed.txt'
 
           Write-Host "=== 4. same dll, executable that links winmm ==="
           Run-Probe "  probe_exe, winmm in the import table" "$probe\probe_exe.exe" $null
+          Show-File 'C:\probe_attach_marker.txt' 'probe_attach_marker.txt'
+          Show-File 'C:\probe_load_failed.txt' 'probe_load_failed.txt'
           Get-ChildItem $play -Filter late_midi.status -ErrorAction SilentlyContinue | ForEach-Object {
             Write-Host "  $($_.FullName):"; Get-Content $_.FullName | ForEach-Object { Write-Host "    $_" }
           }
@@ -199,6 +210,8 @@ jobs:
           python -c "print('warm')" 2>&1 | ForEach-Object { Write-Host "  $_" }
 
           Write-Host "--- which process each attach belonged to ---"
+          Write-Host "(case 1's attach would carry a host of python.exe; case 2 restored the real winmm)"
+          Show-File 'C:\late_midi_host.txt' 'late_midi_host.txt'
           if (Test-Path 'C:\late_midi_host.txt') {
             Get-Content 'C:\late_midi_host.txt' | ForEach-Object { Write-Host "  $_" }
           } else { Write-Host "  no C:\late_midi_host.txt" }
