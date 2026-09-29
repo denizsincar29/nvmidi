@@ -1356,46 +1356,59 @@ std::string midi_input_port_name(unsigned int port) {
 	}
 }
 
-// The same value as midi_output_port_name, offered to the engine a second way.
+// The port name, handed to the engine as bytes rather than as a string.
 //
-// Why this exists, measured on the runner rather than reasoned about: the
-// engine was asked for its string type and answered
+// Measured, twice, on the runner. The `const char*` return that lived here
+// first did not survive its own run: the probe died at -1073740791
+// (0xC0000409, STATUS_STACK_BUFFER_OVERRUN) before its first print, with no
+// output file written. So the return type is not the fault - a pointer to
+// bytes fails exactly the way a std::string fails. The whole string return
+// is the fault, whatever it is spelled as.
 //
-//     NVSTR GetStringFactory ret=67108876 typeModifiers=0
+// What the same runs did establish, because the split is sharp:
 //
-// 67108876 is -2, asINVALID_ARG - there is no string factory. nvgt's `string`
-// is a built-in reference type with a layout of the engine's own, and this
-// plugin hands back a C++ std::string through a return slot the engine reads
-// with that other layout. Both sides believe they are correct, so nothing
-// reports an error, and every string this plugin returns arrives as bytes.
+//     midi_output_port_count()   -> 1        answers, no crash
+//     midi_output_port_name(0)   -> crash    never returns
 //
-// A `const char*` return has no layout to disagree about: the engine receives
-// a pointer to bytes and builds its own string from them. This is registered
-// beside the original, under its own name, so one run shows both in the same
-// engine at the same moment - if this one reads correctly and the other does
-// not, the return type is the fault and every string function in this file is
-// to be converted the same way.
+// An integer crosses this boundary intact. A string does not. And the crash
+// is on the *write* into the return slot, not on the read: the address the
+// engine points at is not zero (a null would fault cleanly and immediately)
+// but it is also not the engine's own string object, so the write corrupts
+// memory and the failure surfaces later as a stack overrun. Every string this
+// plugin returns has been arriving as bytes for the same reason, and the
+// engine's answer to `GetStringFactory` - 67108876, which is -2,
+// asINVALID_ARG - says it has no string factory to convert with in the first
+// place.
 //
-// TEMPORARY. Fold this back into midi_output_port_name once it is confirmed.
-const char* midi_output_port_name_cstr(unsigned int port) {
-	// The buffer has to outlive the call, because the engine may copy from the
-	// pointer after this function has returned. One per port, so two ports in
-	// a row do not overwrite each other's text.
-	//
-	// Static and never freed: this is a debugging path with a fixed number of
-	// callers, and returning a dangling pointer would corrupt the very result
-	// it is here to measure.
-	static std::vector<std::string> buffers;
+// So no string crosses this boundary at all. A name is a byte buffer, and the
+// two functions below expose it as a length and an indexed byte. Integers,
+// which are known to work here. The script assembles its own string on its own
+// side, where literals and concatenation are alive - measured, the engine's
+// own strings are fine.
+int midi_output_port_name_byte_count(unsigned int port) {
 	try {
-		const std::string name = with_port<RtMidiOut>([port](RtMidiOut& out) -> std::string {
-			if (port >= out.getPortCount()) return "";
-			return out.getPortName(port);
+		return (int)with_port<RtMidiOut>([port](RtMidiOut& out) -> std::size_t {
+			if (port >= out.getPortCount()) return 0;
+			return out.getPortName(port).size();
 		});
-		if (port >= buffers.size()) buffers.resize(port + 1);
-		buffers[port] = name;
-		return buffers[port].c_str();
 	} catch (RtMidiError&) {
-		return "";
+		return 0;
+	}
+}
+
+// The byte at `index` of the port name, or -1 when there is none. -1 rather
+// than 0 because a name may legitimately contain a zero byte and the caller
+// has to be able to tell "no such byte" from "an actual NUL".
+int midi_output_port_name_byte(unsigned int port, unsigned int index) {
+	try {
+		return with_port<RtMidiOut>([port, index](RtMidiOut& out) -> int {
+			if (port >= out.getPortCount()) return -1;
+			const std::string name = out.getPortName(port);
+			if (index >= name.size()) return -1;
+			return (int)(unsigned char)name[index];
+		});
+	} catch (RtMidiError&) {
+		return -1;
 	}
 }
 
@@ -1886,8 +1899,12 @@ void register_midi_globals(asIScriptEngine* engine, registration* reg) {
 		          << " typeModifiers=" << mods
 		          << " factory=" << (void*)factory << std::endl;
 	}
-	// The same value, returned the other way. See the definition above.
-	reg->check( engine->RegisterGlobalFunction("string midi_output_port_name_cstr(uint port)", asFUNCTION(midi_output_port_name_cstr), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	// The same value, handed over as bytes instead of as a string. See the
+	// definition above for what the const char* attempt measured before this
+	// replaced it: the return type was not the fault, so no spelling of a
+	// string return is registered here any more.
+	reg->check( engine->RegisterGlobalFunction("int midi_output_port_name_byte_count(uint port)", asFUNCTION(midi_output_port_name_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_output_port_name_byte(uint port, uint index)", asFUNCTION(midi_output_port_name_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_input@ midi_input_create()", asFUNCTION(midi_input_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_output@ midi_output_create()", asFUNCTION(midi_output_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 }

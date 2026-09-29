@@ -43,73 +43,36 @@
 // keyword 'out'" at the declaration, measured on the runner, not guessed. It
 // cost this probe two runs that looked like plugin failures and were compile
 // errors, which is why the accumulator below is named `hex` and not `out`.
-string hex_of(const string&in s) {
-	string hex = "";
-	const string digits = "0123456789abcdef";
-	for (uint i = 0; i < s.length(); i++) {
-		// A byte cannot be taken from a string in this engine - indexing
-		// yields a one character string, and a character cannot be treated
-		// as a number ("Can't implicitly convert from 'const string' to
-		// 'uint'", measured). So the index of the character in a digit
-		// table is the value, which is a find() and therefore parses.
-		const string ch = s.substr(i, 1);
-		const int hi = digits.find(ch);
-		if (hi < 0) { hex += "?"; continue; }
-		hex += digits.substr(hi, 1);
-	}
-	return hex;
-}
+// `out` is a reserved keyword in this engine - "ERROR: Instead found reserved
+// keyword 'out'" at the declaration, measured on the runner, not guessed. It
+// cost this probe two runs that looked like plugin failures and were compile
+// errors. Kept here so the next person writing a loop in this engine does not
+// pay for it again; nothing below uses a loop variable called `out`.
 
 void main() {
 	print("PROBE_BEGIN");
-	// Nothing between this line and PROBE_END may read the string's length,
-	// walk its characters, or copy it into another string.
+	// Every line from here down is a number or a literal. No value that came
+	// out of the plugin is ever concatenated, measured, or indexed, because
+	// that is what killed the two earlier probes at -1073740791
+	// (STATUS_STACK_BUFFER_OVERRUN) before they could print once.
 	//
-	// Measured, on the runner, twice. A probe that did all three died with
-	// exit code -1073740791 (0xC0000409, STATUS_STACK_BUFFER_OVERRUN) before
-	// its second print, and the e2e script - which concatenates the same
-	// value into "E2E_OK LOADED " + api and then stops - survived that one
-	// concatenation and produced garbage on both sides of it. A value whose
-	// length is not a length explains both: heap reads run off the end of the
-	// buffer and the copy writes as much as it was told.
-	//
-	// So the value is printed raw and alone. print() of a single string does
-	// not consult the length in this engine - the e2e script prints "E2E_BEGIN"
-	// and other bare literals with no arithmetic anywhere - and if that is
-	// wrong too, the crash moves up one line and says so.
-	// A second string-returning call, registered with the same convention and
-	// no string arithmetic of its own, as a control against midi_api_name.
-	//
-	// The two differ in exactly one way: midi_api_name builds its result as
-	// `"nvmidi/" + RtMidiIn::getApiDisplayName(...)`, so the value crosses the
-	// boundary as a temporary produced by operator+. midi_output_port_name
-	// returns a std::string that came straight out of RtMidi with no expression
-	// involved. If the control survives and midi_api_name does not, the fault
-	// is in how the result is built; if both are equally broken, the fault is
-	// in how a string return is declared to the engine, which is a change in
-	// nvmidi.cpp beside the registration and not in any script.
-	// One call, not two. The second one - midi_output_port_name(9999) - was
-	// added to separate "RtMidi handed back garbage" from "out of range", and
-	// the run answered the first half before it got there: printed from inside
-	// the plugin, port 0 came back as a correct 30 byte name. Repeating it
-	// costs a run and a crash for a question already settled.
-	print("PROBE_OTHER_BEGIN");
-	print(midi_output_port_name(0));
-	print("PROBE_OTHER_END");
-	// The same value, from the same plugin, from the same port, in the same
-	// run - the only difference is the return type the plugin is registered
-	// with. Whatever this prints, the pair of lines above and below it is the
-	// measurement.
-	print("PROBE_CSTR_BEGIN");
-	print(midi_output_port_name_cstr(0));
-	print("PROBE_CSTR_END");
-
-	string api = midi_api_name();
-	print(api);
-	// `api` is deliberately never mentioned again below this point.
-	print("PROBE_END");
+	// The plugin's port name is now handed over as bytes and the script
+	// rebuilds the string on its own side, where literals and concatenation
+	// were measured alive. Whether a plugin-returned string can work at all is
+	// the question this run answers, and the answer will be in the length
+	// below: 30 is the real name, anything else is a mismatch.
+	const int n = midi_output_port_name_byte_count(0);
+	print("PROBE_BYTE_COUNT " + n);
+	// The bytes as decimal, one per line, so nothing here can depend on how
+	// this engine handles a string of unknown provenance. Numbers out, numbers
+	// printed.
+	for (int i = 0; i < n && i < 64; i++) {
+		print("PROBE_BYTE " + i + " " + midi_output_port_name_byte(0, i));
+	}
+	print("PROBE_BYTES_END");
 	// nvgt_plugin_version() was tried here and is not a symbol this engine has
 	// - "ERROR: No matching symbol 'nvgt_plugin_version'", measured on the
 	// runner, which cost the probe a third run. The engine's export list is
-	// its own, and the api name is what this file was written to read.
+	// its own, and these numbers are what this file was written to read.
+	print("PROBE_END");
 }
