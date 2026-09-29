@@ -906,6 +906,16 @@ jobs:
             $err2 = ''
             if (Test-Path $p2err) { $err2 = (Get-Content $p2err -Raw); if ($null -eq $err2) { $err2 = '' } }
             Write-Host "--- $case ---"
+            # Where this case's log actually landed, and how big it is. The
+            # upload step names its files one by one, so a case that runs and
+            # is not named there produces no artifact at all - and for five
+            # runs the reader could not tell "the probe was silent" from "the
+            # probe spoke and nobody kept the recording". These two lines are
+            # the size, printed by the run that made the file, so the artifact
+            # can be checked against a number the job stated.
+            $p2onDisk = -1
+            if (Test-Path $p2log) { $p2onDisk = (Get-Item $p2log).Length }
+            Write-Host ("  log $p2log $p2onDisk bytes on disk")
             Write-Host ("exit {0} (0x{1:X8}) after {2:N1}s, stdout {3} bytes, stderr {4} bytes" -f $c2, ($c2 -band 0xFFFFFFFF), $sec2, $out.Length, $err2.Length)
             # A script that threw out of the engine and a script that returned
             # cleanly are allowed to look identical here: the runner reports
@@ -1553,25 +1563,45 @@ jobs:
             ${{ github.workspace }}/logs_e2e.txt
             ${{ github.workspace }}/logs_e2e.txt.err
             ${{ github.workspace }}/logs_listen.txt
+            ${{ github.workspace }}/n_type.log
+            ${{ github.workspace }}/n_type.log.err
+            ${{ github.workspace }}/l_int.log
+            ${{ github.workspace }}/l_int.log.err
+            ${{ github.workspace }}/m_str.log
+            ${{ github.workspace }}/m_str.log.err
+            ${{ github.workspace }}/k_lit.log
+            ${{ github.workspace }}/k_lit.log.err
+            ${{ github.workspace }}/c_handle.log
+            ${{ github.workspace }}/c_handle.log.err
             ${{ github.workspace }}/e2e_min.log
             ${{ github.workspace }}/e2e_min.log.err
+            ${{ github.workspace }}/i_var.log
+            ${{ github.workspace }}/i_var.log.err
+            ${{ github.workspace }}/j_pragma.log
+            ${{ github.workspace }}/j_pragma.log.err
             ${{ github.workspace }}/e2e_types.log
             ${{ github.workspace }}/e2e_types.log.err
             ${{ github.workspace }}/a_bare.log
             ${{ github.workspace }}/a_bare.log.err
             ${{ github.workspace }}/b_decl.log
             ${{ github.workspace }}/b_decl.log.err
-            ${{ github.workspace }}/c_handle.log
-            ${{ github.workspace }}/c_handle.log.err
             ${{ github.workspace }}/d_call.log
             ${{ github.workspace }}/d_call.log.err
             ${{ github.workspace }}/e_call.log
             ${{ github.workspace }}/e_call.log.err
             ${{ github.workspace }}/f_open.log
             ${{ github.workspace }}/f_open.log.err
-            ${ github.workspace }/g_float.log
-            ${ github.workspace }/g_float.log.err
-            ${ github.workspace }/h_decl.log
-            ${ github.workspace }/h_decl.log.err
+            ${{ github.workspace }}/g_float.log
+            ${{ github.workspace }}/g_float.log.err
+            ${{ github.workspace }}/n_whole.log
+            ${{ github.workspace }}/n_whole.log.err
+            ${{ github.workspace }}/n_handle.log
+            ${{ github.workspace }}/n_handle.log.err
+            ${{ github.workspace }}/n_noteonly.log
+            ${{ github.workspace }}/n_noteonly.log.err
+            ${{ github.workspace }}/n_inputonly.log
+            ${{ github.workspace }}/n_inputonly.log.err
+            ${{ github.workspace }}/n_repeat.log
+            ${{ github.workspace }}/n_repeat.log.err
           if-no-files-found: warn
           retention-days: 7
