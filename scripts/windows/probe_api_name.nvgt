@@ -1,0 +1,68 @@
+// probe_api_name.nvgt - what does midi_api_name() actually return on windows?
+//
+// This exists because e2e_winmm.nvgt reported this, once and only once the
+// engine would compile the script at all:
+//
+//     E2E_OK LOADED `|�>   $    fH�
+//     E2E_FAIL expected a windows midi backend, got `|�>   $    fH�
+//
+// midi_api_name() is not built out of script memory. It is
+//
+//     return "nvmidi/" + RtMidiIn::getApiDisplayName(apis[0]);
+//
+// and getApiDisplayName returns rtmidi_api_names[api][1] - a pointer to a
+// string literal in an `extern "C"` table defined in RtMidi.cpp - through a
+// std::string return value. That path was measured locally first, outside this
+// job, with a probe compiled against the same RtMidi.cpp the plugin links:
+//
+//     compiled_count=1
+//     api[0] enum=5 table0=dummy table1=Dummy disp.size=5
+//     disp.hex=44 75 6d 6d 79   disp.raw=[Dummy]
+//
+// so the table and the string are correct in the object file, and whatever
+// mangles them on windows happens between that object file and the script
+// rather than inside it.
+//
+// What is being separated here
+// ---------------------------
+//
+// A literal written in this file, a string built inside the plugin, and a
+// string handed out by RtMidi's object file. If the literal survives and the
+// other two do not, the fault is in how the plugin's code calls into its own
+// RtMidi and is nothing to do with nvgt. If all three are garbage, the string
+// type itself does not cross the boundary and every string-returning call in
+// this plugin - get_port_name, to_string, midi_last_error - is affected.
+//
+// The title literal is deliberate: it is a byte-for-byte control that cannot
+// be affected by anything RtMidi does. Absent from the output, this script did
+// not run; present and intact, the engine's own strings are fine.
+
+#pragma plugin nvmidi
+
+string hex_of(const string&in s) {
+	string out = "";
+	const string digits = "0123456789abcdef";
+	for (uint i = 0; i < s.length(); i++) {
+		// A byte cannot be taken from a string in this engine - indexing
+		// yields a one character string, and a character cannot be treated
+		// as a number ("Can't implicitly convert from 'const string' to
+		// 'uint'", measured). So the index of the character in a digit
+		// table is the value, which is a find() and therefore parses.
+		const string ch = s.substr(i, 1);
+		const int hi = digits.find(ch);
+		if (hi < 0) { out += "?"; continue; }
+		out += digits.substr(hi, 1);
+	}
+	return out;
+}
+
+void main() {
+	print("PROBE_BEGIN");
+	string api = midi_api_name();
+	print("PROBE_MARKER " + api);
+	print("PROBE_RAW |" + api + "|");
+	print("PROBE_HEX " + hex_of(api));
+	print("PROBE_LEN " + api.length());
+	print("PROBE_VERSION " + nvgt_plugin_version());
+	print("PROBE_END");
+}
