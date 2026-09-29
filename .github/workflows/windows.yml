@@ -194,6 +194,32 @@ jobs:
         run: |
           $lib = Join-Path $env:NVGT_DIR 'lib'
           New-Item -ItemType Directory -Force -Path $lib | Out-Null
+
+          # The engine ships a plugin under this same name. Measured, from this
+          # step's own listing in an earlier run:
+          #
+          #     nvmidi.dll   2976551    <- ours, after the copy below
+          #     ...and one from the installer under the same name before it
+          #
+          # so the copy does not add a plugin beside the engine's, it replaces
+          # it. Both are called for by `#pragma plugin nvmidi`, so both are
+          # loaded, and the engine's registration calls then land on whichever
+          # module the loader resolved first. Whichever of the two that is, it
+          # is not a thing this job may leave to chance: the plugin under test
+          # has to be the one the script gets.
+          #
+          # The engine's copy is moved aside rather than deleted - it is the
+          # installer's file, and the next step that needs to know what was here
+          # should be able to look.
+          $shipped = Join-Path $lib 'nvmidi.dll'
+          if (Test-Path $shipped) {
+            $keep = Join-Path $env:NVGT_DIR 'lib\..\nvmidi.engine.dll.bak'
+            Move-Item -Path $shipped -Destination $keep -Force
+            Write-Host "the engine shipped its own nvmidi.dll; moved it to $keep"
+          } else {
+            Write-Host 'the engine shipped no nvmidi.dll of its own'
+          }
+
           Copy-Item nvmidi.dll -Destination (Join-Path $lib 'nvmidi.dll') -Force
           $dll = Join-Path $lib 'nvmidi.dll'
           Write-Host "${dll}: $((Get-Item $dll).Length) bytes"
