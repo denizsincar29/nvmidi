@@ -211,9 +211,15 @@ jobs:
           // process. Rebuild the text here, where the engine's own strings
           // were measured alive. See PROBE-FINDINGS.md at the repo root.
           string backend_name() {
+            // string(byte) hands back the decimal digits of the number, not
+            // the character: measured on a windows runner, where the name came
+            // out as "110118109105100105...". This table is the conversion
+            // that works.
+            const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
             string s = "";
             for (int i = 0; i < midi_api_name_byte_count(); i++) {
-              s += string(midi_api_name_byte(i));
+              uint b = uint(midi_api_name_byte(i));
+              if (b < byte_letters.length()) s += byte_letters.substr(b, 1);
             }
             return s;
           }
@@ -639,9 +645,15 @@ jobs:
           cat > /tmp/backend.nvgt <<'SCRIPT'
           #pragma plugin nvmidi
           string backend_name() {
+            // string(byte) hands back the decimal digits of the number, not
+            // the character: measured on a windows runner, where the name came
+            // out as "110118109105100105...". This table is the conversion
+            // that works.
+            const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
             string s = "";
             for (int i = 0; i < midi_api_name_byte_count(); i++) {
-              s += string(midi_api_name_byte(i));
+              uint b = uint(midi_api_name_byte(i));
+              if (b < byte_letters.length()) s += byte_letters.substr(b, 1);
             }
             return s;
           }
@@ -699,9 +711,15 @@ jobs:
           cat > /tmp/name.nvgt <<'SCRIPT'
           #pragma plugin nvmidi
           string backend_name() {
+            // string(byte) hands back the decimal digits of the number, not
+            // the character: measured on a windows runner, where the name came
+            // out as "110118109105100105...". This table is the conversion
+            // that works.
+            const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
             string s = "";
             for (int i = 0; i < midi_api_name_byte_count(); i++) {
-              s += string(midi_api_name_byte(i));
+              uint b = uint(midi_api_name_byte(i));
+              if (b < byte_letters.length()) s += byte_letters.substr(b, 1);
             }
             return s;
           }
