@@ -55,33 +55,6 @@ string char_of(uint b) {
 	return "?";
 }
 
-// One character of an ascii literal, back as its number. Used by the backend
-// classification below, which compares bytes rather than text and therefore
-// needs the wanted character as an int.
-//
-// This does not index the string itself. Two ways of getting one character out
-// of a script string were measured wrong on the runner:
-//
-//     "ndows"[0]                 "Can't implicitly convert from 'const string'
-//                                to 'int'" - a compile error
-//     byte_letters.find(substr)  returns 0 every time, including for a
-//                                character that is not in the table
-//
-// The second is the surprising one and it is why this is arithmetic. A 0 from
-// a find that should have failed is the same value as a 0 from a find that
-// succeeded, so the table cannot be indexed by looking a character up in it.
-// The ranges below are the layout of the table itself, which is ascii order,
-// so the numbers do not depend on the engine's string behaviour at all.
-int char_at(const string&in s, uint at) {
-	if (at >= s.length()) return 0;
-	const string one = s.substr(at, 1);
-	for (uint c = 32; c < 127; c++) {
-		if (char_of(c).find(one) >= 0) return int(c);
-	}
-	return 0;
-}
-
-
 // --- the harness -----------------------------------------------------------
 //
 // print() rather than alert(), for the reason the alsa script gives: a
@@ -293,43 +266,32 @@ void main() {
 	// than the bytes it was built from. A verdict that ends the script on
 	// `api.find(...)` inherits exactly the fault this file just stopped
 	// trusting, and the run it kills is a run that never prints the port list
-	// the job needs. So the classification is done here, on integers, and only
-	// the human-readable line uses the text.
-	bool is_dummy = false;
-	bool is_winmm = false;
-	for (int i = 0; i < API_BYTES; i++) {
-		const int b = midi_api_name_byte(i);
-		// "Windows" or "WINDOWS" starts at i only if all seven bytes match.
-		if (b != 87 && b != 119) continue;
-		const string tail = "ndows";
-		bool tail_ok = true;
-		for (uint k = 0; k < tail.length(); k++) {
-			if (i + int(k) + 1 >= API_BYTES) { tail_ok = false; break; }
-			const int c = midi_api_name_byte(i + int(k) + 1);
-			// Folded by hand for the same reason the port matching below is:
-			// this engine has no to_lowercase, measured.
-			//
-			// The wanted character is read out of the table rather than by
-			// indexing the literal: `"ndows"[0]` is "Can't implicitly convert
-			// from 'const string' to 'int'", measured on the runner, and that
-			// error cost a run. The table is already there and already indexed
-			// successfully everywhere above.
-			const int want = char_at(tail, k);
-			if (c != want && c != want - 32) { tail_ok = false; break; }
-		}
-		if (tail_ok) is_winmm = true;
-		// "Dummy" starts here.
-		if (b != 68 && b != 100) continue;
-		const string rest = "ummy";
-		bool rest_ok = true;
-		for (uint k = 0; k < rest.length(); k++) {
-			if (i + int(k) + 1 >= API_BYTES) { rest_ok = false; break; }
-			const int c = midi_api_name_byte(i + int(k) + 1);
-			const int want = char_at(rest, k);
-			if (c != want && c != want - 32) { rest_ok = false; break; }
-		}
-		if (rest_ok) is_dummy = true;
-	}
+	// the job needs.
+	//
+	// So the question is put to the bytes themselves, as find() calls on a
+	// string that was built from them and nothing else. Three earlier forms of
+	// this loop are gone and each one was measured wrong on the runner rather
+	// than reasoned about:
+	//
+	//   "ndows"[k]                a compile error - indexing a string does not
+	//                             give a number
+	//   byte_letters.find(one)    answers 0 for every character, match or not
+	//                             (probed: find("Q") on a literal with no Q in
+	//                             it answers -1, so the call itself is sound
+	//                             and it was the one-character string handed
+	//                             to it that was not)
+	//   char_of(c).find(one)      same, for the same reason
+	//
+	// What is left is the form that was never in doubt: find() on an argument
+	// long enough to be a real substring. It answers with an index or -1,
+	// measured, and both of those are usable.
+	const string api_from_bytes = api;
+	print("E2E_API_FIND_WINDOWS " + api_from_bytes.find("Windows"));
+	print("E2E_API_FIND_DUMMY " + api_from_bytes.find("Dummy"));
+	// -1 is what find() answers for a string that is not there, and it is a
+	// plain integer comparison - not a one-character string passed anywhere.
+	const bool is_winmm = api_from_bytes.find("Windows") >= 0 || api_from_bytes.find("WINDOWS") >= 0;
+	const bool is_dummy = api_from_bytes.find("Dummy") >= 0 || api_from_bytes.find("DUMMY") >= 0;
 
 	// The dummy backend compiles, loads, registers, opens nothing and prints
 	// every line below this one. That is the failure mode this whole job

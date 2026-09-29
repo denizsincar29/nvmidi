@@ -52,5 +52,28 @@ void main() {
 	print("AT_EQ_LITERAL " + (n_from_literal == "n"));
 	print("AT_EQ_SUBSTR " + (n_from_substr == "n"));
 
+	// find() and the comparison answer correctly even on a character that
+	// came out of a substring, so the walk in char_at() has no local fault
+	// left to find. What is left is the width of the value it walks with, and
+	// that is one number: a character whose code is at or above 128 prints as
+	// a question mark here, and 67 of the 100 characters the classification
+	// asks about - every capital from A to c - are above 127 once the table
+	// in e2e_winmm.nvgt is indexed by the byte it is indexed by.
+	//
+	// The numbers below are that claim, with nothing else in the file: the
+	// table entry the classification actually reads, the arithmetic that
+	// names it, and the printing that loses it.
+	const string t2 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
+	print("AT_T2_LEN " + t2.length());
+	print("AT_T2_ENTRY_87 " + t2.substr(87, 1));
+	print("AT_T2_ENTRY_87_LEN " + t2.substr(87, 1).length());
+	// ASCII W is 87. This is what char_of(87) would hand back if a byte
+	// arrived intact, and it is the first character of "Windows".
+	print("AT_T2_ENTRY_87_EQ_W " + (t2.substr(87, 1) == "W"));
+	print("AT_T2_ENTRY_87_EQ_w " + (t2.substr(87, 1) == "w"));
+	// The subtraction the classification uses to accept either case.
+	const int back = 119 - 32;
+	print("AT_T2_ENTRY_87_EQ_BACK " + (t2.substr(87, 1) == t2.substr(back, 1)));
+
 	print("AT_END");
 }
