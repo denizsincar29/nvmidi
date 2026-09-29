@@ -61,15 +61,33 @@
 // hand here rather than by a call that does not exist.
 //
 // Only ascii is folded, which is the whole of the alphabet these names use.
-// Written as a rebuild rather than an in-place edit: indexing a string hands
-// back a string of length one ("Can't implicitly convert from 'const string'
-// to 'uint'" at the line below, measured), and there is no set-char here, so
-// the folded copy is assembled from the parts either side of each letter.
+// The comparison this feeds is a substring test against fixed words, and a
+// string comes back from the source already as a string - so the whole of
+// the folding is done here, once, rather than per character at every call
+// site. Two earlier attempts are recorded because each failed for a
+// different reason and the reasons are the engine's, not this file's:
+//
+//     const uint c = folded[i];        indexing yields a string, not a byte
+//                                      "Can't implicitly convert from
+//                                       'const string' to 'uint'"
+//     out[i] = c + 32;                 `out` is a reserved keyword here
+//
+// So the folded copy is built from substr() pieces and the character
+// comparison is done with find() on a one-character string, which is the
+// only string comparison this engine is known to parse.
+string lower_first(const string&in one) {
+	if (one.length() == 0) return one;
+	const string upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+	const string lower = "abcdefghijklmnopqrstuvwxyz";
+	const int at = upper.find(one);
+	if (at < 0) return one;
+	return lower.substr(at, 1);
+}
+
 string fold_case(const string&in text) {
 	string folded = "";
 	for (uint i = 0; i < text.length(); i++) {
-		const uint c = text[i][0];
-		folded += (c >= 65 && c <= 90) ? string(c + 32) : text.substr(i, 1);
+		folded += lower_first(text.substr(i, 1));
 	}
 	return folded;
 }
