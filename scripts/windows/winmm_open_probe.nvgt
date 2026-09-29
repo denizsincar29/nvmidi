@@ -52,10 +52,10 @@ void main() {
 
 	// Attempt one. Every step is printed, not just the verdict, so the log
 	// says how far the call got.
-	midi_output@ out = midi_output_create();
+	midi_output@ port_out = midi_output_create();
 	bool opened = false;
 	if (synth_index >= 0) {
-			opened = out.open(uint(synth_index), "probe");
+			opened = port_out.open(uint(synth_index), "probe");
 	} else {
 		print("W_SKIP no synth in the enumeration");
 	}
@@ -64,12 +64,12 @@ void main() {
 	if (opened) {
 		// A real message, so a port that opens but cannot take a write is
 		// caught here rather than two steps later in the verdict.
-		out.send_note_on(1, 60, 100);
+		port_out.send_note_on(1, 60, 100);
 		print("W_SEND_NOTE_ON_ERROR " + bytes_of_last_error());
-		out.send_note_off(1, 60, 0);
+		port_out.send_note_off(1, 60, 0);
 		print("W_SEND_NOTE_OFF_ERROR " + bytes_of_last_error());
-		print("W_ACTIVE " + out.get_active_notes());
-		out.close();
+		print("W_ACTIVE " + port_out.get_active_notes());
+		port_out.close();
 		print("W_CLOSED");
 	}
 
@@ -84,12 +84,12 @@ void main() {
 		}
 		print("W_IN_" + i + " " + n);
 	}
-	midi_input@ in = midi_input_create();
+	midi_input@ port_in = midi_input_create();
 	bool in_opened = false;
-	if (midi_input_port_count() > 0) in_opened = in.open(0, "probe");
+	if (midi_input_port_count() > 0) in_opened = port_in.open(0, "probe");
 	print("W_INPUT_OPEN " + in_opened);
 	print("W_INPUT_OPEN_ERROR " + bytes_of_last_error());
-	if (in_opened) in.close();
+	if (in_opened) port_in.close();
 
 	// The final reading. A failure that is about the output direction alone
 	// shows up here as W_INPUT_OPEN true next to W_OPEN false.
