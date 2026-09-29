@@ -104,8 +104,9 @@ static void report(const char *where) {
 	fprintf(f, "HOST where=%s host=%s self=%s\n", where, host, path);
 	/* Written and closed before the first winmm call, and reopened at the end.
 	 *
-	 * probe_load_failed.txt is absent in both executables while this file is
-	 * absent too (run 36600067002), so LoadLibraryExA accepted the dll and the
+	 * probe_load_failed.txt is absent in both executables while
+	 * late_midi_host.txt - this file - is absent too (run 36600067002), so
+	 * LoadLibraryExA accepted the dll and the
 	 * report never finished - and a file that only gets written after the
 	 * registry walk cannot say whether the walk was reached at all. Each stage
 	 * below now leaves its own line, so the last line in the file names the

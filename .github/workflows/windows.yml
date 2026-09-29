@@ -827,6 +827,17 @@ jobs:
           # Signed and unsigned, because the crash codes read as negative ints.
           $hex = ('0x{0:X8}' -f ($code -band 0xFFFFFFFF))
           Write-Host "nvgt exited $code ($hex)"
+          # When it did, not only that it did. Measured on run 36600825015:
+          # the exit was 0xC0000005 and the step that read the log spent its
+          # full sixty seconds waiting first, so the log was read exactly 60.7
+          # seconds after the launch - the 60 was the reader's budget for a
+          # script that was already dead, and the crash had happened at some
+          # unrecorded moment inside it. A duration next to a crash code is
+          # what tells "it died at startup, before printing" from "it ran the
+          # melody and fell over at the end", and the two want opposite work.
+          $elapsed = ((Get-Date) - $p.StartTime).TotalSeconds
+          Write-Host ("nvgt ran for {0:N1}s before it exited" -f $elapsed)
+          "E2E_RAN_SECONDS=$([math]::Round($elapsed,1))" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "E2E_EXIT_CODE=$code"   | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "E2E_EXIT_HEX=$hex"     | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           if (Test-Path "$log.err") {
@@ -1038,8 +1049,24 @@ jobs:
           }
           if ($t -match 'E2E_OK LOADED') {
             Write-Host "::notice::the plugin loaded and registered"
+          } elseif ($t -match 'E2E_API') {
+            # The line the gate above was written for has never existed in the
+            # script. Measured: grep of e2e_winmm.nvgt for 'E2E_OK LOADED' and
+            # for 'E2E_RUNNING' returns nothing at all - neither string is in
+            # the file - so this branch was unreachable and the gate below it
+            # has never once been the reason a run stopped. The script does
+            # answer the same question, in its own words: it prints E2E_API
+            # right after asking the plugin for its api name, and the numbers
+            # in that line are what the backend step decodes.
+            #
+            # Read as a match on that line rather than by adding a print to
+            # the script. The script is the measurement and is left alone; a
+            # marker added today would make the next run the first one whose
+            # marker meant anything, while the api line has been arriving in
+            # every log that had any output at all.
+            Write-Host "::notice::the script reached its api-name line, so the plugin registered and answered"
           } else {
-            Write-Host "::error::the plugin did not register: the api name came over as 0 bytes"
+            Write-Host "::error::the plugin did not register: the log holds no line where the script asked for the api name"
             exit 1
           }
 
@@ -1312,6 +1339,7 @@ jobs:
           name: windows-e2e-logs
           path: |
             ${{ github.workspace }}/logs_e2e.txt
+            ${{ github.workspace }}/logs_e2e.txt.err
             ${{ github.workspace }}/logs_listen.txt
           if-no-files-found: warn
           retention-days: 7
