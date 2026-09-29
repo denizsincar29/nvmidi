@@ -886,6 +886,33 @@ jobs:
           # melody and fell over at the end", and the two want opposite work.
           $elapsed = ((Get-Date) - $p.StartTime).TotalSeconds
           Write-Host ("nvgt ran for {0:N1}s before it exited" -f $elapsed)
+          # A crash with no output names no function, and the whole of this
+          # work has been guessing at which one faults. Windows ships the
+          # debugger that answers it: cdb prints the faulting stack, so the
+          # frame above the machine code is the function. Run only on a crash
+          # and only when the debugger is present, and its own failure is
+          # reported rather than thrown - a run that cannot be debugged is
+          # still a run that produced its evidence.
+          if ($code -eq -1073741819 -or $code -eq -1073740791) {
+            $dbg = Get-Command cdb.exe -ErrorAction SilentlyContinue
+            if (-not $dbg) {
+              $kits = @("${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\x64\cdb.exe",
+                        "$env:ProgramFiles\Windows Kits\10\Debuggers\x64\cdb.exe")
+              foreach ($k in $kits) { if (Test-Path $k) { $dbg = Get-Item $k; break } }
+            }
+            if (-not $dbg) {
+              Write-Host "no cdb.exe on this runner, so the faulting stack cannot be read here"
+            } else {
+              $dump = Join-Path $env:GITHUB_WORKSPACE 'crash_e2e.txt'
+              # -o opens the crash dump rather than a live process, so the
+              # debugger never has to attach to anything; -c "g;q" runs to the
+              # fault and quits. -y points at the plugin's own export table so
+              # the frames below nvgt.exe get symbols when the pdb carries them.
+              $pluginDir = Join-Path $env:GITHUB_WORKSPACE 'tools\winmm_loopback'
+              & $dbg.FullName -y "$pluginDir" -o $dump -c "g;q" $exe $src 2>&1 |
+                Select-Object -First 400 | ForEach-Object { Write-Host "cdb: $_" }
+            }
+          }
           "E2E_RAN_SECONDS=$([math]::Round($elapsed,1))" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "E2E_EXIT_CODE=$code"   | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "E2E_EXIT_HEX=$hex"     | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
