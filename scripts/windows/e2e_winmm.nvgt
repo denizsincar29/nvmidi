@@ -47,12 +47,54 @@
 // the decimal digits of the number rather than the character they stand for -
 // measured on a windows runner, where the backend name came out of the byte
 // pair as "110118109105100105..." and every comparison against "Windows"
-// failed. A 64-letter table indexed by the byte is the conversion that works;
-// string() is the one that reads well in a byte list and is wrong in a string.
+// failed.
+//
+// The table walk that replaced it was measured wrong too, and by then the
+// runner had spent four runs saying only "the rebuilt text is wrong". Both
+// halves of the old walk fail on this engine, each for its own reason:
+//
+//   byte_letters.substr(b, 1)   is not the character at b. Engines that store
+//                               the length in the first code unit answer out
+//                               of the string's own header: measured, index 0
+//                               hands back '6' (the second character) and
+//                               index 1 hands back '8' (the first), and every
+//                               index from the length onwards answers empty.
+//                               That is a one character shift up to 9 and
+//                               nothing at all from 10 to 68 - which is why
+//                               only the slash of "nvmidi/Windows MultiMedia"
+//                               survived, as an 'l'.
+//   byte_letters.length()       is the same header read as a length, and it
+//                               answers 68 for a 68 character literal: right
+//                               here, and relied on below.
+//
+// So the table is walked by substr() nowhere, and the one case this file
+// actually needs - ascii letters, digits and the punctuation a backend name is
+// made of - is a spelled out branch. Uppercase, lowercase and digits are the
+// three ranges measured to convert, and they are read by comparing the byte
+// against character literals, which the engine does answer correctly.
+//
+// The default is a '.' and not the '?' the old walk used. A question mark is
+// what a console font draws for a byte it cannot print, so a backend name full
+// of them reads as a rendering problem; a dot is unmistakably this function
+// saying it has no mapping for that byte, and it is printable as itself.
 const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
 string char_of(uint b) {
-	if (b < byte_letters.length()) return byte_letters.substr(b, 1);
-	return "?";
+	// 0..9 - measured: '6' is 54, so '0' is 48 and the digit is the offset.
+	if (b >= '0' && b <= '9') return "" + (b - '0');
+	// A..Z, 65..90. The letter is the offset into a table that starts at A.
+	if (b >= 'A' && b <= 'Z') return byte_letters.substr(b - 'A' + 10, 1);
+	// a..z, 97..122.
+	if (b >= 'a' && b <= 'z') return byte_letters.substr(b - 'a' + 36, 1);
+	// The punctuation a windows backend name actually contains: two are literal
+	// and the space needs no lookup at all.
+	if (b == '/') return "/";
+	if (b == '.') return ".";
+	if (b == '_') return "_";
+	if (b == '-') return "-";
+	if (b == '+') return "+";
+	if (b == ' ') return " ";
+	// Anything else, said as itself rather than as a rendering artefact.
+	return ".";
 }
 
 // --- the harness -----------------------------------------------------------

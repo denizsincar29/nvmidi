@@ -1,0 +1,44 @@
+// char_of2_probe.nvgt - does the spelled out conversion actually convert?
+//
+// The first char_of probe named the fault: byte_letters.substr(b, 1) is not
+// the character at b on this engine. It answered index 0 with '6' and index 1
+// with '8' - the two characters swapped and every one after them shifted - and
+// answered empty from the length onwards, so the old walk lost everything but
+// its first two characters and its last few.
+//
+// This file runs the replacement, copied in, on the bytes that matter. It does
+// not read the plugin, so a failure here is an engine fact and a pass here is
+// permission to believe the e2e script's rebuilt name.
+const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
+string char_of(uint b) {
+	if (b >= '0' && b <= '9') return "" + (b - '0');
+	if (b >= 'A' && b <= 'Z') return byte_letters.substr(b - 'A' + 10, 1);
+	if (b >= 'a' && b <= 'z') return byte_letters.substr(b - 'a' + 36, 1);
+	if (b == '/') return "/";
+	if (b == '.') return ".";
+	if (b == '_') return "_";
+	if (b == '-') return "-";
+	if (b == '+') return "+";
+	if (b == ' ') return " ";
+	return ".";
+}
+
+// The backend name, as the plugin hands it over: 25 decimal numbers.
+void main() {
+	print("C2_BEGIN");
+	const int COUNT = 25;
+	int bytes[25] = {110,118,109,105,100,105,47,87,105,110,100,111,119,115,32,77,117,108,116,105,77,101,100,105,97};
+	string s = "";
+	for (int i = 0; i < COUNT; i++) s += char_of(bytes[i]);
+	print("C2_API_TEXT " + s);
+	print("C2_API_LEN " + s.length());
+	// The two questions the e2e script asks of this text. Both were -1 while
+	// the text was wrong; both are the numbers the job is waiting for.
+	print("C2_FIND_WINDOWS " + s.find("Windows"));
+	print("C2_FIND_DUMMY " + s.find("Dummy"));
+	// Each character the name is made of, one per line, so a single wrong cell
+	// is visible as itself instead of as a whole name.
+	print("C2_CHARS " + char_of(110) + char_of(118) + char_of(109) + char_of(105) + char_of(100)
+		+ char_of(47) + char_of(87) + char_of(32) + char_of(77) + char_of(65) + char_of(97) + char_of(48));
+	print("C2_END");
+}
