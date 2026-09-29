@@ -100,6 +100,10 @@ typedef struct {
 static DEVICE g_out;
 static DEVICE g_in;
 static HMODULE g_self;
+// Written under the loader lock in DllMain, read once by publish_thread after
+// the loader has moved on. The write happens-before the thread is created, so
+// there is no window in which the thread can see it half done.
+static WCHAR g_slot[32];
 // How many midi inputs the machine reported before this file published
 // anything. The difference after is this driver's own contribution, which is
 // the only number that says whether the midi half of the driver is visible -
@@ -507,10 +511,15 @@ static DWORD WINAPI publish_thread(LPVOID unused) {
 	// appears the thread is alive and the fault is later, if it does not then
 	// the thread itself is not surviving the loader lock.
 	write_status("LOOPBACK_STATUS=thread-started");
-	if (!write_driver_entry(slot, 32)) {
+	// The registry entry is published by DllMain now, before winmm is allowed
+	// to look, and the slot it took is handed over in g_slot. Re-publishing
+	// here would be a second write to the same value for no reason, and the
+	// read-back below is what says whether the first one survived.
+	if (!g_slot[0]) {
 		write_status("LOOPBACK_STATUS=registry-failed");
 		return 0;
 	}
+	wcsncpy(slot, g_slot, 31);
 	// winmm loads the dll fresh from the registry - a second image of this same
 	// file, in this same process. OpenDriver is what starts it. The name goes
 	// over as UTF-16, which is what the declaration asks for by its LPCWSTR.
@@ -570,6 +579,18 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
 		// where a fault is now expected to show up and a handler installed
 		// afterwards would miss it.
 		SetUnhandledExceptionFilter(crash_filter);
+		// Published here, on the loading thread, and not from the thread
+		// below. Every failure this file has had was read as "winmm cannot
+		// start the driver", and the registry dump says the write itself was
+		// never the problem: HKLM\...\Drivers32 had midi1 pointing straight at
+		// this dll, because that write is done with the key alone and needs
+		// nothing winmm could still be initialising. What needs winmm is the
+		// other half - winmm builds its device list once, and a slot that
+		// appears after that build is a device that never received DRV_LOAD.
+		// Doing the write while the loader is still holding this dll puts it
+		// before that build for any module that loads us early, which is the
+		// only arrangement in which winmm can find us at all.
+		write_driver_entry(g_slot, 32);
 		HANDLE t = CreateThread(NULL, 0, publish_thread, NULL, 0, NULL);
 		if (t) CloseHandle(t);
 	}
