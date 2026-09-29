@@ -186,6 +186,7 @@ jobs:
           bash tools/winmm_loopback/build_probe.sh late  "$RUNNER_TEMP/probe"
           bash tools/winmm_loopback/build_probe.sh exe   "$RUNNER_TEMP/probe"
           bash tools/winmm_loopback/build_probe.sh noexe "$RUNNER_TEMP/probe"
+          bash tools/winmm_loopback/build_probe.sh drvload "$RUNNER_TEMP/probe"
 
       - name: does the device list depend on who attaches first
         shell: pwsh
@@ -296,6 +297,42 @@ jobs:
           Get-ChildItem $env:RUNNER_TEMP -Recurse -Filter *.status -ErrorAction SilentlyContinue | ForEach-Object {
             Write-Host "$($_.FullName):"; Get-Content $_.FullName | ForEach-Object { Write-Host "  $_" }
           }
+          Write-Host "=== 6. the driver's entry point called from a plain exe ==="
+          # Everything above reaches the driver through winmm, and winmm runs
+          # it from inside the loader - DLL_PROCESS_ATTACH, before main(). That
+          # is the one place a crash cannot be reported from: the loader has
+          # already pointed the process at its own exception handler for the
+          # duration of the attach, so the driver's SetUnhandledExceptionFilter
+          # is not in effect and its crash_filter never runs. Five runs died
+          # that way with a zero-byte log.
+          #
+          # This case takes both winmm and the loader out of it. LoadLibraryEx
+          # with DONT_RESOLVE_DLL_REFERENCES maps the image and does not run
+          # DllMain at all; the entry point is then fetched by name and called
+          # from our own main, where an access violation is an ordinary crash
+          # this process can survive to report. The sweep walks the DRV and
+          # MODM message namespaces one message at a time, so the last line in
+          # the log with no matching "returned" beside it is the message that
+          # kills it - without a debugger and without a crash dump.
+          #
+          # The copy is renamed so the Drivers32 slot still points at
+          # nvmidi.dll and winmm cannot be involved at all.
+          if (Test-Path "$probe\drvload.exe") {
+            Copy-Item "$env:LOOPBACK_DLL" "$env:RUNNER_TEMP\probe\subject.dll" -Force
+            $dl = "$env:RUNNER_TEMP\probe\drvload.exe"
+            Write-Host "  loading $env:RUNNER_TEMP\probe\subject.dll"
+            $out = & $dl "$env:RUNNER_TEMP\probe\subject.dll" 2>&1
+            $code = $LASTEXITCODE
+            if ($out) { $out | ForEach-Object { Write-Host "  $_" } }
+            else { Write-Host "  (no stdout)" }
+            Write-Host "  exit code: $code"
+            Show-File "$dl.txt" 'drvload log (as the harness opened it)'
+            Get-ChildItem "$env:RUNNER_TEMP\probe" -Filter '*drvload*' -ErrorAction SilentlyContinue | ForEach-Object {
+              Write-Host "  $($_.Name) ($($_.Length) bytes)"
+              Get-Content $_.FullName -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" }
+            }
+          } else { Write-Host "  MISSING BINARY: $probe\drvload.exe" }
+
           Write-Host "probe matrix done"
 
       - name: where windows keeps its midi drivers

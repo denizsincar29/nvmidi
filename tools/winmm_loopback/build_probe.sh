@@ -6,6 +6,8 @@
 #   build_probe.sh late  <outdir>   late_midi.dll   - publishes a midi slot at
 #                                   attach and reports what winmm answers
 #   build_probe.sh exe   <outdir>   probe_exe.exe   - links winmm
+#   build_probe.sh drvload <outdir> drvload.exe     - loads a driver copy and
+#                                   calls its entry point on our own terms
 #   build_probe.sh noexe <outdir>   probe_noexe.exe - does not link winmm
 #
 # The two executables are the same source and differ only in whether winmm is
@@ -61,6 +63,14 @@ case "$mode" in
     # needs is the PROBE_ENTRY line in probe_exe.c, which is reached from both
     # the entry point and DllMain and so can say which copy is running.
     "$CC" $FLAGS -o "$outdir/probe_exe.exe" "$here/probe_exe.c" $LIBS
+    ;;
+  drvload)
+    # Same source and same flags as the other two: this one has to be able to
+    # load a dll and call an address in it, and -static is what keeps it from
+    # needing a libgcc_s_seh-1.dll that is not on the search path - a program
+    # that cannot start writes nothing, which reads the same as a program that
+    # ran and had nothing to say.
+    "$CC" $FLAGS -o "$outdir/drvload.exe" "$here/drvload_exe.c" $LIBS
     ;;
   noexe)
     # No -lwinmm on the link line, so no import table entry names winmm, and
