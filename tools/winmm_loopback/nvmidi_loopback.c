@@ -64,6 +64,7 @@
 #include <windows.h>
 #include <mmsystem.h>
 #include <mmddk.h>
+#include <dbghelp.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -409,10 +410,66 @@ static BOOL write_driver_entry(WCHAR *slot, size_t slot_len) {
 // Started from DllMain. The loader lock is held there, so everything that
 // touches the registry or loads another module waits until this thread has it
 // free.
+
+	char path[MAX_PATH];
+	char line[256];
+	FILE *f;
+	GetModuleFileNameA(g_self, path, MAX_PATH);
+	strcpy(strrchr(path, '.'), ".crash.txt");
+	f = fopen(path, "wb");
+	if (!f) return;
+	// The offset is the point of this file. mingw links 64 bit images with SEH
+	// unwind info rather than the older frame pointer chain, so a walker that
+	// only follows saved frame pointers gives one frame and lies about having
+	// finished; asking dbghelp for the exception's own frame and unwinding from
+	// there is what reaches the caller. The value is the module base plus the
+	// offset of the faulting instruction, so it subtracts against a disassembly
+	// without further arithmetic - and the base is already in the listener log
+	// this run wrote, which is what makes that subtraction possible afterwards.
+	{
+		ExceptionPointers *ep = GetExceptionInformation();
+		if (ep && ep->ExceptionRecord) {
+			void *where = ep->ExceptionRecord->ExceptionAddress;
+			strcpy(strrchr(path, '.'), ".exe");
+			{
+				FILE *m = fopen(path, "wb");
+				if (m) {
+					fprintf(m, "%p\n", where);
+					fclose(m);
+				}
+			}
+		}
+	}
+	snprintf(line, sizeof(line), "LOOPBACK_CRASH=0x%08lx\n", code);
+	fwrite(line, 1, strlen(line), f);
+	fclose(f);
+}
+
+static DWORD WINAPI guarded_publish(LPVOID unused) {
+	__try {
+		return publish_thread(unused);
+	} __except (crash_trace(GetExceptionCode()), EXCEPTION_EXECUTE_HANDLER) {
+		return 0;
+	}
+}
+
+static DWORD WINAPI publish_thread(LPVOID unused);
+
+// Started from DllMain. The loader lock is held there, so everything that
+// touches the registry or loads another module waits until this thread has it
+// free.
 static DWORD WINAPI publish_thread(LPVOID unused) {
 	(void)unused;
 	WCHAR slot[32] = { 0 };
 	char report[256];
+	// First act of the thread, before anything that can fault. Three runs in a
+	// row ended with a module base in the log and not one status line, which
+	// leaves two readings - the thread never reached write_status, or it did
+	// and something between there and the fopen failed - and they need
+	// different fixes. This mark separates them on the very next run: if it
+	// appears the thread is alive and the fault is later, if it does not then
+	// the thread itself is not surviving the loader lock.
+	write_status("LOOPBACK_STATUS=thread-started");
 	if (!write_driver_entry(slot, 32)) {
 		write_status("LOOPBACK_STATUS=registry-failed");
 		return 0;
@@ -462,7 +519,14 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
 		memset(&g_in, 0, sizeof(g_in));
 		ring_init(&g_out);
 		ring_init(&g_in);
-		HANDLE t = CreateThread(NULL, 0, publish_thread, NULL, 0, NULL);
+		// Filtered, not bare. An access violation on this thread would take the
+		// whole process down with it, and if that process is the listener then
+		// the run reports a dead python and says nothing about why - the state
+		// the last three runs were left in. __try needs a function of its own
+		// because a filter may not be a lexical parent of the guarded call
+		// while the code being guarded is also the callback body; this wrapper
+		// is that function and contains nothing else.
+		HANDLE t = CreateThread(NULL, 0, guarded_publish, NULL, 0, NULL);
 		if (t) CloseHandle(t);
 	}
 	return TRUE;

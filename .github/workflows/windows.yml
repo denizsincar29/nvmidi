@@ -42,6 +42,31 @@ jobs:
         # compile problem that does not exist, which is worse than an error.
         run: bash tools/winmm_loopback/build.sh -o tools/winmm_loopback/nvmidi-loopback.dll
 
+      - name: does the driver survive being loaded
+        shell: pwsh
+        # The e2e job learned a module base for this file and then nothing else,
+        # which left its own load path to blame and no way to tell a load fault
+        # from a thread that faults after loading. Running it *here* removes the
+        # second reading: this job built the file, nothing else is in the
+        # directory next to it, and the exit code is the driver's own rather
+        # than the listener's. A status line proves the thread ran; a crash
+        # filter's .crash.txt proves it started and where it died; a silent
+        # non-zero proves neither, and all three are written to the log rather
+        # than only to disk.
+        continue-on-error: true
+        run: |
+          $dll = "tools\winmm_loopback\nvmidi-loopback.dll"
+          $status = [IO.Path]::ChangeExtension($dll, ".status")
+          Remove-Item $status -ErrorAction SilentlyContinue
+          $p = Start-Process -FilePath "rundll32.exe" -ArgumentList @($dll, Dummy) -PassThru -NoNewWindow
+          $p | Wait-Process -Timeout 15 -ErrorAction SilentlyContinue
+          if (!$p.HasExited) { $p | Stop-Process -Force }
+          Write-Host "driver process exit: $($p.ExitCode)"
+          if (Test-Path $status) { Write-Host "driver status: $(Get-Content $status -Raw)" }
+          else { Write-Host "driver status: absent" }
+          $crash = [IO.Path]::ChangeExtension($dll, ".crash.txt")
+          if (Test-Path $crash) { Write-Host "driver crash: $(Get-Content $crash -Raw)" }
+
       - name: keep the driver next to the dll
         uses: actions/upload-artifact@v4
         with:
@@ -712,12 +737,25 @@ jobs:
           # These are notices and not assertions - the steps below decide - so a
           # missing line here cannot turn a real pass into a failure, and cannot
           # turn a real failure into a pass either.
+          # Get-Content answers $null and not '' for a file that exists and is
+          # empty, and [regex]::Matches($null, ...) throws - which is how this
+          # step died on the last run, taking the sender's own evidence down
+          # with it. This step exists to report what the sender wrote; a sender
+          # that wrote nothing is the finding, not a reason to fail the report.
+          # The size is stated because 0 bytes and a failed redirect look the
+          # same in a fold and mean different things.
           $s = if (Test-Path logs_e2e.txt) { Get-Content logs_e2e.txt -Raw } else { '' }
-          foreach ($m in [regex]::Matches($s, 'E2E_(?:OUTPUT_PORTS|CHOSEN|OPENED|PORT|SENT|END)\s*[^\r\n]*')) {
-            Write-Host "::notice::$($m.Value.Trim())"
+          if ([string]::IsNullOrEmpty($s)) {
+            $len = if (Test-Path logs_e2e.txt) { (Get-Item logs_e2e.txt).Length } else { -1 }
+            Write-Host "::warning::the sender log is empty ($len bytes): the script produced no output at all"
+            Write-Host "(nothing to report from the sender)"
+          } else {
+            foreach ($m in [regex]::Matches($s, 'E2E_(?:OUTPUT_PORTS|CHOSEN|OPENED|PORT|SENT|END)\s*[^\r\n]*')) {
+              Write-Host "::notice::$($m.Value.Trim())"
+            }
+            $sent = [regex]::Matches($s, 'E2E_NOTE_SENT\s+\d+').Count
+            if ($sent -gt 0) { Write-Host "::notice::the script placed $sent note(s) on its own clock" }
           }
-          $sent = [regex]::Matches($s, 'E2E_NOTE_SENT\s+\d+').Count
-          if ($sent -gt 0) { Write-Host "::notice::the script placed $sent note(s) on its own clock" }
 
           Write-Host "=== what was heard from outside ==="
           if (Test-Path logs_listen.txt) { Get-Content logs_listen.txt } else { Write-Host "(no listener log)" }
