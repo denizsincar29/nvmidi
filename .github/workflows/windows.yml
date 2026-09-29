@@ -935,6 +935,33 @@ jobs:
             Write-Host ("--- logs_e2e.txt: {0} bytes ---" -f (Get-Item $realDump).Length)
             if ($rd.Length -gt 0) { Write-Host $rd }
           }
+          # The engine writes script compile diagnostics to the process's
+          # stdout, and this step redirects stdout to logs_e2e.txt. So a script
+          # that does not compile leaves a real file with a real parse error in
+          # it, and that file is the evidence - a 0 byte read is the one answer
+          # this pair cannot give. Both are stated as sizes rather than as a
+          # presence test, because an absent file and a failed redirect read
+          # the same in a fold and mean different things. n_type showed that
+          # midi_input and midi_output are not types the engine knows, so this
+          # is the line that says whether the real script hit that refusal or
+          # something else.
+          $realErr = Join-Path $env:GITHUB_WORKSPACE 'logs_e2e.txt.err'
+          Write-Host ("--- logs_e2e.txt.err: {0} bytes ---" -f (if (Test-Path $realErr) { (Get-Item $realErr).Length } else { -1 }))
+          $realSrc = Join-Path $env:GITHUB_WORKSPACE 'scripts\windows\e2e_winmm.nvgt'
+          if (Test-Path $realSrc) {
+            $rs = Get-Content $realSrc -Raw
+            if ($null -eq $rs) { $rs = '' }
+            $ls = $rs -split "`n"
+            Write-Host ("--- the real script: {0} bytes, {1} lines, sha {2} ---" -f (Get-Item $realSrc).Length, $ls.Count, (Get-FileHash $realSrc -Algorithm SHA256).Hash.Substring(0,16))
+            # The engine names files by path, so a run that compiled a stale
+            # copy still reports a file. The sha above is what tells this run's
+            # bytes apart from a leftover one, and it is taken on the runner for
+            # that reason rather than quoted from the repository.
+            $decls = $ls | Select-String -Pattern '^\s*(midi_[a-z_]+)@?\s+[a-z_]+\s*(=[^=]|;)' -AllMatches
+            foreach ($d in $decls) { Write-Host ("  decl: " + $d.Line.Trim()) }
+          } else {
+            Write-Host "the real script is not at $realSrc"
+          }
 
       - name: report the port index the script enumerated
         shell: pwsh

@@ -1787,16 +1787,28 @@ struct registration {
 		}
 		// asALREADY_REGISTERED means the engine already knew the name, which
 		// happens when a second copy of this plugin is loaded and is not by
-		// itself a problem: the type under that name is this one. Anything else
-		// is, so it is the one that gets said out loud.
+		// itself a problem: the type under that name is this one.
+		//
+		// It used to be the one code that was never printed, on the reasoning
+		// that a tolerated refusal needs no line. That reasoning was backwards
+		// for the question this plugin currently has: n_type measured that the
+		// engine has no type called midi_input and none called midi_output,
+		// while the script-side names this plugin registers are all refused
+		// with the code the engine reports for a name it already knows. If the
+		// engine already knows those two names then something it loaded first
+		// owns them - the plugin is not the only claimant - and the previous
+		// reading, which never emitted the one line that would have said so,
+		// could not have seen it. A line per refusal is what makes the two
+		// readings tell each other apart, and the count is printed either way
+		// so a run with no output at all is distinguishable from a run where
+		// nothing was refused.
 		if (result != asALREADY_REGISTERED) {
 			g_registration_failed = true;
 		}
-		if (result != asALREADY_REGISTERED && unexpected == 0) {
-			unexpected = result;
-			fprintf(stderr, "nvmidi: registration failed at src/nvmidi.cpp:%d: %s\n", line, first_failure_text.c_str());
-			fflush(stderr);
-		}
+		fprintf(stderr, "nvmidi: registration refused at src/nvmidi.cpp:%d: %s%s\n",
+			line, text.c_str(), result == asALREADY_REGISTERED ? " (asALREADY_REGISTERED)" : "");
+		fflush(stderr);
+		unexpected += 1;
 	}
 };
 
@@ -2073,6 +2085,19 @@ void register_nvmidi(asIScriptEngine* engine) {
 	// open_config with "Identifier 'midi_config' is not a data type" and the
 	// refusal aborts the rest of the function, taking the whole port class
 	// with it.
+	//
+	// midi_config first of the three, and the reason is the same rule read one
+	// step further on: register_midi_output registers play_chord(midi_note@[]@)
+	// and play_midi_chord(midi_note@[]@, ...) as well, and above these
+	// registrations they were failing. Measured, run 36615690048: the n_type
+	// probe asked for every name this plugin registers as a declared type and
+	// the engine refused exactly two of them - midi_input@ and midi_output@,
+	// "Expected ';'" / "Instead found '@'" at those two lines - while
+	// midi_message, midi_duration, midi_note@ and midi_config@ all declared
+	// cleanly. Both names that were refused are the ones whose methods are
+	// registered here, so the type registration in this function is the
+	// suspect, and a failed method registration already in the log is the best
+	// candidate: one has to say which one before anything is changed blind.
 	register_midi_note(engine, &reg);
 	register_midi_config(engine, &reg);
 	register_midi_input(engine, &reg);
@@ -2119,6 +2144,13 @@ plugin_main(nvgt_plugin_shared* shared) {
 		return false;
 	}
 	register_nvmidi(shared->script_engine);
+	// Printed whether or not anything was refused, and with the count, so that
+	// "the engine took everything" and "the engine refused things and the
+	// lines above say which" are two readings a runner's log can tell apart.
+	if (g_registration_failed) {
+		fprintf(stderr, "nvmidi: at least one registration was refused for a reason other than asALREADY_REGISTERED; see the lines above\n");
+	}
+	fflush(stderr);
 	// Kept so the playing code can call back into the script, see wait_until().
 	g_engine = shared->script_engine;
 	return true;
