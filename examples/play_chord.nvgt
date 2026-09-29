@@ -96,3 +96,62 @@ string bytes_of_input_port_name(midi_input@ o) {
 	}
 	return s;
 }
+
+void main() {
+	midi_config@ config = midi_config_create();
+	config.load_if_present("midi_config.txt");
+
+	int port = config.find_input_port();
+	if (port < 0) {
+		announce("No port matches " + config.match + " and the fallback is empty. Check midi_config.txt.");
+		return;
+	}
+
+	midi_input@ keyboard = midi_input_create();
+	if (!keyboard.open_config(config, "nvmidi chord test")) {
+		announce("Cannot open: " + bytes_of_last_error());
+		return;
+	}
+	announce("Playing on " + bytes_of_config(config));
+
+	// The tempo lives on the music class, so a note written as "a beat" means
+	// one beat here and not the 120 default. duration() reads that tempo for
+	// you: change keyboard.tempo once and every length follows.
+	keyboard.tempo = 96.0;
+
+	// A major chord, all notes at once, held for a second.
+	keyboard.play_chord_wait(chord("60,64,67", 1000));
+
+	// The same chord in every unit the duration object understands: a beat
+	// at the class tempo, half a bar, and a length counted in MIDI ticks.
+	// Beats and bars are converted by the duration itself, so a script can
+	// think in music and pass milliseconds only where the hardware demands it.
+	midi_duration beat = keyboard.duration(1.0, MIDI_BEATS);
+	midi_duration half_bar = keyboard.duration(0.5, MIDI_BARS);
+	midi_duration ticks = midi_duration(96.0, MIDI_TICKS);
+
+	announce("At " + keyboard.tempo + " bpm a beat is " + beat.to_ms() + " milliseconds, half a bar is " + half_bar.to_ms() + ".");
+
+	array<midi_note@>@ held = chord("60,64,67", 0);
+	held[0].length = ticks;
+	keyboard.play_chord_wait(held);
+
+	// An explicitly qualified unit wins over the class tempo: MUSIC_BEATS_120
+	// is always a beat at 120, whatever keyboard.tempo says. Useful for a
+	// short test that should sound the same on every run.
+	array<midi_note@>@ steady = chord("60,64,67", 0);
+	steady[0].length = keyboard.duration(1.0, MUSIC_BEATS_120);
+	keyboard.play_chord_wait(steady);
+
+	// Every pattern the player knows, on one chord, so the difference between
+	// them is audible in one run.
+	string[]@ patterns = {"chord", "spread", "arpeggio", "quick", "fast", "strum", "repeat"};
+	for (uint i = 0; i < patterns.length(); i++) {
+		announce(patterns[i]);
+		keyboard.play_midi_chord_wait(chord("60,64,67,71", 220), patterns[i]);
+	}
+
+	announce("Done.");
+	keyboard.close();
+	wait(500);
+}

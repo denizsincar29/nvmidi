@@ -79,3 +79,48 @@ string bytes_of_input_port_name(midi_input@ o) {
 	}
 	return s;
 }
+
+// One line of text for a message that came in by reference. This is the pair
+// scripts/e2e_midi.nvgt has used all along and that compiles on this engine;
+// a midi_message handle in this position is what it refuses.
+string bytes_of_message(const midi_message&in m) {
+	string s = "";
+	for (int i = 0; i < midi_message_name_byte_count(m); i++) {
+		int b = midi_message_name_byte(m, i);
+		s += char_of(b);
+	}
+	return s;
+}
+
+void main() {
+	if (midi_input_port_count() == 0) {
+		announce("No MIDI input ports. Plug the keyboard in first.");
+		return;
+	}
+
+	midi_config@ config = midi_config_create();
+	config.load_if_present("midi_config.txt");
+
+	midi_input@ keyboard = midi_input_create();
+	if (!keyboard.open_config(config, "nvmidi echo")) {
+		announce("Cannot open " + bytes_of_config(config) + ": " + bytes_of_last_error());
+		return;
+	}
+	announce("Listening on " + bytes_of_input_port_name(keyboard));
+
+	while (!key_pressed(KEY_ESCAPE)) {
+		// A value, not a handle: next_message takes midi_message&, which in
+		// this engine is a value passed by reference. A handle here is
+		// rejected before the call is even looked up.
+		midi_message m;
+		while (keyboard.next_message(m)) {
+			// One line per message, spoken. bytes_of_message(m) already reads
+			// like "note on, channel 1, note 60, velocity 100".
+			announce(bytes_of_message(m));
+		}
+		wait(5);
+	}
+
+	keyboard.close();
+	announce("Stopped.");
+}

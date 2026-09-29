@@ -91,3 +91,54 @@ string bytes_of_input_port_name(midi_input@ o) {
 	}
 	return s;
 }
+
+void main() {
+	if (midi_input_port_count() == 0 || midi_output_port_count() == 0) {
+		announce("Need at least one input and one output port.");
+		return;
+	}
+
+	midi_config@ config = midi_config_create();
+	config.load_if_present("midi_config.txt");
+
+	@input = midi_input_create();
+	@output = midi_output_create();
+
+	if (!input.open_config(config, "nvmidi forward in")) {
+		announce("Input (" + bytes_of_config(config) + "): " + bytes_of_last_error());
+		return;
+	}
+	if (!output.open_config(config, "nvmidi forward out")) {
+		announce("Output (" + bytes_of_config(config) + "): " + bytes_of_last_error());
+		input.close();
+		return;
+	}
+	announce("From " + bytes_of_input_port_name(input) + " to " + bytes_of_port_name(output));
+
+	while (!key_pressed(KEY_ESCAPE)) {
+		midi_message m;
+		while (input.next_message(m)) {
+			uint command = m.status & 0xf0;
+
+			if (command == 0x90 && m.data2 > 0) {
+				// Note on. Transpose up an octave, but keep it in range.
+				int note = m.data1 + 12;
+				if (note > 127) note -= 12;
+				output.send_note_on(m.channel, note, m.data2);
+			} else if (command == 0x80 || (command == 0x90 && m.data2 == 0)) {
+				// Note off, including the note-on-with-velocity-zero form
+				// many keyboards use.
+				int note = m.data1 + 12;
+				if (note > 127) note -= 12;
+				output.send_note_off(m.channel, note, m.data2);
+			} else if (command == 0xe0) {
+				// Pitch bend passes through unchanged.
+				output.send(m.status, m.data1, m.data2);
+			}
+			// Everything else is dropped. Add cases here as you need them.
+		}
+		wait(5);
+	}
+
+	panic();
+}
