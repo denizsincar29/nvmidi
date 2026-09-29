@@ -42,30 +42,49 @@ jobs:
         # compile problem that does not exist, which is worse than an error.
         run: bash tools/winmm_loopback/build.sh -o tools/winmm_loopback/nvmidi-loopback.dll
 
-      - name: does the driver survive being loaded
+      - name: does the driver publish a port
         shell: pwsh
-        # The e2e job learned a module base for this file and then nothing else,
-        # which left its own load path to blame and no way to tell a load fault
-        # from a thread that faults after loading. Running it *here* removes the
-        # second reading: this job built the file, nothing else is in the
-        # directory next to it, and the exit code is the driver's own rather
-        # than the listener's. A status line proves the thread ran; a crash
-        # filter's .crash.txt proves it started and where it died; a silent
-        # non-zero proves neither, and all three are written to the log rather
-        # than only to disk.
+        # Loaded here, in this job's own python, and deliberately not through
+        # rundll32: a winmm driver is started by winmm calling into the image,
+        # and rundll32 is a host with its own loader behaviour around exports,
+        # its own exit code conventions, and no reason to be trusted with a
+        # driver. The measurement that matters is the one taken in the shape of
+        # the process that will really do this, which is the listener - a plain
+        # 64 bit python that calls LoadLibraryA and then reads a file. Same
+        # loader call, same runtime, so a status line here means the e2e job
+        # should see one too and anything it does not see is the e2e's own.
+        #
+        # continue-on-error stays: a failure here is a finding about the driver
+        # and the artifact upload below must still run, so that the file this
+        # step judged is the file the next reader can look at.
         continue-on-error: true
         run: |
-          $dll = "tools\winmm_loopback\nvmidi-loopback.dll"
+          $dll = (Resolve-Path "tools\winmm_loopback\nvmidi-loopback.dll").Path
           $status = [IO.Path]::ChangeExtension($dll, ".status")
-          Remove-Item $status -ErrorAction SilentlyContinue
-          $p = Start-Process -FilePath "rundll32.exe" -ArgumentList @($dll, "Dummy") -PassThru -NoNewWindow
-          $p | Wait-Process -Timeout 15 -ErrorAction SilentlyContinue
-          if (!$p.HasExited) { $p | Stop-Process -Force }
-          Write-Host "driver process exit: $($p.ExitCode)"
-          if (Test-Path $status) { Write-Host "driver status: $(Get-Content $status -Raw)" }
-          else { Write-Host "driver status: absent" }
           $crash = [IO.Path]::ChangeExtension($dll, ".crash.txt")
-          if (Test-Path $crash) { Write-Host "driver crash: $(Get-Content $crash -Raw)" }
+          Remove-Item $status, $crash -ErrorAction SilentlyContinue
+          $py = @"
+          import ctypes, os, sys, time
+          path = sys.argv[1]
+          status = os.path.splitext(path)[0] + '.status'
+          k = ctypes.WinDLL('kernel32', use_last_error=True)
+          k.LoadLibraryA.restype = ctypes.c_void_p
+          k.LoadLibraryA.argtypes = [ctypes.c_char_p]
+          base = k.LoadLibraryA(path.encode('mbcs'))
+          if not base:
+              print('LOAD_FAILED error %d' % ctypes.get_last_error()); sys.exit(0)
+          print('LOAD_OK base=0x%x' % base)
+          for _ in range(40):
+              if os.path.exists(status):
+                  print('STATUS ' + open(status, errors='replace').read().strip()); break
+              time.sleep(0.25)
+          else:
+              print('STATUS absent after 10s')
+          "`n
+          $py | Set-Content -Encoding utf8 "$env:RUNNER_TEMP\drv.py"
+          python "$env:RUNNER_TEMP\drv.py" $dll
+          Write-Host "exit code: $LASTEXITCODE"
+          if (Test-Path $crash) { Write-Host "crash: $(Get-Content $crash -Raw)" }
 
       - name: keep the driver next to the dll
         uses: actions/upload-artifact@v4

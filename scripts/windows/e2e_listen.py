@@ -291,7 +291,17 @@ def load_driver(path, timeout=20.0):
     it did, not this script's guess: a device that failed to open says so in
     that file instead of looking like a port that simply never appeared.
     """
-    status_path = path + ".status"
+    # The driver replaces the extension rather than appending to it, so the file
+    # it writes for nvmidi.dll is nvmidi.status and not nvmidi.dll.status. This
+    # line used to append, which meant the wait below polled a path the driver
+    # has never written - for twenty seconds, every run. Measured on run
+    # 36576396092: the driver was alive and had already written
+    # LOOPBACK_STATUS=open-failed within milliseconds, while the listener
+    # reported "wrote no status within 20s" about the file it was staring at.
+    # Deriving the name the same way the driver does is what makes the two
+    # agree, and the two candidates are both reported if the expected one never
+    # appears, so a future disagreement says so instead of timing out.
+    status_path = os.path.splitext(path)[0] + ".status"
     # A stale file from an earlier step would be read as this load's result.
     if os.path.exists(status_path):
         os.remove(status_path)
@@ -330,10 +340,24 @@ def load_driver(path, timeout=20.0):
                 return True, text
             return False, "the driver loaded but did not open its device: %s" % text.strip()
         time.sleep(0.25)
+    # Both spellings, so the next disagreement between this name and the one the
+    # driver computes is a line in the log rather than another twenty second
+    # silence. The file could also have been written just after the deadline, so
+    # its contents are read here too rather than only its existence.
+    alt_path = path + ".status"
+    seen = []
+    for p in (status_path, alt_path):
+        if os.path.exists(p):
+            try:
+                with open(p, "r", errors="replace") as f:
+                    seen.append("%s: %s" % (os.path.basename(p), f.read().strip()))
+            except OSError as exc:
+                seen.append("%s: unreadable (%s)" % (os.path.basename(p), exc))
     return False, ("the driver loaded but wrote no status within %.0fs"
-                   " (status file %s, module base %r)"
-                   % (timeout, "present" if os.path.exists(status_path) else "absent",
-                      module_base))
+                   " (module base %r, status file %s; also checked %s)"
+                   % (timeout, module_base,
+                      "present" if os.path.exists(status_path) else "absent",
+                      "; ".join(seen) if seen else "nothing there either"))
 
 
 def self_test(device_id):

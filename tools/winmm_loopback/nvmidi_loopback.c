@@ -489,7 +489,17 @@ static DWORD WINAPI publish_thread(LPVOID unused) {
 	// will not cast a literal into the handle type, and both lines that tried
 	// it were a build error rather than a runtime one.
 	if (!h && (long long)h != -1) {
-		write_status("LOOPBACK_STATUS=open-failed");
+		// The error number, not just the verdict. open-failed alone says winmm
+		// would not start the driver and nothing about why: a missing registry
+		// value, a refused load, and a dll the loader cannot resolve all arrive
+		// here as the same word. GetLastError is the only thing that tells them
+		// apart, and it has to be read immediately - every call in between is
+		// allowed to overwrite it.
+		char detail[256];
+		snprintf(detail, sizeof(detail),
+			"LOOPBACK_STATUS=open-failed slot=%ls error=%lu",
+			slot, (unsigned long)GetLastError());
+		write_status(detail);
 		return 0;
 	}
 	UINT outs = midiOutGetNumDevs();
