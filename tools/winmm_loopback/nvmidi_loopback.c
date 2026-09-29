@@ -517,7 +517,19 @@ static BOOL write_driver_entry(WCHAR *slot, size_t slot_len) {
 // does not carry anyway, since it links unwind info instead of the frame
 // pointer chain a walker would follow.
 static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep) {
-	char path[MAX_PATH];
+	// The path buffer has to be MAX_PATH + 32 for the same reason write_status
+	// uses that size: MAX_PATH is the length GetModuleFileNameA may return with
+	// the null, strcpy adds ".crash.txt" on top of it, and a buffer sized for
+	// the path alone pushes a tenth of that suffix past the end. This frame is
+	// the one that was taking the access violation. The debugger named it
+	// exactly: ExceptionAddress <Unloaded_nvmidi.dll>+0x15f6, bucket
+	// SOFTWARE_NX_FAULT_c0000005_nvmidi.dll!Unknown - an execute fault, which
+	// is what a stack smash looks like when the call frame the filter is
+	// entered through has been overwritten. And "Unloaded" is literal: the
+	// filter runs after the module was unmapped, so it had already written its
+	// verdict to a file and returned EXCEPTION_EXECUTE_HANDLER with the stack
+	// corrupted underneath it.
+	char path[MAX_PATH + 32];
 	char line[MAX_PATH];
 	FILE *f;
 	if (!g_self) return EXCEPTION_EXECUTE_HANDLER;
