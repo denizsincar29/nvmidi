@@ -270,9 +270,13 @@ jobs:
             $p = Start-Process -FilePath $exe -ArgumentList @($src) -Wait -PassThru -NoNewWindow -RedirectStandardOutput $log -RedirectStandardError "$log.err"
             Write-Host "engine exited $($p.ExitCode)"
             if (Test-Path $log) { Get-Content $log | Write-Host }
+            # Get-Content -Raw on an empty file answers $null, and a method
+            # call on $null kills the step - which is how the first probe
+            # printed its answer and the second one never ran. A missing or
+            # empty stderr is the normal case here, not an error.
             if (Test-Path "$log.err") {
               $err = Get-Content "$log.err" -Raw
-              if ($err.Trim().Length -gt 0) { Write-Host '--- stderr ---'; Write-Host $err }
+              if ($err -and $err.Trim().Length -gt 0) { Write-Host '--- stderr ---'; Write-Host $err }
             }
           }
 
