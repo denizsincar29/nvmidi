@@ -1,0 +1,6 @@
+#pragma plugin nvmidi
+
+void main() {
+	string h;
+	print("I_BEGIN");
+}
