@@ -230,6 +230,14 @@ string bytes_of_last_error() {
 	}
 	return s;
 }
+string bytes_of_last_error_as_numbers() {
+	string s = "";
+	for (int i = 0; i < midi_last_error_byte_count(); i++) {
+		if (i > 0) s += ",";
+		s += midi_last_error_byte(i);
+	}
+	return s;
+}
 string bytes_of_object_port_name(midi_output@ o) {
 	string s = "";
 	for (int i = 0; i < o.get_port_name_byte_count(); i++) {
@@ -461,7 +469,23 @@ void main() {
 	// --- open it ------------------------------------------------------------
 	midi_output@ port = midi_output_create();
 	if (!port.open(chosen, "nvmidi e2e windows")) {
-		fail("cannot open output port " + chosen + " (" + chosen_name + "): " + bytes_of_last_error());
+		// The numbers first, then the text, because the text is the half that
+		// has been measured wrong twice on this runner - once as the decimal
+		// digits of every byte and once as a run of question marks - while the
+		// numbers underneath were right both times.
+		//
+		// The whole enumeration is repeated here rather than assumed from the
+		// lines above. The failure can happen at a port the *listen* half also
+		// has to open, and this line is the only place that names every entry
+		// as this process saw it in one unbroken run of tokens: the port this
+		// run cannot open is frequently the port the other process owns, and
+		// "MMRESULT 1" alone cannot tell an absent device from a busy one.
+		fail("cannot open output port " + chosen + " (" + chosen_name + ")");
+		print("E2E_OPEN_FAILED index=" + chosen
+			+ " text_bytes=" + midi_last_error_byte_count()
+			+ " error_numbers=" + bytes_of_last_error_as_numbers()
+			+ " outs=" + midi_output_port_count()
+			+ " model=" + bytes_of_output_port_name(chosen));
 		print("E2E_END failures=" + failures);
 		return;
 	}

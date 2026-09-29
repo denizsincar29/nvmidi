@@ -105,6 +105,13 @@ MIDI_IO_STATUS = 0x00000020
 # field, and the spec (MAXPNAMELEN) is 32 characters including the terminator.
 MAXPNAMELEN = 32
 
+# What the loopback driver calls itself, used only in input-only mode when the
+# sender never published a name to match on. It is the driver's own name and
+# not the removed name the script was looking for: that one is the string this
+# process could not decode (measured: `midiOutGetDevCapsW` hands back one byte
+# per character on this runner, so a six character name reads as "M").
+LOOPBACK_INPUT_HINT = "nvmidi"
+
 
 class MIDIINCAPS(ctypes.Structure):
     _fields_ = [
@@ -335,6 +342,7 @@ def main(argv):
     # arguments are easier to see than a usage block.
     driver = ""
     index_arg = ""
+    inputs_only = False
     rest = []
     i = 1
     while i < len(argv):
@@ -344,14 +352,23 @@ def main(argv):
         elif argv[i] == "--index":
             index_arg = argv[i + 1] if i + 1 < len(argv) else ""
             i += 2
+        elif argv[i] == "--inputs-only":
+            # Listen without a port name. Used when the sender never got far
+            # enough to name one - its open failed, so there is no name and no
+            # E2E_PORT line - but the driver is still worth loading and the two
+            # lists are still worth printing. The alternative is to skip the
+            # listener step entirely, which is what the earlier runs did, and
+            # then nothing is known about the listener half at all.
+            inputs_only = True
+            i += 1
         else:
             rest.append(argv[i])
             i += 1
-    if not rest:
-        print("usage: e2e_listen.py <port name substring> [deadline seconds]"
-              " [--driver <path>] [--index <n>]", file=sys.stderr)
+    if not rest and not inputs_only:
+        print("usage: e2e_listen.py [<port name substring>] [deadline seconds]"
+              " [--driver <path>] [--index <n>] [--inputs-only]", file=sys.stderr)
         return 2
-    wanted = rest[0].lower()
+    wanted = rest[0].lower() if rest else ""
     deadline = float(rest[1]) if len(rest) > 1 else 60.0
     # The index the plugin's own process enumerated its port under, when the
     # job could read it out of the script's log. A flag and not only an
@@ -415,10 +432,17 @@ def main(argv):
             print("the output at index %d (%r) has no input side of the same name,"
                   " so there is nothing here to listen on" % (index, named), file=sys.stderr)
             return 1
-    else:
+    elif wanted != "":
         matches = [(i, n) for i, n in inputs if wanted in n.lower()]
+    else:
+        # Input-only mode: no name was ever published, so the only entry worth
+        # opening is the one the driver we just loaded added. When the driver
+        # did not load there is nothing to open either, and the message below
+        # says so rather than reporting a plugin fault for a missing port.
+        matches = [(i, n) for i, n in inputs if LOOPBACK_INPUT_HINT in n.lower()]
     if not matches:
-        print("no midi input device matches %r" % rest[0], file=sys.stderr)
+        print("no midi input device matches %r" % (wanted if wanted else LOOPBACK_INPUT_HINT),
+              file=sys.stderr)
         print("a loopback driver is what puts a port on the input side;", file=sys.stderr)
         print("without one there is nothing here to listen on.", file=sys.stderr)
         return 1

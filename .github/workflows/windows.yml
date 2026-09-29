@@ -474,14 +474,28 @@ jobs:
       # listener saw before the plugin ran - the self test - is what makes the
       # silence or the arrival mean something.
       - name: listen on the plugin's port
-        # Only meaningful when a port was actually opened: no port name means
-        # the script never opened one, and there is nothing to listen against.
-        if: ${{ env.PORT_NAME != '' }}
+        # Never skipped. With a port name this is the real listen - it opens
+        # the plugin's port and waits for the melody. Without one the sender
+        # failed before it could name anything, and there is still something
+        # worth measuring: the driver loads or it does not, and the two device
+        # lists print either way. This step used to be skipped in that case,
+        # and the effect was that a failed open left the listener half entirely
+        # unmeasured - measured on run 36572426554, where logs_listen.txt did
+        # not exist and the verdict steps then had to guess which half was at
+        # fault. `--inputs-only` keeps the load and the lists, and skips only
+        # the wait.
+        if: ${{ env.LOOPBACK_DLL != '' }}
         shell: pwsh
         run: |
           $indexArgs = @()
           if ($env:NVGT_PORT_INDEX) { $indexArgs = @('--index', $env:NVGT_PORT_INDEX) }
-          python scripts\windows\e2e_listen.py "$env:PORT_NAME" 90 --driver "$env:LOOPBACK_DLL" @indexArgs 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\logs_listen.txt"
+          # 5 seconds of waiting without a name: nothing will arrive, and the
+          # self test that proves the route works needs about one.
+          $seconds = if ($env:PORT_NAME -eq '') { '5' } else { '90' }
+          $nameArg = @()
+          if ($env:PORT_NAME -ne '') { $nameArg = @($env:PORT_NAME) }
+          elseif ($env:NVGT_E2E_HINT -ne '') { $nameArg = @($env:NVGT_E2E_HINT) }
+          python scripts\windows\e2e_listen.py @nameArg $seconds --driver "$env:LOOPBACK_DLL" @indexArgs 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\logs_listen.txt"
           Write-Host "listener exit code: $LASTEXITCODE"
           "LISTEN_EXIT=$LASTEXITCODE" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
@@ -601,6 +615,12 @@ jobs:
               }
               if ($index -ne $null) { break }
               if ($t -match 'E2E_PORT\s') { break }
+              # The script is already over. Waiting the rest of the minute out
+              # would only delay the logs; nothing further is coming. Measured
+              # on run 36572426554: the engine ran to its own end within six
+              # seconds, and this step still sat here for sixty before saying
+              # no index was published.
+              if ($t -match 'E2E_END') { break }
             }
             Start-Sleep -Milliseconds 250
           }
