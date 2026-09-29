@@ -30,6 +30,27 @@ jobs:
       - name: build
         shell: cmd
         run: mingw32-make
+      # Temporary. This run is the first in which the whole chain worked - the
+      # driver reached the e2e runner, loaded into the listener's process, was
+      # believed by winmm, and both ports could be opened - and it ends with
+      # the midi mapper, which has no output device, holding midi-out device 0
+      # so that a correct plugin opening "Microsoft GS Wavetable Synth" by name
+      # is refused. Until the device ids behind that name are measured on the
+      # runner, the log line that prints them is the only way to write the fix.
+      - name: midi devices, for the mapper question
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Continue'
+          try {
+            Get-CimInstance Win32_SoundDevice | Select-Object Name,Status,StatusInfo | Format-Table -AutoSize | Out-String | Write-Host
+            Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match 'MIDI' } | Select-Object Name,Status | Format-Table -AutoSize | Out-String | Write-Host
+          } catch {
+            Write-Host "the device query itself failed: $_"
+          }
+          $d = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Drivers32' -ErrorAction SilentlyContinue
+          if ($d) { $d.PSObject.Properties | Where-Object { $_.Name -match '^midi' } | ForEach-Object { Write-Host ("Drivers32 {0} = {1}" -f $_.Name, $_.Value) } }
+          else { Write-Host "no Drivers32 key on this runner" }
       - name: build the loopback driver
         shell: bash
         # -o puts the dll where the artifact upload and the e2e's staged copy
