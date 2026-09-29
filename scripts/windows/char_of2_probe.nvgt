@@ -30,22 +30,34 @@ string char_of(uint b) {
 void main() {
 	print("C2_BEGIN");
 	const int COUNT = 25;
-	// Not `int bytes[25] = {...}`: measured, the declaration is rejected as
-	// "Expected '(' / Instead found identifier 'bytes'" - this engine does not
-	// take a sized array with an initialiser list in one line. `int bytes[25];`
-	// on its own is rejected the same way, at the same column, so the size is
-	// not declared here at all: an unsized array takes its length from the
-	// first assignment, and the twenty five numbers below are unchanged.
-	int bytes[];
-	bytes[0] = 110; bytes[1] = 118; bytes[2] = 109; bytes[3] = 105;
-	bytes[4] = 100; bytes[5] = 105; bytes[6] = 47; bytes[7] = 87;
-	bytes[8] = 105; bytes[9] = 110; bytes[10] = 100; bytes[11] = 111;
-	bytes[12] = 119; bytes[13] = 115; bytes[14] = 32; bytes[15] = 77;
-	bytes[16] = 117; bytes[17] = 108; bytes[18] = 116; bytes[19] = 105;
-	bytes[20] = 77; bytes[21] = 101; bytes[22] = 100; bytes[23] = 105;
-	bytes[24] = 97;
+	// No array here, and that is measured three times over. `int bytes[25] =
+	// {...}` is rejected as "Expected '(' / Instead found identifier 'bytes'".
+	// `int bytes[25];` on its own is rejected the same way. And so is `int
+	// bytes[];` - run 36556894828, line 39 column 6, the same two errors. This
+	// engine refuses a local array to a function that has a plugin loaded, so
+	// the twenty five numbers are plain locals and the loop reads them through
+	// a chain of comparisons instead.
+	int b00 = 110; int b01 = 118; int b02 = 109; int b03 = 105;
+	int b04 = 100; int b05 = 105; int b06 = 47; int b07 = 87;
+	int b08 = 105; int b09 = 110; int b10 = 100; int b11 = 111;
+	int b12 = 119; int b13 = 115; int b14 = 32; int b15 = 77;
+	int b16 = 117; int b17 = 108; int b18 = 116; int b19 = 105;
+	int b20 = 77; int b21 = 101; int b22 = 100; int b23 = 105;
+	int b24 = 97;
 	string s = "";
-	for (int i = 0; i < COUNT; i++) s += char_of(bytes[i]);
+	for (int i = 0; i < COUNT; i++) {
+		uint b = 0;
+		if (i == 0) b = b00; else if (i == 1) b = b01; else if (i == 2) b = b02;
+		else if (i == 3) b = b03; else if (i == 4) b = b04; else if (i == 5) b = b05;
+		else if (i == 6) b = b06; else if (i == 7) b = b07; else if (i == 8) b = b08;
+		else if (i == 9) b = b09; else if (i == 10) b = b10; else if (i == 11) b = b11;
+		else if (i == 12) b = b12; else if (i == 13) b = b13; else if (i == 14) b = b14;
+		else if (i == 15) b = b15; else if (i == 16) b = b16; else if (i == 17) b = b17;
+		else if (i == 18) b = b18; else if (i == 19) b = b19; else if (i == 20) b = b20;
+		else if (i == 21) b = b21; else if (i == 22) b = b22; else if (i == 23) b = b23;
+		else b = b24;
+		s += char_of(b);
+	}
 	print("C2_API_TEXT " + s);
 	print("C2_API_LEN " + s.length());
 	// The two questions the e2e script asks of this text. Both were -1 while

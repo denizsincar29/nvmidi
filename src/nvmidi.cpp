@@ -1602,6 +1602,14 @@ std::string midi_api_name() {
 		// Measured: a dummy plugin reports "Dummy" - the backend's own name,
 		// not something written here - so the first argument is that name and
 		// not a label invented for it.
+		//
+		// And measured, the name is the backend's DISPLAY name:
+		// RtMidiIn::getApiDisplayName is the second column of RtMidi's own
+		// table, and for winmm that column reads "Windows MultiMedia". The
+		// short name is the first column and reads "winmm", which happens to
+		// contain the word "windows" - so a build that used the wrong column
+		// would still match a case-insensitive search for "windows" and go on
+		// pretending everything was fine. This call is the right column.
 		return "nvmidi/" + RtMidiIn::getApiDisplayName(apis[0]);
 	} catch (RtMidiError&) {
 		return "";
