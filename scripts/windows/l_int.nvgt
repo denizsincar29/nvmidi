@@ -1,0 +1,6 @@
+#pragma plugin nvmidi
+
+void main() {
+	int l = 1;
+	print("L_OK");
+}

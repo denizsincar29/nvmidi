@@ -1,0 +1,7 @@
+#pragma plugin nvmidi
+
+void main() {
+	print("K1");
+	int k = 1;
+	print("K2");
+}

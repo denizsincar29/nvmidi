@@ -1,0 +1,7 @@
+#pragma plugin nvmidi
+
+void main() {
+	print("M1");
+	string m;
+	print("M2");
+}
