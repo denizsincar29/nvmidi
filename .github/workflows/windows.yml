@@ -863,6 +863,17 @@ jobs:
           $deadline = (Get-Date).AddSeconds(60)
           $index = $null
           $chosen = ''
+          # $null and not '' is what Get-Content answers for a file that exists
+          # and holds nothing, and -match against $null sets $Matches to $null
+          # rather than failing - so the first read of a log the engine has not
+          # written yet threw ParentContainsErrorRecordException on $Matches[1]
+          # and ended the step before it had looked once. The whole job follows
+          # this step, and the sender it was waiting for was still starting up,
+          # so the ordering made the throw close to certain: measured, this is
+          # how logs_e2e.txt ended up 0 bytes with nothing collected from
+          # outside at all. Assigning the empty string first costs one line and
+          # removes the only path by which a not-yet-written log can end a run.
+          $t = ''
           while ((Get-Date) -lt $deadline) {
             if (Test-Path logs_e2e.txt) {
               $t = Get-Content logs_e2e.txt -Raw
