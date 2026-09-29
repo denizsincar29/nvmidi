@@ -111,6 +111,26 @@ void set_error(const std::string& message) {
 }
 void clear_error() { g_last_error.clear(); }
 
+// The operating system's own number, appended when the backend's message
+// carries one. RtMidi writes the reason into its error string but also sends
+// the same text to stderr, so on a machine where nothing is reading stderr the
+// number is the only part of the failure a script can get hold of - and it is
+// the part that says whether the port was wrong or the driver refused. Read off
+// the message rather than from a second field, because an RtMidiError carries
+// only this text and the code inside it is what RtMidi actually saw.
+std::string with_native_code(const std::string& message) {
+	// "MMRESULT 1" - winmm on windows. The number runs to the first character
+	// that is not a digit.
+	const std::string tag = "MMRESULT ";
+	size_t at = message.find(tag);
+	if (at == std::string::npos) return message;
+	size_t from = at + tag.size();
+	size_t to = from;
+	while (to < message.size() && message[to] >= '0' && message[to] <= '9') to++;
+	if (to == from) return message;
+	return message + " [MMRESULT " + message.substr(from, to - from) + "]";
+}
+
 // The engine register_nvmidi() was handed. wait_until() needs it to call back
 // into the script, and it is the only global the plugin keeps.
 asIScriptEngine* g_engine = nullptr;
@@ -419,7 +439,7 @@ bool midi_input::open(unsigned int port, const std::string& name) {
 		opened_at = 0.0;
 		return true;
 	} catch (RtMidiError& error) {
-		set_error("cannot open MIDI input port: " + error.getMessage());
+		set_error(with_native_code("cannot open MIDI input port: " + error.getMessage()));
 		return false;
 	}
 }
@@ -761,7 +781,7 @@ bool midi_output::open(unsigned int port, const std::string& name) {
 		port_index = static_cast<int>(port);
 		return true;
 	} catch (RtMidiError& error) {
-		set_error("cannot open MIDI output port: " + error.getMessage());
+		set_error(with_native_code("cannot open MIDI output port: " + error.getMessage()));
 		return false;
 	}
 }
