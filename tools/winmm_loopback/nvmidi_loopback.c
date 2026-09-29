@@ -44,15 +44,22 @@
 // Build: build.sh in this directory. The result is nvmidi-loopback.exe - the
 // extension winmm's own user mode drivers use, and the name the ci job wants.
 //
-// A note on the names below
-// -------------------------
+// A note on the names and the numbers below
+// ------------------------------------------
 // Everything here comes out of one of the mingw headers (windows.h, mmsystem.h
 // -> mmiscapi.h/mmeapi.h, mmddk.h). Nothing is written by hand, and that is the
-// lesson this file was written twice to learn: a hand-invented DCB_MIDIIN, a
-// hand-invented DRIVERENTRY, a hand-recalled DCB_TYPEMASK - the compiler
-// rejected every one of them, because mingw's driver headers do not carry them.
-// The entry point type is DRIVERMSGPROC, the callback kind is CALLBACK_FUNCTION,
-// and DCB_* belongs to the wavedriver protocol and has no midi spelling at all.
+// lesson this file was written three times to learn. A hand-invented DCB_MIDIIN,
+// a hand-invented DRIVERENTRY, a hand-recalled DCB_TYPEMASK: the compiler
+// rejected every one, because mingw's driver headers do not carry them. The
+// entry point type is DRIVERMSGPROC (mmiscapi.h:77), the callback kind is
+// CALLBACK_FUNCTION (mmsyscom.h:184), and DCB_* belongs to the wavedriver
+// protocol and has no midi spelling at all.
+//
+// Numbers need the same care as names, and for a sharper reason: DRV_ and MODM_
+// are separate namespaces that overlap. MODM_OPEN and DRV_OPEN are both 3,
+// MODM_CLOSE and DRV_CLOSE are both 4, and MODM_DATA is 7 where DRV_FREE is
+// 0x0007. A dispatcher that mixes the two does not merely fail to compile - it
+// misreads the messages it does compile for.
 
 #include <windows.h>
 #include <mmsystem.h>
@@ -207,9 +214,9 @@ static DWORD on_input_message(DWORD msg, DWORD_PTR p1, DWORD_PTR p2) {
 static const GUID g_out_guid = { 0x6d313532, 0x0000, 0x0000, { 0x00, 0x00, 0x6e, 0x76, 0x6d, 0x6f, 0x75, 0x74 } };
 static const GUID g_in_guid  = { 0x6d313532, 0x0000, 0x0000, { 0x00, 0x00, 0x6e, 0x76, 0x6d, 0x69, 0x6e, 0x00 } };
 
-// The handle winmm gave the dll when the registry entry was opened. Held for as
-// long as the process lives, because dropping it is what would take the device
-// back out of the machine's list.
+// The handle winmm gave the dll when the registry entry was opened, kept for
+// the life of the process because closing it is what would take the device back
+// out of the machine's list.
 static HDRVR g_driver = NULL;
 
 // What winmm asks when it is enumerating a device, and where the two halves
@@ -232,14 +239,18 @@ static DWORD get_dev_caps(DWORD id, UINT msg, DWORD_PTR p1, DWORD_PTR p2) {
 	}
 }
 
-// Every call winmm makes: the life of the dll, then one open per device, then
-// whatever messages follow. One entry point answers for both halves, because
-// that is the shape winmm's driver model has - the index in the call is the
-// half, not a second entry point.
-static DWORD WINAPI driver_message(DWORD dwDriverId, HDRVR hDriver,
-	DWORD dwMessage, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
-{
-	switch (dwMessage) {
+// The life of the dll, and the enumeration winmm does before any device is
+// open. Separate from the message halves because these numbers are a namespace
+// of their own.
+//
+// This is the distinction that cost a compile: MODM_OPEN is 3 and DRV_OPEN is
+// 3, MODM_CLOSE is 4 and DRV_CLOSE is 4, MODM_PREPARE is 5 and DRV_PREPARE is
+// that same 5. One table cannot hold both, and the compiler said so with
+// duplicate case values on lines 271-274. The blast radius was worse than the
+// build: MODM_DATA is 7 and DRV_FREE is 0x0007, so a note arriving from the
+// plugin would have been read as a teardown had this shipped as written.
+static DWORD driver_life(DWORD msg, DWORD_PTR p1, DWORD_PTR p2) {
+	switch (msg) {
 	case DRV_LOAD:
 		ring_init(&g_out);
 		ring_init(&g_in);
@@ -252,47 +263,57 @@ static DWORD WINAPI driver_message(DWORD dwDriverId, HDRVR hDriver,
 		return DRVCNF_OK;
 	case DRV_OPEN:
 		// Two shapes arrive here. winmm's own open of the Drivers32 entry comes
-		// with the slot name, and that handle is the one to hold. An open of a
-		// device by index comes with the index instead - that is a half, and
-		// which half is the index winmm assigned it.
-		if (dwParam1 && *(const char *)dwParam1) {
-			g_driver = hDriver;
+		// with the slot name, and that handle is the one to hold - without it
+		// the device leaves the machine's list. An open of a device by index
+		// comes with the index instead, and which half it is is that index.
+		if (p1 && *(const char *)p1) {
+			g_driver = (HDRVR)p2;
 			return DRVCNF_OK;
 		}
-		ring_init((dwParam2 == 1) ? &g_in : &g_out);
+		ring_init((p1 == 1) ? &g_in : &g_out);
 		return DRVCNF_OK;
 	case DRV_CLOSE:
 		return DRVCNF_OK;
-	case DRV_QUERYDEVICEINTERFACESIZE:
-	case DRV_QUERYDEVICEINTERFACE:
-		return get_dev_caps((DWORD)dwDriverId, dwMessage, dwParam1, dwParam2);
-	case MODM_DATA:
-	case MODM_LONGDATA:
-	case MODM_PREPARE:
-	case MODM_UNPREPARE:
-	case MODM_OPEN:
-	case MODM_CLOSE:
-	case MODM_RESET:
-		return on_output_message(dwMessage, dwParam1, dwParam2);
-	case MIDM_OPEN:
-	case MIDM_CLOSE:
-	case MIDM_ADDBUFFER:
-	case MIDM_START:
-	case MIDM_STOP:
-	case MIDM_RESET:
-		return on_input_message(dwMessage, dwParam1, dwParam2);
 	default:
 		return DRVCNF_OK;
 	}
 }
 
-// The entry point winmm resolves. It is named ModMessage because that is what
-// the Drivers32 protocol names, and typed DRIVERMSGPROC because that is the
-// type mmiscapi.h declares for exactly this - a driver entry point.
-__declspec(dllexport) DWORD WINAPI ModMessage(DWORD dwDriverId, HDRVR hDriver,
+// Every call winmm makes, in the order winmm makes them: the dll's life first,
+// then the enumeration, then whichever half the message belongs to. The halves
+// are told apart by what winmm put in the call, and the output side is tried
+// first because a driver is opened for output before it is asked about input.
+static DWORD WINAPI driver_message(DWORD dwDriverId, HDRVR hDriver,
 	DWORD dwMessage, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
 {
-	return driver_message(dwDriverId, hDriver, dwMessage, dwParam1, dwParam2);
+	(void)hDriver;
+	switch (dwMessage) {
+	case DRV_LOAD:    case DRV_ENABLE:     case DRV_DISABLE:
+	case DRV_FREE:    case DRV_OPEN:       case DRV_CLOSE:
+		return driver_life(dwMessage, dwParam1, dwParam2);
+	case DRV_QUERYDEVICEINTERFACESIZE:
+	case DRV_QUERYDEVICEINTERFACE:
+		return get_dev_caps((DWORD)dwDriverId, dwMessage, dwParam1, dwParam2);
+	default:
+		break;
+	}
+	// The two halves share no numbers with each other, so one lookup settles
+	// it and the other side simply answers NOTSUPPORTED to what is not its own.
+	DWORD r = on_output_message(dwMessage, dwParam1, dwParam2);
+	if (r != MMSYSERR_NOTSUPPORTED) return r;
+	return on_input_message(dwMessage, dwParam1, dwParam2);
+}
+
+// The entry point winmm resolves. It is named ModMessage because that is what
+// the Drivers32 protocol names, and typed DRIVERMSGPROC because that is the
+// type mmiscapi.h:77 declares for exactly this - a winmm driver entry point.
+// The two HDRVR arguments the type wants are dropped, because the handle is
+// held in g_driver and nothing here needs it passed in.
+__declspec(dllexport) DWORD WINAPI ModMessage(DWORD dwDriverId, DWORD dwMessage,
+	DWORD_PTR dwParam1, DWORD_PTR dwParam2, DWORD_PTR dwParam3)
+{
+	(void)dwParam3;
+	return driver_message(dwDriverId, NULL, dwMessage, dwParam1, dwParam2);
 }
 
 // ---- becoming a device ------------------------------------------------------
