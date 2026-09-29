@@ -30,6 +30,21 @@ jobs:
       - name: build
         shell: cmd
         run: mingw32-make
+      - name: build the loopback driver
+        shell: bash
+        run: bash tools/winmm_loopback/build.sh
+
+      # The driver is built on every push and uploaded on every push, which
+      # keeps the compile honest. The url the e2e reads it from is a release
+      # tag, so a copy is published there once by hand - the file name has to
+      # match what the e2e step looks for, and the tag is 'loopback-driver'.
+      - name: keep the driver next to the dll
+        uses: actions/upload-artifact@v4
+        with:
+          name: nvmidi-loopback
+          path: tools/winmm_loopback/nvmidi-loopback.exe
+          if-no-files-found: error
+
       - name: keep the dll
         uses: actions/upload-artifact@v4
         with:
@@ -39,6 +54,13 @@ jobs:
 
   e2e:
     runs-on: windows-latest
+    # Reading a release asset of this same repository is what fetches the
+    # loopback driver, and the token that can do that is the run's own. The
+    # default for a repository created before this line existed is read
+    # everywhere, but naming it means a future tightening of the repository
+    # default cannot silently turn the driver into a 404.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -305,20 +327,24 @@ jobs:
         run: |
           $url = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/tags/loopback-driver"
           try {
-            $rel = Invoke-RestMethod -Uri $url -Headers @{ Authorization = "Bearer $env:GH_TOKEN_SELF" } -TimeoutSec 30
+            $rel = Invoke-RestMethod -Uri $url -Headers @{ Authorization = "Bearer ${{ github.token }}" } -TimeoutSec 30
           } catch {
-            Write-Host "could not read the loopback-driver release: $_"
+            # A 401 here is not a missing release and must not read like one:
+            # the driver is what makes the cross process half of this job
+            # possible, so a fetch that fails says so in the job summary rather
+            # than being inferred later from an e2e that could not listen.
+            Write-Host "::error::could not read the loopback-driver release, so the loopback driver will not be loaded: $_"
             "LOOPBACK_AVAILABLE=$false" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            exit 0
+            exit 1
           }
           $asset = $rel.assets | Where-Object { $_.name -eq 'nvmidi-loopback.exe' } | Select-Object -First 1
           if (-not $asset) {
-            Write-Host "the release exists but carries no nvmidi-loopback.exe"
+            Write-Host "::error::the loopback-driver release exists but carries no nvmidi-loopback.exe"
             "LOOPBACK_AVAILABLE=$false" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            exit 0
+            exit 1
           }
           $out = Join-Path $env:TEMP 'nvmidi-loopback.exe'
-          Invoke-WebRequest -Uri $asset.url -Headers @{ Authorization = "Bearer $env:GH_TOKEN_SELF"; Accept = 'application/octet-stream' } -OutFile $out -UseBasicParsing -TimeoutSec 60
+          Invoke-WebRequest -Uri $asset.url -Headers @{ Authorization = "Bearer ${{ github.token }}"; Accept = 'application/octet-stream' } -OutFile $out -UseBasicParsing -TimeoutSec 60
           Write-Host "fetched $((Get-Item $out).Length) bytes"
           # Loaded, not run: a user mode winmm driver has no process of its own
           # and is called by winmm from whatever process uses the port, so this
