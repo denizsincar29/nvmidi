@@ -1,0 +1,7 @@
+#pragma plugin nvmidi
+
+void main() {
+	print("C1");
+	midi_output@ out = null;
+	print("C2");
+}

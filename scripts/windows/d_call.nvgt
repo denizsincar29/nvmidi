@@ -1,0 +1,9 @@
+#pragma plugin nvmidi
+
+void main() {
+	print("D1");
+	uint n = midi_output_port_count();
+	print("D2 port_count=" + n);
+	int b = midi_api_name_byte_count();
+	print("D3 api_bytes=" + b);
+}

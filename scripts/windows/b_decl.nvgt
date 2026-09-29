@@ -1,0 +1,11 @@
+#pragma plugin nvmidi
+
+void main() {
+	print("B1");
+	midi_output@ out;
+	print("B2");
+	midi_duration d;
+	print("B3");
+	midi_note@ n;
+	print("B4");
+}

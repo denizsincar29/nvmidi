@@ -1,0 +1,9 @@
+#pragma plugin nvmidi
+
+void main() {
+	print("A1");
+	midi_output@ out = midi_output();
+	print("A2");
+	midi_output@ out2 = midi_output_create();
+	print("A3");
+}
