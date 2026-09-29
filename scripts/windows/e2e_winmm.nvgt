@@ -238,7 +238,15 @@ string bytes_of_last_error_as_numbers() {
 	}
 	return s;
 }
-string bytes_of_object_port_name(midi_output@ o) {
+// midi_output is a handle type - asOBJ_REF | asOBJ_NOCOUNT - so a plain
+// `midi_output o;` here is a value variable of a type the engine cannot copy:
+// nvgt refuses `o` with "No default constructor, copy constructor or factory
+// for type 'midi_output'", and the handle form `midi_output@ o` is refused at
+// the declaration by the same compiler. The object can only be produced by a
+// factory, and the factory's result is a handle that the compiler will carry
+// as a temporary - so the parameter is declared bare, the way upstream's own
+// plugin examples declare the objects they take.
+string bytes_of_object_port_name(midi_output o) {
 	string s = "";
 	for (int i = 0; i < o.get_port_name_byte_count(); i++) {
 		int b = o.get_port_name_byte(i);
@@ -481,7 +489,7 @@ void main() {
 	ok("CHOSEN " + chosen_name);
 
 	// --- open it ------------------------------------------------------------
-	midi_output@ port = midi_output_create();
+	midi_output port = midi_output_create();
 	if (!port.open(chosen, "nvmidi e2e windows")) {
 		// The numbers first, then the text, because the text is the half that
 		// has been measured wrong twice on this runner - once as the decimal
@@ -563,13 +571,18 @@ void main() {
 	// it does not open, the chord is reported as a failure rather than skipped:
 	// this is the call every example in the repository uses.
 	if (port.open(chosen, "nvmidi e2e windows")) {
-		array<midi_note@>@ chord = array<midi_note@>();
+		// The factory's result is a handle, and a handle is what insert_last
+		// takes - `@n` would be a handle *to* the variable n, not the object
+		// the factory made, and the element type of the array is midi_note@.
+		// The array itself is declared bare for the same reason the port is:
+		// `array<midi_note@>@` is refused at the declaration.
+		array<midi_note@> chord = array<midi_note@>();
 		uint[]@ chord_pitches = {60, 64, 67};
 		for (uint i = 0; i < 3; i++) {
 			midi_note@ n = nvmidi_note_create(chord_pitches[i]);
 			n.velocity = 100;
 			n.length = midi_duration(100, MIDI_MS);
-			chord.insert_last(@n);
+			chord.insert_last(n);
 		}
 		if (port.play_chord_wait(chord)) ok("PLAYED chord");
 		else fail("play_chord_wait refused: " + bytes_of_last_error());
