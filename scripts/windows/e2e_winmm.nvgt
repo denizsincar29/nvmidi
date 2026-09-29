@@ -91,6 +91,15 @@ void main() {
 	// plugin addresses them by is not, and the listener needs the name.
 	print("nvmidi e2e winmm is open");
 
+	// A name to prefer, handed in by the job. The runner this runs on has no
+	// loopback driver - measured, not assumed - so the port that is actually
+	// there is the synth windows ships with, and the job passes its name in
+	// rather than this file hard coding a vendor string that differs between
+	// windows versions and locales.
+	string hint = "";
+	if (args.length() > 0) hint = args[0].to_lowercase();
+	if (hint != "") print("E2E_HINT " + hint);
+
 	string api = midi_api_name();
 	if (api == "") {
 		fail("midi_api_name returned nothing, so the plugin is not registered");
@@ -140,6 +149,10 @@ void main() {
 		const string n = midi_output_port_name(i);
 		const string lower = n.to_lowercase();
 		if (chosen < 0) chosen = static_cast<int>(i);
+		if (chosen_name == "" && hint != "" && lower.find(hint) >= 0) {
+			chosen = static_cast<int>(i);
+			chosen_name = n;
+		}
 		if (chosen_name == "" && (lower.find("loopbe") >= 0 || lower.find("loopmidi") >= 0
 			|| lower.find("virtual") >= 0 || lower.find("loop") >= 0)) {
 			chosen = static_cast<int>(i);
