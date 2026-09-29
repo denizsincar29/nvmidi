@@ -184,7 +184,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $lib | Out-Null
           Copy-Item nvmidi.dll -Destination (Join-Path $lib 'nvmidi.dll') -Force
           $dll = Join-Path $lib 'nvmidi.dll'
-          Write-Host "$dll: $((Get-Item $dll).Length) bytes"
+          Write-Host "${dll}: $((Get-Item $dll).Length) bytes"
           # A zero byte file here would make the whole job meaningless and
           # silent - the loader says "failed to load plugin" for an empty file
           # exactly as it does for a missing dependency.
