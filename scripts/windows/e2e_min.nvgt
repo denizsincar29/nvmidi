@@ -1,0 +1,9 @@
+// Minimal: does the script reach main() at all when the plugin is requested?
+// Nothing else here. If this dies with no output, the death is at load or
+// registration, and no line of e2e_winmm.nvgt is implicated.
+#pragma plugin nvmidi
+
+void main() {
+	print("MIN_BEGIN");
+	print("MIN_END");
+}

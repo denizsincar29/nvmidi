@@ -854,6 +854,58 @@ jobs:
             }
           }
 
+          # --- where in the script the death happens ---------------------------
+          #
+          # Everything above says the process died at 0.3s with 0xC0000005 and
+          # wrote nothing. That is one fact and it has three different causes -
+          # the script does not compile, the plugin's registration crashes, or
+          # the script runs and dies at some line - and each wants different
+          # work. So ask the engine directly, here, rather than infer it from a
+          # log that is empty for all three.
+          #
+          # Two scripts, not one. The first is the pragma and a main that
+          # prints; if that dies too, no line of the real script is implicated,
+          # because there is no line of the real script in it. The second turns
+          # the question into a bisect: it announces each call before making it,
+          # so the last announcement standing names the call that killed the
+          # process, and the silence after it is between two known lines instead
+          # of anywhere in six hundred.
+          #
+          # The engine's compile errors go to the step's own stdout rather than
+          # to this redirect - measured, on the run this step was added for -
+          # so a compile failure shows up here as a line the job log has been
+          # carrying all along and nothing has read.
+          $probeSrc = Join-Path $env:GITHUB_WORKSPACE 'scripts\windows'
+          foreach ($case in @('e2e_min', 'e2e_types')) {
+            $p2src  = Join-Path $probeSrc "$case.nvgt"
+            $p2log  = Join-Path $env:GITHUB_WORKSPACE "$case.log"
+            $p2err  = "$p2log.err"
+            if (-not (Test-Path $p2src)) { Write-Host "::warning::$case.nvgt is missing from the checkout"; continue }
+            $p2 = Start-Process -FilePath $exe `
+              -ArgumentList @($p2src) `
+              -NoNewWindow -PassThru `
+              -RedirectStandardOutput $p2log -RedirectStandardError $p2err
+            $c2 = -1
+            if (-not $p2.WaitForExit(60000)) {
+              try { $p2.Kill() } catch {}
+              $c2 = -2
+            } else {
+              $c2 = $p2.ExitCode
+            }
+            $sec2 = ((Get-Date) - $p2.StartTime).TotalSeconds
+            $out = ''
+            if (Test-Path $p2log) { $out = (Get-Content $p2log -Raw); if ($null -eq $out) { $out = '' } }
+            $err2 = ''
+            if (Test-Path $p2err) { $err2 = (Get-Content $p2err -Raw); if ($null -eq $err2) { $err2 = '' } }
+            Write-Host "--- $case ---"
+            Write-Host ("exit {0} (0x{1:X8}) after {2:N1}s, stdout {3} bytes, stderr {4} bytes" -f $c2, ($c2 -band 0xFFFFFFFF), $sec2, $out.Length, $err2.Length)
+            # Printed verbatim and unfiltered on purpose. This is the one place
+            # in the job where the engine speaks for itself, and the whole step
+            # exists because that speech was being paraphrased by greps.
+            if ($out.Trim().Length -gt 0) { Write-Host "stdout:"; Write-Host $out }
+            if ($err2.Trim().Length -gt 0) { Write-Host "stderr:"; Write-Host $err2 }
+          }
+
       - name: report the port index the script enumerated
         shell: pwsh
         run: |
@@ -1341,5 +1393,9 @@ jobs:
             ${{ github.workspace }}/logs_e2e.txt
             ${{ github.workspace }}/logs_e2e.txt.err
             ${{ github.workspace }}/logs_listen.txt
+            ${{ github.workspace }}/e2e_min.log
+            ${{ github.workspace }}/e2e_min.log.err
+            ${{ github.workspace }}/e2e_types.log
+            ${{ github.workspace }}/e2e_types.log.err
           if-no-files-found: warn
           retention-days: 7
