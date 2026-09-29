@@ -32,9 +32,11 @@ void main() {
 	const int COUNT = 25;
 	// Not `int bytes[25] = {...}`: measured, the declaration is rejected as
 	// "Expected '(' / Instead found identifier 'bytes'" - this engine does not
-	// take a sized array with an initialiser list in one line. One at a time
-	// compiles and is the same twenty five numbers.
-	int bytes[25];
+	// take a sized array with an initialiser list in one line. `int bytes[25];`
+	// on its own is rejected the same way, at the same column, so the size is
+	// not declared here at all: an unsized array takes its length from the
+	// first assignment, and the twenty five numbers below are unchanged.
+	int bytes[];
 	bytes[0] = 110; bytes[1] = 118; bytes[2] = 109; bytes[3] = 105;
 	bytes[4] = 100; bytes[5] = 105; bytes[6] = 47; bytes[7] = 87;
 	bytes[8] = 105; bytes[9] = 110; bytes[10] = 100; bytes[11] = 111;
