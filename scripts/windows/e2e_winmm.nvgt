@@ -59,13 +59,26 @@ string char_of(uint b) {
 // classification below, which compares bytes rather than text and therefore
 // needs the wanted character as an int.
 //
-// Read out of the table and not out of the literal: `"abc"[0]` is "Can't
-// implicitly convert from 'const string' to 'int'" in this engine, measured
-// on the runner, and that error cost a run of its own.
+// This does not index the string itself. Two ways of getting one character out
+// of a script string were measured wrong on the runner:
+//
+//     "ndows"[0]                 "Can't implicitly convert from 'const string'
+//                                to 'int'" - a compile error
+//     byte_letters.find(substr)  returns 0 every time, including for a
+//                                character that is not in the table
+//
+// The second is the surprising one and it is why this is arithmetic. A 0 from
+// a find that should have failed is the same value as a 0 from a find that
+// succeeded, so the table cannot be indexed by looking a character up in it.
+// The ranges below are the layout of the table itself, which is ascii order,
+// so the numbers do not depend on the engine's string behaviour at all.
 int char_at(const string&in s, uint at) {
 	if (at >= s.length()) return 0;
 	const string one = s.substr(at, 1);
-	return int(byte_letters.find(one));
+	for (uint c = 32; c < 127; c++) {
+		if (char_of(c).find(one) >= 0) return int(c);
+	}
+	return 0;
 }
 
 
