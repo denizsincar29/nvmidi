@@ -69,6 +69,36 @@ bool have_bus = true;
 
 // --- 1. the library --------------------------------------------------------
 
+string bytes_of_object_port_name(midi_output@ o) {
+	string s = "";
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += string(o.get_port_name_byte(i));
+	return s;
+}
+
+string bytes_of_object_port_name(midi_input@ o) {
+	string s = "";
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += string(o.get_port_name_byte(i));
+	return s;
+}
+
+string bytes_of_port_name(uint port) {
+	string s = "";
+	for (int i = 0; i < midi_output_port_name_byte_count(port); i++) s += string(midi_output_port_name_byte(port, i));
+	return s;
+}
+
+string bytes_of_input_port_name(uint port) {
+	string s = "";
+	for (int i = 0; i < midi_input_port_name_byte_count(port); i++) s += string(midi_input_port_name_byte(port, i));
+	return s;
+}
+
+string bytes_of_last_error() {
+	string s = "";
+	for (int i = 0; i < midi_last_error_byte_count(); i++) s += string(midi_last_error_byte(i));
+	return s;
+}
+
 void main() {
 	print("E2E_BEGIN");
 	// The one thing this script has to say to another process. It is printed
@@ -76,7 +106,8 @@ void main() {
 	// while the line above stays readable by a person.
 	print("nvmidi e2e is open");
 
-	string api = midi_api_name();
+	string api = "";
+	for (int i = 0; i < midi_api_name_byte_count(); i++) api += string(midi_api_name_byte(i));
 	if (api == "") {
 		fail("midi_api_name returned nothing, so the plugin is not registered");
 		print("E2E_END failures=" + failures);
@@ -91,8 +122,8 @@ void main() {
 	const uint outs = midi_output_port_count();
 	print("E2E_INPUT_PORTS " + ins);
 	print("E2E_OUTPUT_PORTS " + outs);
-	for (uint i = 0; i < outs; i++) print("E2E_OUTPUT_PORT " + i + " " + midi_output_port_name(i));
-	for (uint i = 0; i < ins; i++) print("E2E_INPUT_PORT " + i + " " + midi_input_port_name(i));
+	for (uint i = 0; i < outs; i++) print("E2E_OUTPUT_PORT " + i + " " + bytes_of_port_name(i));
+	for (uint i = 0; i < ins; i++) print("E2E_INPUT_PORT " + i + " " + bytes_of_input_port_name(i));
 
 	// --- 3. listen for the name this process is about to publish ------------
 	//
@@ -118,28 +149,28 @@ void main() {
 		// failure the plugin did not commit.
 		if (outs == 0 && ins == 0) {
 			have_bus = false;
-			print("E2E_NO_BUS " + midi_last_error());
+			print("E2E_NO_BUS " + bytes_of_last_error());
 			note("this machine has no midi bus: no ports exist and none can be published, so the port part of this test cannot run here");
 		} else {
-			fail("could not open a reader for the test port: " + midi_last_error());
+			fail("could not open a reader for the test port: " + bytes_of_last_error());
 		}
 		print("E2E_END failures=" + failures);
 		return;
 	}
-	ok("READER OPEN " + reader.get_port_name());
+	ok("READER OPEN " + bytes_of_object_port_name(reader));
 
 	// --- 4. publish a port of this process's own ----------------------------
 	midi_output@ vport = midi_output_create();
 	vport.set_virtual_port(true);
 	if (!vport.open(0, "nvmidi e2e")) {
-		fail("could not create a virtual output port: " + midi_last_error());
+		fail("could not create a virtual output port: " + bytes_of_last_error());
 		// No port of our own means nothing can be sent into this process, so
 		// there is nothing left to test. Reported, not skipped silently.
 		reader.close();
 		print("E2E_END failures=" + failures);
 		return;
 	}
-	ok("MADE PORT " + vport.get_port_name());
+	ok("MADE PORT " + bytes_of_object_port_name(vport));
 
 	// --- 5. hear what arrives from outside ----------------------------------
 	note("waiting up to 10000 ms for another process to send a note into the port");
@@ -149,7 +180,8 @@ void main() {
 		while (reader.has_message()) {
 			midi_message m;
 			if (!reader.next_message(m)) break;
-			const string text = midi_message_name(m);
+			string text = "";
+			for (int bi = 0; bi < midi_message_name_byte_count(m); bi++) text += string(midi_message_name_byte(m, bi));
 			print("E2E_HEARD " + text);
 			if (text.find("note on") >= 0) {
 				ok("HEARD " + text);
@@ -169,7 +201,7 @@ void main() {
 	vport.send_pitch_bend(0, 8192);
 	vport.send_sysex("\\xF0\\x7E\\x7F\\x09\\x01\\xF7");
 	note("sent a note on, a note off, cc, program change, pitch bend and a sysex");
-	if (vport.is_open()) ok("OUTPUT OK " + vport.get_port_name());
+	if (vport.is_open()) ok("OUTPUT OK " + bytes_of_object_port_name(vport));
 	else fail("the output port reports itself closed right after sending");
 
 	// --- 7. the high level layer, which is the point of the whole plugin ----
@@ -179,7 +211,7 @@ void main() {
 	// subject and its destination at once.
 	midi_input@ instrument = midi_input_create();
 	if (!instrument.open_by_name("nvmidi e2e", "nvmidi e2e playback")) {
-		fail("cannot open the test port for playing: " + midi_last_error());
+		fail("cannot open the test port for playing: " + bytes_of_last_error());
 	} else {
 		instrument.tempo = 96.0;
 
@@ -197,12 +229,12 @@ void main() {
 		note("tempo 96: a beat is " + instrument.duration(1.0, MIDI_BEATS).to_ms() + " ms, half a bar is " + instrument.duration(0.5, MIDI_BARS).to_ms() + " ms");
 
 		if (instrument.play_chord_wait(chord)) ok("PLAYED chord");
-		else fail("play_chord_wait refused: " + midi_last_error());
+		else fail("play_chord_wait refused: " + bytes_of_last_error());
 
 		string[]@ patterns = {"chord", "spread", "arpeggio", "quick", "fast", "strum", "repeat"};
 		for (uint i = 0; i < patterns.length(); i++) {
 			if (instrument.play_midi_chord_wait(chord, patterns[i])) ok("PLAYED " + patterns[i]);
-			else fail("pattern " + patterns[i] + " refused: " + midi_last_error());
+			else fail("pattern " + patterns[i] + " refused: " + bytes_of_last_error());
 		}
 		note("active notes after the patterns: " + instrument.get_active_notes());
 		instrument.close();

@@ -33,6 +33,40 @@ void announce(const string&in text) {
 // Press escape to stop.
 
 
+
+// The plugin hands its strings over as a count plus an indexed byte - see the
+// readme. These put them back together here, where the engine's own strings
+// were measured alive.
+string bytes_of_config(midi_config@ c) {
+	string s = "";
+	for (int i = 0; i < c.describe_byte_count(); i++) s += string(c.describe_byte(i));
+	return s;
+}
+
+string bytes_of_last_error() {
+	string s = "";
+	for (int i = 0; i < midi_last_error_byte_count(); i++) s += string(midi_last_error_byte(i));
+	return s;
+}
+
+string bytes_of_port_name(midi_output@ o) {
+	string s = "";
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += string(o.get_port_name_byte(i));
+	return s;
+}
+
+string bytes_of_input_port_name(midi_input@ o) {
+	string s = "";
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += string(o.get_port_name_byte(i));
+	return s;
+}
+
+string bytes_of_message(midi_message@ m) {
+	string s = "";
+	for (int i = 0; i < m.to_string_byte_count(); i++) s += string(m.to_string_byte(i));
+	return s;
+}
+
 void main() {
 	if (midi_input_port_count() == 0) {
 		announce("No MIDI input ports. Plug the keyboard in first.");
@@ -44,10 +78,10 @@ void main() {
 
 	midi_input@ keyboard = midi_input_create();
 	if (!keyboard.open_config(config, "nvmidi echo")) {
-		announce("Cannot open " + config.describe() + ": " + midi_last_error());
+		announce("Cannot open " + bytes_of_config(config) + ": " + bytes_of_last_error());
 		return;
 	}
-	announce("Listening on " + keyboard.get_port_name());
+	announce("Listening on " + bytes_of_input_port_name(keyboard));
 
 	while (!key_pressed(KEY_ESCAPE)) {
 		// A value, not a handle: next_message takes midi_message&, which in
@@ -55,9 +89,9 @@ void main() {
 		// rejected before the call is even looked up.
 		midi_message m;
 		while (keyboard.next_message(m)) {
-			// One line per message, spoken. m.to_string() already reads
+			// One line per message, spoken. bytes_of_message(m) already reads
 			// like "note on, channel 1, note 60, velocity 100".
-			announce(m.to_string());
+			announce(bytes_of_message(m));
 		}
 		wait(5);
 	}

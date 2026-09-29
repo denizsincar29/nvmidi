@@ -106,7 +106,7 @@ plugin` — and **nothing in your script runs**, neither `preglobals()` nor
 plugin's absence is what stops the script.
 
 Measured on the engine: with `#pragma plugin nvmidi` and no loadable library,
-the run ends at the pragma even when the script declares a `midi_first_error()`
+the run ends at the pragma even when the script declares its own `bytes_of_last_error()`
 of its own to catch exactly that. A script *can* shadow a plugin's name when
 the plugin is simply absent and no pragma asks for it — but that is not the
 case you have.
@@ -128,7 +128,7 @@ from a startup that never happens.
 packaging mistake, and the fix is the `build.shared_library_excludes`
 paragraph above rather than a runtime message.
 
-`midi_first_error()` stays in the API for the case where the plugin *did*
+`midi_first_error_byte_count()` / `midi_first_error_byte(index)` stay in the API for the case where the plugin *did*
 load: it reports the first thing that went wrong, and is empty while nothing
 has. NVGT's `preglobals()` is still the right hook for the checks it was
 designed for — the manual's own example is `SOUND_AVAILABLE` and
@@ -146,17 +146,17 @@ midi_input@ in = midi_input_create();
 void main() {
 	// List what is plugged in, so you can pick a port number.
 	for (uint i = 0; i < midi_input_port_count(); i++) {
-		screen_reader_speak(midi_input_port_name(i));
+		screen_reader_speak(bytes_of_input_port_name(i));
 	}
 	if (!in.open(0)) { // first input port
-		screen_reader_speak("could not open the keyboard: " + midi_last_error());
+		screen_reader_speak("could not open the keyboard: " + bytes_of_last_error());
 		return;
 	}
 
 	while (true) {
 		midi_message@ m;
 		while (in.next_message(m)) {
-			// m is a midi_message; m.to_string() reads like
+			// m is a midi_message; bytes_of_message(m) reads like
 			// "note on, channel 1, note 60, velocity 100"
 			if ((m.status & 0xf0) == 0x90 && m.data2 > 0) {
 				screen_reader_speak("note " + m.data1);
@@ -191,11 +191,11 @@ if (port < 0) {
 	screen_reader_speak("nothing matched, and the fallback port is empty");
 	return;
 }
-screen_reader_speak("Using " + config.describe()); // "Nord Piano 6"
+screen_reader_speak("Using " + bytes_of_config(config)); // "Nord Piano 6"
 in.open_config(config);
 ```
 
-`describe()` names the port it picked and says when it fell back to the index,
+`describe_byte_count()` names the port it picked and says when it fell back to the index,
 which is what you want spoken rather than a bare number. The free functions
 `midi_find_input_port("nord")` and `midi_find_output_port("nord")` do the same
 search without a file.
@@ -259,7 +259,7 @@ in.play_midi_chord_wait(notes, "arpeggio");
 ```angelscript
 midi_output@ out = midi_output_create();
 if (!out.open(0)) {
-	screen_reader_speak(midi_last_error());
+	screen_reader_speak(bytes_of_last_error());
 	return;
 }
 out.send_note_on(1, 60, 100);   // channel 1, middle C, velocity 100
@@ -270,29 +270,85 @@ out.send_note_off(1, 60);
 `all_notes_off()` stops everything on all sixteen channels, which is worth
 calling on shutdown so a panic does not leave a stuck note sounding.
 
+
+## Strings arrive as bytes
+
+Every string this plugin would hand to a script instead comes over as a length
+and an indexed byte, and the script puts the text back together itself.
+
+That is not a style choice. This engine publishes no string factory, so a
+plugin that returns a string writes its bytes into memory the engine is not
+holding a string in. It does not fail loudly; it corrupts the process, and
+surfaces later as a stack overrun. Measured on a windows runner in one process,
+in the same second, reading the same value both ways:
+
+    byte path    nvmidi/Windows MM   (25 bytes, exact)
+    string path  0u??z               (garbage)
+
+So the rule for this plugin: **integers cross the boundary, strings do not.**
+
+For every string surface there is a pair — a count and an indexed byte:
+
+    int midi_api_name_byte_count()          // how long the text is
+    int midi_api_name_byte(uint index)      // one byte, 0..255, or -1
+
+`-1` means "there is no byte at that index", which is not the same as a zero
+byte: a port name may legitimately contain one, so the end of the text has to
+be distinguishable from a byte inside it.
+
+Read it back into a script string like this:
+
+```angelscript
+string bytes_of_api_name() {
+	string s = "";
+	for (int i = 0; i < midi_api_name_byte_count(); i++) {
+		s += string(midi_api_name_byte(i));
+	}
+	return s;
+}
+
+screen_reader_speak("MIDI backend: " + bytes_of_api_name());
+```
+
+The shape is the same everywhere. Where a global has a pair, `midi_api_name`
+above does; where an object method does, it is spelled `get_port_name_byte_count()`
+and `get_port_name_byte(uint index)` on the object, or `describe_byte_count()`
+on a config. `examples/` has a helper for each one, and they are four lines
+each — copy whichever you need.
+
+If a future engine grows a string factory, the plugin prints a warning at
+registration and these pairs become optional rather than necessary. Until a
+run says otherwise, they are the only form measured to survive.
+
 ## API
 
 **Free functions**
 
 - `uint midi_input_port_count()` / `uint midi_output_port_count()` — how many
   ports the machine has.
-- `string midi_input_port_name(uint port)` / `midi_output_port_name(uint)` —
-  the name of one port, or `""` if out of range.
-- `string[]@ midi_input_port_names()` / `midi_output_port_names()` — every
-  name at once.
-- `string midi_api_name()` — which backend is in use, e.g. `"ALSA"` or
-  `"Windows MultiMedia"`. Useful in a bug report.
-- `string midi_last_error()` — why the last call failed; empty on success.
-- `string midi_message_name(const midi_message&in m)` — human-readable
-  description of a message.
+- `int midi_input_port_name_byte_count(uint port)` and
+  `midi_output_port_name_byte_count(uint)` — the length of one port's name, 0
+  if the index is out of range; `_byte(port, index)` gives one byte, or -1.
+- `int midi_api_name_byte_count()` / `midi_api_name_byte(uint index)` — which
+  backend is in use, e.g. `"ALSA"` or `"Windows MultiMedia"`. Useful in a bug
+  report.
+- `int midi_last_error_byte_count()` / `midi_last_error_byte(uint index)` —
+  why the last call failed; a count of 0 on success.
+- `int midi_message_name_byte_count(const midi_message&in m)` and
+  `midi_message_name_byte(m, index)` — human-readable description of a
+  message.
+
+See "Strings arrive as bytes" below for the three lines that turn a pair back
+into a string.
 - `midi_input@ midi_input_create()` / `midi_output@ midi_output_create()` —
   make an object. The plugin owns it, so you do not delete it yourself.
 - `int midi_find_input_port(const string&in substring)` /
   `midi_find_output_port` — the first port whose name contains the substring,
   ignoring case; -1 when nothing matches.
 - `int midi_note_number(const string&in name)` — `"C4"`, `"F#3"`, `"Bb5"` to a
-  MIDI note number, -1 when the name is not understood. `midi_note_name(60)`
-  goes the other way.
+  MIDI note number, -1 when the name is not understood.
+  `midi_note_pitch_name_byte_count(pitch)` / `_byte(pitch, index)` go the other
+  way, for a note number.
 - `midi_config@ midi_config_create()`, `midi_duration midi_duration_create()` (by value),
   `midi_note@ nvmidi_note_create()` — factories.
 - `MIDI_MS`, `MIDI_TICKS`, `MIDI_BEATS`, `MIDI_BARS` — the duration units.
@@ -305,20 +361,23 @@ calling on shutdown so a panic does not leave a stuck note sounding.
 
 Fields `status`, `data1`, `data2` (all `uint8`), `channel` (`int`, 1..16, or
 0 for a message that carries no channel), and `timestamp` (`double`, seconds
-since the port opened). `to_string()` gives the readable form.
+since the port opened). `to_string_byte_count()` and `to_string_byte(index)`
+give the readable form; the `to_string()` that returns it as a string is not
+registered.
 
 **midi_config** — `bool load(const string&in path)` and
 `bool load_if_present(path)` read a file of `key = value` lines (`#` comments,
 keys `match` and `port`); `find_input_port()` / `find_output_port()` return the
-index to open; `describe()` says in words which port that is; `get_last_port()`
-reports where the search ended. The `match` and `port` members can be set from
+index to open; `describe_byte_count()` / `describe_byte(index)` say in words
+which port that is; `get_last_port()` reports where the search ended. The `match` and `port` members can be set from
 the script instead of a file. With no file the defaults are `"nord"` and 0.
 
 **midi_note** — fields `pitch`, `velocity`, `channel` and `length` (a
 `midi_duration`). `duration_ms()` gives the length in milliseconds and
-`to_string()` names the note, e.g. `"C4 (60), velocity 100, channel 1"`.
+`to_string_byte_count()` / `to_string_byte(index)` name the note, e.g.
+`"C4 (60), velocity 100, channel 1"`.
 
-**midi_duration** — fields `amount`, `unit`, `tempo` and `ppq`; `to_ms()`
+**midi_duration** — fields `amount`, `unit`, `tempo` and `ppq`; `to_string_byte_count()` / `to_string_byte(index)` describe the length; `to_ms()`
 converts once, using 120 bpm and 96 ppq unless the object says otherwise. A
 beat is a quarter note and a bar is four of them. A duration made by `tempo`-
 aware code (`n.duration()`) already has the class tempo written into it, so
@@ -329,7 +388,7 @@ aware code (`n.duration()`) already has the class tempo written into it, so
 - `bool open(uint port, const string&in name = "nvmidi")`, plus
   `open_by_name(substring)` and `open_config(config)`. With any of them,
   `void close()`, `bool is_open()`, `int get_port()`,
-  `string get_port_name()`.
+  `get_port_name_byte_count()` / `get_port_name_byte(index)`.
 - `bool next_message(midi_message&out)` — take the oldest queued message.
   Returns false when the queue is empty.
 - `bool has_message()`, `uint get_pending()`, `void clear()`.
@@ -354,7 +413,8 @@ Changing either filter takes effect immediately on an open port.
 **midi_output**
 
 - `bool open(uint port, const string&in name = "nvmidi")`, `void close()`,
-  `bool is_open()`, `int get_port()`, `string get_port_name()`.
+  `bool is_open()`, `int get_port()`, `get_port_name_byte_count()` /
+  `get_port_name_byte(index)`.
 - `bool send(uint status, uint data1, uint data2)` — raw bytes.
 - `bool send_packed(uint packed)` — the three bytes packed low byte first.
 - `send_note_on(channel, note, velocity)`,

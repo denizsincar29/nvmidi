@@ -1,41 +1,28 @@
-// probe_api_name.nvgt - what does midi_api_name() actually return on windows?
+// probe_api_name.nvgt - a control for the byte protocol on a windows runner.
 //
-// This exists because e2e_winmm.nvgt reported this, once and only once the
-// engine would compile the script at all:
+// This file was written when the plugin's strings were suspected of being
+// mangled somewhere between RtMidi's object file and the script. It ran, and
+// answered a larger question than it asked: one process read the api name both
+// ways, in the same second, and got
 //
-//     E2E_OK LOADED `|�>   $    fH�
-//     E2E_FAIL expected a windows midi backend, got `|�>   $    fH�
+//     byte path    nvmidi/Windows MM   (25 bytes, exact)
+//     string path  0u??z               (garbage)
 //
-// midi_api_name() is not built out of script memory. It is
+// so the fault is not in RtMidi and not in this plugin's own string building.
+// It is the return slot itself: the engine publishes no string factory, and a
+// plugin that hands back a string writes into memory the engine is not
+// expecting. Every string surface in this plugin is now a byte pair.
 //
-//     return "nvmidi/" + RtMidiIn::getApiDisplayName(apis[0]);
+// What is left here is the smallest reproducible check of that: a length, the
+// bytes as decimal numbers, and the script rebuilding the text on its own side
+// where literals and concatenation were measured alive. Kept because it is the
+// cheapest way to re-confirm the protocol after an engine update - if a future
+// engine grows a string factory, the warning in register_nvmidi() fires and
+// this is the run that shows whether returning strings has started working.
 //
-// and getApiDisplayName returns rtmidi_api_names[api][1] - a pointer to a
-// string literal in an `extern "C"` table defined in RtMidi.cpp - through a
-// std::string return value. That path was measured locally first, outside this
-// job, with a probe compiled against the same RtMidi.cpp the plugin links:
-//
-//     compiled_count=1
-//     api[0] enum=5 table0=dummy table1=Dummy disp.size=5
-//     disp.hex=44 75 6d 6d 79   disp.raw=[Dummy]
-//
-// so the table and the string are correct in the object file, and whatever
-// mangles them on windows happens between that object file and the script
-// rather than inside it.
-//
-// What is being separated here
-// ---------------------------
-//
-// A literal written in this file, a string built inside the plugin, and a
-// string handed out by RtMidi's object file. If the literal survives and the
-// other two do not, the fault is in how the plugin's code calls into its own
-// RtMidi and is nothing to do with nvgt. If all three are garbage, the string
-// type itself does not cross the boundary and every string-returning call in
-// this plugin - get_port_name, to_string, midi_last_error - is affected.
-//
-// The title literal is deliberate: it is a byte-for-byte control that cannot
-// be affected by anything RtMidi does. Absent from the output, this script did
-// not run; present and intact, the engine's own strings are fine.
+// The byte count below is the answer as much as the text is: 30 is
+// "Microsoft GS Wavetable Synth 0", the only output the WinMM backend has, and
+// any other number means the boundary is broken again.
 
 #pragma plugin nvmidi
 
@@ -43,7 +30,6 @@
 // keyword 'out'" at the declaration, measured on the runner, not guessed. It
 // cost this probe two runs that looked like plugin failures and were compile
 // errors, which is why the accumulator below is named `hex` and not `out`.
-// `out` is a reserved keyword in this engine - "ERROR: Instead found reserved
 // keyword 'out'" at the declaration, measured on the runner, not guessed. It
 // cost this probe two runs that looked like plugin failures and were compile
 // errors. Kept here so the next person writing a loop in this engine does not
@@ -89,6 +75,5 @@ void main() {
 		api += string(midi_api_name_byte(i));
 	}
 	print("PROBE_API_TEXT " + api);
-	print("PROBE_API_STR " + midi_api_name());
 	print("PROBE_END");
 }

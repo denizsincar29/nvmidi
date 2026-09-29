@@ -1517,6 +1517,40 @@ int midi_first_error_byte(unsigned int index) {
 	return (int)(unsigned char)e[index];
 }
 
+// The five that the sweep found second: they were not in the list when this
+// started, because the list was written from memory of the string surfaces
+// rather than from the registrations. Reading the registrations for anything
+// spelled "string" found them, and that is the lesson of this change: the
+// question is not which functions I remember returning a string, it is which
+// ones the engine is told will.
+int midi_input::get_port_name_byte_count() const { return (int)get_port_name().size(); }
+int midi_input::get_port_name_byte(unsigned int index) const {
+	const std::string s = get_port_name();
+	if (index >= s.size()) return -1;
+	return (int)(unsigned char)s[index];
+}
+
+int midi_output::get_port_name_byte_count() const { return (int)get_port_name().size(); }
+int midi_output::get_port_name_byte(unsigned int index) const {
+	const std::string s = get_port_name();
+	if (index >= s.size()) return -1;
+	return (int)(unsigned char)s[index];
+}
+
+int midi_config::describe_byte_count() const { return (int)describe().size(); }
+int midi_config::describe_byte(unsigned int index) const {
+	const std::string s = describe();
+	if (index >= s.size()) return -1;
+	return (int)(unsigned char)s[index];
+}
+
+int midi_note_pitch_name_byte_count(int pitch) { return (int)midi_note_pitch_name(pitch).size(); }
+int midi_note_pitch_name_byte(int pitch, unsigned int index) {
+	const std::string s = midi_note_pitch_name(pitch);
+	if (index >= s.size()) return -1;
+	return (int)(unsigned char)s[index];
+}
+
 CScriptArray* midi_input_port_names() {
 	std::vector<std::string> names;
 	const unsigned int count = midi_input_port_count();
@@ -1746,11 +1780,12 @@ void register_midi_message(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectProperty("midi_message", "uint8 data2", asOFFSET(midi_message, data2)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_message", "int channel", asOFFSET(midi_message, channel)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_message", "double timestamp", asOFFSET(midi_message, timestamp)), "RegisterObjectProperty", __LINE__);
-	// One name only: "string to_string() const". An opImplConv() declaration
-	// here would describe a conversion operator, which is not a method
-	// Angelscript can register this way, and a script can already write
-	// "" + m because the engine converts any type that has to_string().
-	reg->check( engine->RegisterObjectMethod("midi_message", "string to_string() const", asMETHOD(midi_message, to_string), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	// Registered as bytes, and under these names deliberately, so the API the
+	// scripts already call did not move: midi_message::to_string() is here,
+	// spelled the way the rest of the plugin spells a string now. See the byte
+	// views above for what the measurement forced.
+	reg->check( engine->RegisterObjectMethod("midi_message", "int to_string_byte_count() const", asMETHOD(midi_message, to_string_byte_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_message", "int to_string_byte(uint index) const", asMETHOD(midi_message, to_string_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 }
 
 void register_midi_input(asIScriptEngine* engine, registration* reg) {
@@ -1767,7 +1802,8 @@ void register_midi_input(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectMethod("midi_input", "void close()", asMETHOD(midi_input, close), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool is_open() const", asMETHOD(midi_input, is_open), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "int get_port() const", asMETHOD(midi_input, get_port), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_input", "string get_port_name() const", asMETHOD(midi_input, get_port_name), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "int get_port_name_byte_count() const", asMETHOD(midi_input, get_port_name_byte_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "int get_port_name_byte(uint index) const", asMETHOD(midi_input, get_port_name_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool has_message() const", asMETHOD(midi_input, has_message), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "uint get_pending() const", asMETHOD(midi_input, get_pending), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool next_message(midi_message&out) const", asMETHOD(midi_input, next_message), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
@@ -1799,7 +1835,8 @@ void register_midi_output(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectMethod("midi_output", "void close()", asMETHOD(midi_output, close), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool is_open() const", asMETHOD(midi_output, is_open), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "int get_port() const", asMETHOD(midi_output, get_port), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_output", "string get_port_name() const", asMETHOD(midi_output, get_port_name), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "int get_port_name_byte_count() const", asMETHOD(midi_output, get_port_name_byte_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "int get_port_name_byte(uint index) const", asMETHOD(midi_output, get_port_name_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool send(uint status, uint data1, uint data2)", asMETHOD(midi_output, send), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool send_packed(uint packed)", asMETHOD(midi_output, send_packed), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "void send_note_on(uint channel, uint note, uint velocity)", asMETHOD(midi_output, send_note_on), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
@@ -1844,7 +1881,8 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectProperty("midi_duration", "double tempo", asOFFSET(midi_duration, tempo)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_duration", "double ppq", asOFFSET(midi_duration, ppq)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_duration", "double to_ms() const", asMETHOD(midi_duration, to_ms), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_duration", "string to_string() const", asMETHOD(midi_duration, to_string), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_duration", "int to_string_byte_count() const", asMETHOD(midi_duration, to_string_byte_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_duration", "int to_string_byte(uint index) const", asMETHOD(midi_duration, to_string_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_duration", "midi_duration& opAssign(const midi_duration&in other)", asMETHODPR(midi_duration, opAssign, (const midi_duration&), midi_duration&), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_duration", "midi_duration& opAssign(double amount)", asMETHODPR(midi_duration, opAssign, (double), midi_duration&), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	// By value, not midi_duration@ - see the comment above the type.
@@ -1861,7 +1899,8 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectProperty("midi_note", "int channel", asOFFSET(midi_note, channel)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_note", "midi_duration length", asOFFSET(midi_note, length)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_note", "double duration_ms", asOFFSET(midi_note, length) + offsetof(midi_duration, amount)), "RegisterObjectProperty", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_note", "string to_string() const", asMETHOD(midi_note, to_string), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_note", "int to_string_byte_count() const", asMETHOD(midi_note, to_string_byte_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_note", "int to_string_byte(uint index) const", asMETHOD(midi_note, to_string_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	// A factory per arity, because the engine will not give this plugin the
 	// name midi_note: nvgt is an audio toolkit with its own midi support and
 	// its engine already owns that name, so RegisterGlobalFunction reports
@@ -1885,7 +1924,8 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterGlobalFunction("midi_note@ nvmidi_note_create(int pitch, int velocity, int channel)", asFUNCTION(midi_note_create_full), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_note@ nvmidi_note_create_ms(int pitch, int velocity, double duration_ms)", asFUNCTION(midi_note_create_ms), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("int midi_note_number(const string&in name)", asFUNCTION(midi_note_number), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("string midi_note_name(int pitch)", asFUNCTION(midi_note_pitch_name), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_note_name_byte_count(int pitch)", asFUNCTION(midi_note_pitch_name_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_note_name_byte(int pitch, uint index)", asFUNCTION(midi_note_pitch_name_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 
 	// Unit constants, so a script never has to remember 0..3.
 	reg->check( engine->RegisterGlobalProperty("const int MIDI_MS", (void*)&g_unit_ms), "RegisterGlobalProperty", __LINE__);
@@ -1914,8 +1954,10 @@ void register_midi_config(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectMethod("midi_config", "int find_input_port() const", asMETHOD(midi_config, find_input_port), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_config", "int find_output_port() const", asMETHOD(midi_config, find_output_port), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_config", "int get_last_port() const", asMETHOD(midi_config, get_last_port), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_config", "string describe() const", asMETHOD(midi_config, describe), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_config", "string get_path() const", asMETHOD(midi_config, get_path), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_config", "int describe_byte_count() const", asMETHOD(midi_config, describe_byte_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_config", "int describe_byte(uint index) const", asMETHOD(midi_config, describe_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_config", "int get_path_byte_count() const", asMETHOD(midi_config, get_path_byte_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_config", "int get_path_byte(uint index) const", asMETHOD(midi_config, get_path_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_config@ midi_config_create()", asFUNCTION(midi_config_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("int midi_find_input_port(const string&in substring)", asFUNCTION(midi_find_input_port), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("int midi_find_output_port(const string&in substring)", asFUNCTION(midi_find_output_port), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
@@ -1924,14 +1966,6 @@ void register_midi_config(asIScriptEngine* engine, registration* reg) {
 void register_midi_globals(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterGlobalFunction("uint midi_input_port_count()", asFUNCTION(midi_input_port_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("uint midi_output_port_count()", asFUNCTION(midi_output_port_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("string midi_input_port_name(uint port)", asFUNCTION(midi_input_port_name), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("string midi_output_port_name(uint port)", asFUNCTION(midi_output_port_name), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("string[]@ midi_input_port_names()", asFUNCTION(midi_input_port_names), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("string[]@ midi_output_port_names()", asFUNCTION(midi_output_port_names), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("string midi_api_name()", asFUNCTION(midi_api_name), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("string midi_message_name(const midi_message&in m)", asFUNCTION(midi_message_name), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("string midi_last_error()", asFUNCTION(midi_last_error), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("string midi_first_error()", asFUNCTION(midi_first_error), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	// Why every string-returning function in this plugin hands the script
 	// garbage, measured on the windows runner rather than reasoned about.
 	//

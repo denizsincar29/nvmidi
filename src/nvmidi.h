@@ -28,14 +28,17 @@ struct midi_message {
 	unsigned char data2;
 	int channel; // 1..16
 	double timestamp; // seconds since the input port was opened
-	// Returns a pointer into a per-object buffer rather than a std::string:
-	// Angelscript can marshal a const char* straight into its own string, and
-	// it has no idea what a std::string return by value is, which made the
-	// binding below fail to register and left the type half-built.
+	// Returns a pointer into a per-object buffer rather than a std::string -
+	// not a design choice, just the shape this one had before the string
+	// question came up, and it is not registered either way.
+	//
+	// Nothing string-shaped is handed to the engine any more, in this type or
+	// any other. This engine publishes no string factory, so a plugin-returned
+	// string arrives in the wrong layout and corrupts the process; the text
+	// goes out as a length plus indexed bytes instead. See the note above the
+	// byte definitions in nvmidi.cpp for the measurement that forced it.
 	const char* to_string() const;
-	// The same text as bytes, and the form that is registered. See the note
-	// above the definitions in nvmidi.cpp for why nothing string-shaped is
-	// handed to the engine any more.
+	// The same text as bytes, and the form that is registered.
 	int to_string_byte_count() const;
 	int to_string_byte(unsigned int index) const;
 private:
@@ -224,6 +227,8 @@ public:
 	bool is_open() const;
 	int get_port() const; // index of the open port, -1 when closed
 	std::string get_port_name() const;
+	int get_port_name_byte_count() const;
+	int get_port_name_byte(unsigned int index) const;
 
 	// True when at least one message is waiting.
 	bool has_message() const;
@@ -276,6 +281,8 @@ public:
 	bool is_open() const;
 	int get_port() const;
 	std::string get_port_name() const;
+	int get_port_name_byte_count() const;
+	int get_port_name_byte(unsigned int index) const;
 
 	// -----------------------------------------------------------------
 	// High level playing
@@ -439,7 +446,13 @@ public:
 	// "Nord Piano 6" when the search matched by name, "port 0 (fallback)"
 	// when it fell back to the index. Meant to be spoken by a screen reader.
 	std::string describe() const;
+	int describe_byte_count() const;
+	int describe_byte(unsigned int index) const;
 	std::string get_path() const { return path; }
+	int get_path_byte_count() const { return (int)path.size(); }
+	int get_path_byte(unsigned int index) const {
+		return index < path.size() ? (int)(unsigned char)path[index] : -1;
+	}
 
 	// The substring searched for, "nord" unless the file says otherwise.
 	std::string match;

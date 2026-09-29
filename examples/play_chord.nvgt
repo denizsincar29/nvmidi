@@ -50,6 +50,40 @@ array<midi_note@>@ chord(const string&in pitches, double length_ms) {
 	return notes;
 }
 
+
+// The plugin hands its strings over as a count plus an indexed byte - see the
+// readme. These put them back together here, where the engine's own strings
+// were measured alive.
+string bytes_of_config(midi_config@ c) {
+	string s = "";
+	for (int i = 0; i < c.describe_byte_count(); i++) s += string(c.describe_byte(i));
+	return s;
+}
+
+string bytes_of_last_error() {
+	string s = "";
+	for (int i = 0; i < midi_last_error_byte_count(); i++) s += string(midi_last_error_byte(i));
+	return s;
+}
+
+string bytes_of_port_name(midi_output@ o) {
+	string s = "";
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += string(o.get_port_name_byte(i));
+	return s;
+}
+
+string bytes_of_input_port_name(midi_input@ o) {
+	string s = "";
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += string(o.get_port_name_byte(i));
+	return s;
+}
+
+string bytes_of_message(midi_message@ m) {
+	string s = "";
+	for (int i = 0; i < m.to_string_byte_count(); i++) s += string(m.to_string_byte(i));
+	return s;
+}
+
 void main() {
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.txt");
@@ -62,10 +96,10 @@ void main() {
 
 	midi_input@ keyboard = midi_input_create();
 	if (!keyboard.open_config(config, "nvmidi chord test")) {
-		announce("Cannot open: " + midi_last_error());
+		announce("Cannot open: " + bytes_of_last_error());
 		return;
 	}
-	announce("Playing on " + config.describe());
+	announce("Playing on " + bytes_of_config(config));
 
 	// The tempo lives on the music class, so a note written as "a beat" means
 	// one beat here and not the 120 default. duration() reads that tempo for

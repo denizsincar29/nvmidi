@@ -17,9 +17,12 @@ One MIDI message, either received from a device or about to be sent.
 | `channel` | `int` | 1..16, or 0 when the message carries no channel |
 | `timestamp` | `double` | seconds since the port was opened |
 
-Methods: `to_string()` returns a readable description, and the implicit
-conversion operator means a `midi_message` can be concatenated straight into
-a string. `midi_message_name(m)` does the same as a free function.
+Methods: `to_string_byte_count()` and `to_string_byte(index)` give a readable
+description; `midi_message_name_byte_count(m)` / `midi_message_name_byte(m, i)`
+do the same as a free function. The implicit conversion operator means a
+`midi_message` can still be concatenated straight into a string — the engine
+does that conversion itself, on its own side of the boundary, where its strings
+are intact. See [Strings arrive as bytes](#strings-arrive-as-bytes).
 
 For pitch bend the two data bytes combine into a 14-bit value:
 `(data2 << 7) | data1`, which runs 0..16383 with 8192 as centre.
@@ -37,7 +40,8 @@ it once, when the note is played.
 | `ppq` | `double` | pulses per quarter note, used by the tick unit. Defaults to 96 |
 
 - `double to_ms() const` — the length in milliseconds, after conversion
-- `string to_string() const` — e.g. `"2 beats at 120 bpm"`; also the implicit
+- `int to_string_byte_count() const`, `int to_string_byte(uint index) const`
+  — e.g. `"2 beats at 120 bpm"`; also the implicit
   conversion, so a duration can be concatenated into a string
 
 Factories: `midi_duration_create()`, `midi_duration_create(amount, unit)` and
@@ -61,14 +65,15 @@ really changes the note that is played.
 | `length` | `midi_duration` | how long the note sounds |
 
 - `double duration_ms() const` — the length in milliseconds
-- `string to_string() const` — e.g. `"C4 (60), velocity 100, channel 1"`
+- `int to_string_byte_count() const`, `int to_string_byte(uint index) const`
+  — e.g. `"C4 (60), velocity 100, channel 1"`
 
 Factories: `nvmidi_note_create()`, `nvmidi_note_create(pitch, velocity, channel)`
 and `nvmidi_note_create_ms(pitch, velocity, duration_ms)`.
 
 Two free functions name pitches both ways: `int midi_note_number("C4")` takes
 `C`, `F#3`, `Bb5` and returns -1 for anything it does not understand, and
-`string midi_note_name(60)` goes back the other way.
+`midi_note_pitch_name_byte_count(60)` / `_byte(60, index)` goes back the other way.
 
 ### midi_config
 
@@ -106,7 +111,7 @@ Ports
 - `void close()`
 - `bool is_open() const`
 - `int get_port() const` — index of the open port, `-1` when closed
-- `string get_port_name() const`
+- `int get_port_name_byte_count() const`, `int get_port_name_byte(uint index) const`
 
 Reading
 
@@ -217,22 +222,50 @@ one batch, and from then on each note is released at its own moment plus its
 own length. That is what lets an arpeggio keep its earlier notes ringing while
 the later ones arrive.
 
+## Strings arrive as bytes
+
+This engine publishes no string factory, so a string returned by a plugin is
+written into memory the engine is not holding a string in. It does not fail
+loudly — it corrupts the process and shows up later as a stack overrun.
+Measured on a windows runner, one process, one second, the same value read both
+ways: the byte path gave `nvmidi/Windows MM`, the string path gave `0u??z`.
+
+So every string surface is a pair: a count and an indexed byte.
+
+    int midi_api_name_byte_count()      // length of the text
+    int midi_api_name_byte(uint index)  // one byte, 0..255, or -1
+
+`-1` means there is no byte at that index. It is not the same as a zero byte —
+a name may contain one — so the end of the text stays distinguishable from a
+byte inside it.
+
+```angelscript
+string s = "";
+for (int i = 0; i < midi_api_name_byte_count(); i++) {
+	s += string(midi_api_name_byte(i));
+}
+```
+
+Object methods follow the same shape: `get_port_name_byte_count()` /
+`get_port_name_byte(index)`, `describe_byte_count()` / `describe_byte(index)`,
+`to_string_byte_count()` / `to_string_byte(index)`. The `examples/` folder has
+a four-line helper for each.
+
+
 ## Free functions
 
 - `uint midi_input_port_count()`
 - `uint midi_output_port_count()`
-- `string midi_input_port_name(uint port)`
-- `string midi_output_port_name(uint port)`
-- `string[]@ midi_input_port_names()`
-- `string[]@ midi_output_port_names()`
+- `int midi_input_port_name_byte_count(uint port)`, `int midi_input_port_name_byte(uint port, uint index)`
+- `int midi_output_port_name_byte_count(uint port)`, `int midi_output_port_name_byte(uint port, uint index)`
 - `int midi_find_input_port(const string&in substring)` — first port whose name
   contains the substring, ignoring case; -1 when nothing matches
 - `int midi_find_output_port(const string&in substring)`
-- `string midi_api_name()` — the active backend, e.g. `"ALSA"`
+- `int midi_api_name_byte_count()`, `int midi_api_name_byte(uint index)` — the active backend, e.g. `"ALSA"`
 - `int midi_note_number(const string&in name)` — `"C4"` to 60, -1 when unknown
-- `string midi_note_name(int pitch)`
-- `string midi_last_error()` — empty when the last call succeeded
-- `string midi_message_name(const midi_message&in m)`
+- `int midi_note_pitch_name_byte_count(int pitch)`, `int midi_note_pitch_name_byte(int pitch, uint index)`
+- `int midi_last_error_byte_count()`, `int midi_last_error_byte(uint index)` — a count of 0 when the last call succeeded
+- `int midi_message_name_byte_count(const midi_message&in m)`, `int midi_message_name_byte(const midi_message&in m, uint index)`
 - `midi_input@ midi_input_create()`
 - `midi_output@ midi_output_create()`
 - `midi_config@ midi_config_create()`
@@ -255,12 +288,12 @@ boundary and turns it into a return value, so a script never dies from a
 disconnected device:
 
 - `open` and `send*` return `false` on failure.
-- The specific reason is in `midi_last_error()`, cleared at the start of
+- The specific reason is in `midi_last_error_byte_count()` / `_byte()`, cleared at the start of
   every call.
 
 Functions that return a value rather than a status — `midi_input_port_name`
 and friends — return an empty string or zero on failure, again with the
-reason in `midi_last_error()`.
+reason in `midi_last_error_byte(uint index)`.
 
 ## Playing without blocking the script
 

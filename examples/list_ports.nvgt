@@ -28,8 +28,54 @@ void announce(const string&in text) {
 // number your keyboard actually landed on, which backend RtMidi picked, and
 // which port midi_config.txt selects.
 
+
+// The plugin hands its strings over as a count plus an indexed byte - see the
+// readme. These put them back together here, where the engine's own strings
+// were measured alive.
+string bytes_of_config(midi_config@ c) {
+	string s = "";
+	for (int i = 0; i < c.describe_byte_count(); i++) s += string(c.describe_byte(i));
+	return s;
+}
+
+string bytes_of_last_error() {
+	string s = "";
+	for (int i = 0; i < midi_last_error_byte_count(); i++) s += string(midi_last_error_byte(i));
+	return s;
+}
+
+string bytes_of_port_name(midi_output@ o) {
+	string s = "";
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += string(o.get_port_name_byte(i));
+	return s;
+}
+
+string bytes_of_input_port_name(midi_input@ o) {
+	string s = "";
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += string(o.get_port_name_byte(i));
+	return s;
+}
+
+string bytes_of_output_port_name(uint port) {
+	string s = "";
+	for (int i = 0; i < midi_output_port_name_byte_count(port); i++) s += string(midi_output_port_name_byte(port, i));
+	return s;
+}
+
+string bytes_of_input_port_name(uint port) {
+	string s = "";
+	for (int i = 0; i < midi_input_port_name_byte_count(port); i++) s += string(midi_input_port_name_byte(port, i));
+	return s;
+}
+
+string bytes_of_api_name() {
+	string s = "";
+	for (int i = 0; i < midi_api_name_byte_count(); i++) s += string(midi_api_name_byte(i));
+	return s;
+}
+
 void main() {
-	announce("MIDI backend: " + midi_api_name());
+	announce("MIDI backend: " + bytes_of_api_name());
 
 	uint inputs = midi_input_port_count();
 	if (inputs == 0) {
@@ -37,7 +83,7 @@ void main() {
 	} else {
 		announce(inputs + " input ports.");
 		for (uint i = 0; i < inputs; i++) {
-			announce("Input " + i + ": " + midi_input_port_name(i));
+			announce("Input " + i + ": " + bytes_of_input_port_name(i));
 		}
 	}
 
@@ -47,7 +93,7 @@ void main() {
 	} else {
 		announce(outputs + " output ports.");
 		for (uint i = 0; i < outputs; i++) {
-			announce("Output " + i + ": " + midi_output_port_name(i));
+			announce("Output " + i + ": " + bytes_of_output_port_name(i));
 		}
 	}
 
@@ -55,9 +101,9 @@ void main() {
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.txt");
 	announce("Looking for \"" + config.match + "\".");
-	announce("Input: " + (config.find_input_port() >= 0 ? config.describe() : "nothing found, not even the fallback port " + config.port + "."));
+	announce("Input: " + (config.find_input_port() >= 0 ? bytes_of_config(config) : "nothing found, not even the fallback port " + config.port + "."));
 	int out_port = config.find_output_port();
-	announce("Output: " + (out_port >= 0 ? midi_output_port_name(out_port) : "nothing found."));
+	announce("Output: " + (out_port >= 0 ? bytes_of_output_port_name(out_port) : "nothing found."));
 
 	wait(500);
 }

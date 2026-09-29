@@ -45,6 +45,40 @@ void panic() {
 	announce("Stopped.");
 }
 
+
+// The plugin hands its strings over as a count plus an indexed byte - see the
+// readme. These put them back together here, where the engine's own strings
+// were measured alive.
+string bytes_of_config(midi_config@ c) {
+	string s = "";
+	for (int i = 0; i < c.describe_byte_count(); i++) s += string(c.describe_byte(i));
+	return s;
+}
+
+string bytes_of_last_error() {
+	string s = "";
+	for (int i = 0; i < midi_last_error_byte_count(); i++) s += string(midi_last_error_byte(i));
+	return s;
+}
+
+string bytes_of_port_name(midi_output@ o) {
+	string s = "";
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += string(o.get_port_name_byte(i));
+	return s;
+}
+
+string bytes_of_input_port_name(midi_input@ o) {
+	string s = "";
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += string(o.get_port_name_byte(i));
+	return s;
+}
+
+string bytes_of_message(midi_message@ m) {
+	string s = "";
+	for (int i = 0; i < m.to_string_byte_count(); i++) s += string(m.to_string_byte(i));
+	return s;
+}
+
 void main() {
 	if (midi_input_port_count() == 0 || midi_output_port_count() == 0) {
 		announce("Need at least one input and one output port.");
@@ -58,15 +92,15 @@ void main() {
 	@output = midi_output_create();
 
 	if (!input.open_config(config, "nvmidi forward in")) {
-		announce("Input (" + config.describe() + "): " + midi_last_error());
+		announce("Input (" + bytes_of_config(config) + "): " + bytes_of_last_error());
 		return;
 	}
 	if (!output.open_config(config, "nvmidi forward out")) {
-		announce("Output (" + config.describe() + "): " + midi_last_error());
+		announce("Output (" + bytes_of_config(config) + "): " + bytes_of_last_error());
 		input.close();
 		return;
 	}
-	announce("From " + input.get_port_name() + " to " + output.get_port_name());
+	announce("From " + bytes_of_input_port_name(input) + " to " + bytes_of_port_name(output));
 
 	while (!key_pressed(KEY_ESCAPE)) {
 		midi_message m;

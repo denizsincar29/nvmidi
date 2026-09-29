@@ -141,6 +141,28 @@ uint[]@ g_vel = {100, 90, 80, 70, 60, 50};
 const uint GAP_MS = 150;
 const uint HOLD_MS = 100;
 
+
+// The plugin's strings arrive as a length plus an indexed byte, measured -
+// see the readme. These read that protocol back into a script string.
+string bytes_of_output_port_name(uint port) {
+	string s = "";
+	for (int i = 0; i < midi_output_port_name_byte_count(port); i++) s += string(midi_output_port_name_byte(port, i));
+	return s;
+}
+
+string bytes_of_last_error() {
+	string s = "";
+	for (int i = 0; i < midi_last_error_byte_count(); i++) s += string(midi_last_error_byte(i));
+	return s;
+}
+
+string bytes_of_object_port_name(midi_output@ o) {
+	string s = "";
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += string(o.get_port_name_byte(i));
+	return s;
+}
+
+
 void main() {
 	print("E2E_BEGIN");
 
@@ -180,7 +202,8 @@ void main() {
 	}
 	if (hint != "") print("E2E_HINT " + hint);
 
-	string api = midi_api_name();
+	string api = "";
+	for (int i = 0; i < midi_api_name_byte_count(); i++) api += string(midi_api_name_byte(i));
 	if (api == "") {
 		fail("midi_api_name returned nothing, so the plugin is not registered");
 		print("E2E_END failures=" + failures);
@@ -213,7 +236,7 @@ void main() {
 	const uint outs = midi_output_port_count();
 	print("E2E_OUTPUT_PORTS " + outs);
 	for (uint i = 0; i < outs; i++) {
-		print("E2E_OUTPUT_PORT " + i + " " + midi_output_port_name(i));
+		print("E2E_OUTPUT_PORT " + i + " " + bytes_of_output_port_name(i));
 	}
 
 	// --- pick one -----------------------------------------------------------
@@ -226,7 +249,7 @@ void main() {
 	int chosen = -1;
 	string chosen_name = "";
 	for (uint i = 0; i < outs; i++) {
-		const string n = midi_output_port_name(i);
+		const string n = bytes_of_output_port_name(i);
 		if (chosen < 0) chosen = int(i);
 		// Case insensitive without a lower-case helper: the engine has no
 		// to_lowercase on string (measured - "No matching symbol 'to_lowercase'"
@@ -249,18 +272,18 @@ void main() {
 		print("E2E_END failures=" + failures);
 		return;
 	}
-	if (chosen_name == "") chosen_name = midi_output_port_name(chosen);
+	if (chosen_name == "") chosen_name = bytes_of_output_port_name(chosen);
 	ok("PORTS " + outs);
 	ok("CHOSEN " + chosen_name);
 
 	// --- open it ------------------------------------------------------------
 	midi_output@ port = midi_output_create();
 	if (!port.open(chosen, "nvmidi e2e windows")) {
-		fail("cannot open output port " + chosen + " (" + chosen_name + "): " + midi_last_error());
+		fail("cannot open output port " + chosen + " (" + chosen_name + "): " + bytes_of_last_error());
 		print("E2E_END failures=" + failures);
 		return;
 	}
-	ok("OPENED " + port.get_port_name());
+	ok("OPENED " + bytes_of_object_port_name(port));
 	// Handed to the listener, which needs it for its own open() call and gets
 	// it from this line rather than from winmm's numbering order, which is not
 	// guaranteed to match the enumeration above under two processes.
@@ -311,7 +334,7 @@ void main() {
 		fail("the melody took " + elapsed + " ms, which is less than its own spacing: the engine clock did not advance and the timing in the listener's log is not evidence of anything");
 	}
 
-	if (port.is_open()) ok("OUTPUT OK " + port.get_port_name());
+	if (port.is_open()) ok("OUTPUT OK " + bytes_of_object_port_name(port));
 	else fail("the output port reports itself closed right after sending");
 
 	// --- the high level layer, playing out of the same port -----------------
@@ -329,19 +352,19 @@ void main() {
 			chord.insert_last(@n);
 		}
 		if (port.play_chord_wait(chord)) ok("PLAYED chord");
-		else fail("play_chord_wait refused: " + midi_last_error());
+		else fail("play_chord_wait refused: " + bytes_of_last_error());
 
 		string[]@ patterns = {"chord", "spread", "arpeggio", "quick", "fast", "strum", "repeat"};
 		for (uint i = 0; i < patterns.length(); i++) {
 			if (port.play_midi_chord_wait(chord, patterns[i])) ok("PLAYED " + patterns[i]);
-			else fail("pattern " + patterns[i] + " refused: " + midi_last_error());
+			else fail("pattern " + patterns[i] + " refused: " + bytes_of_last_error());
 		}
 		// The listener counts what arrives; these came through the same port as
 		// the melody, so its total is a lower bound on how many of the notes
 		// above actually left the process.
 		note("played the chord in seven schemes through the same port");
 	} else {
-		fail("cannot reopen the port for the chord: " + midi_last_error());
+		fail("cannot reopen the port for the chord: " + bytes_of_last_error());
 	}
 
 	// A moment for the last note to leave the port before the process exits:
