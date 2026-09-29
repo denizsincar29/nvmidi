@@ -111,6 +111,12 @@ static WCHAR g_slot[32];
 // driver would have reported anyway.
 static UINT g_inputs_before;
 
+// Declared above its use because it is defined with the other output helpers,
+// well below the dispatcher that calls it. The compiler said so on the runner
+// before this line existed: an implicit declaration, then a conflicting type
+// where the real one was reached.
+static void trace_call(DWORD id, DWORD msg, DWORD_PTR p1);
+
 // The callback kind, as midiOutOpen and midiInOpen name it: CALLBACK_FUNCTION
 // means "call this address". It is the only kind that can work here, because
 // the caller is winmm itself and not a window or a thread owned by us. The
