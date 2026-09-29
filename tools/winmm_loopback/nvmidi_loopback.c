@@ -314,7 +314,25 @@ static DWORD driver_life(DWORD msg, DWORD_PTR p1, DWORD_PTR p2) {
 	case DRV_CLOSE:
 		return DRVCNF_OK;
 	default:
-		return DRVCNF_OK;
+		// Not this table's message. Answering DRVCNF_OK to everything it did
+		// not recognise - which is what this arm used to do, DRV_OPEN included
+		// - is what made OpenDriver fail with error=0.
+		//
+		// The two tables in this file do not share their numbers. MODM_OPEN is
+		// 3, exactly as DRV_OPEN is 3, and driver_message checks this table
+		// first. So the open of the device by index never reached
+		// on_output_message: it was read here as a driver life message and
+		// answered as one, so a device the senders believed they had opened for
+		// output was never opened. winmm reported what it saw - a driver that
+		// claimed to have handled a message and did not - and it has no error
+		// number to offer for that, because nothing it can observe went wrong.
+		//
+		// DRVCNF_CANCEL is the refusal this protocol has, and a wrong number is
+		// still better than a yes. The real repair is the dispatch above this,
+		// which has to stop sending the two namespaces to this table in the
+		// first place; this arm only makes sure a message that reaches here by
+		// some other route is not answered with a success it did not earn.
+		return DRVCNF_CANCEL;
 	}
 }
 
@@ -322,22 +340,41 @@ static DWORD driver_life(DWORD msg, DWORD_PTR p1, DWORD_PTR p2) {
 // then the enumeration, then whichever half the message belongs to. The halves
 // are told apart by what winmm put in the call, and the output side is tried
 // first because a driver is opened for output before it is asked about input.
+//
+// The hard part, and the thing this function got wrong, is that winmm does not
+// keep its two namespaces apart for us. MODM_OPEN, MODM_CLOSE and MODM_PREPARE
+// are 3, 4 and 5; DRV_OPEN, DRV_CLOSE and DRV_DISABLE are 3, 4 and 5 too. A
+// driver is reached through *one* entry point, so the number is all there is
+// to go on and no single table can hold both readings.
+//
+// The rule that resolves it is that the driver life messages carry a driver id
+// where the midi ones carry a device handle. winmm passes the id it was given
+// for this driver as dwDriverId on every call, and on a DRV_ message the same
+// value arrives again in dwParam1 - which is exactly the shape CheckDriverMsg
+// tests for in the reference driver, and it is a fact about the caller rather
+// than a guess about the number. The two halves are then tried in turn and the
+// one that does not own the message answers MMSYSERR_NOTSUPPORTED, which is a
+// number winmm will not mistake for a success.
 static DWORD WINAPI driver_message(DWORD dwDriverId, HDRVR hDriver,
 	DWORD dwMessage, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
 {
 	(void)hDriver;
 	switch (dwMessage) {
-	case DRV_LOAD:    case DRV_ENABLE:     case DRV_DISABLE:
-	case DRV_FREE:    case DRV_OPEN:       case DRV_CLOSE:
-		return driver_life(dwMessage, dwParam1, dwParam2);
 	case DRV_QUERYDEVICEINTERFACESIZE:
 	case DRV_QUERYDEVICEINTERFACE:
 		return get_dev_caps((DWORD)dwDriverId, dwMessage, dwParam1, dwParam2);
 	default:
 		break;
 	}
-	// The two halves share no numbers with each other, so one lookup settles
-	// it and the other side simply answers NOTSUPPORTED to what is not its own.
+	if (dwParam1 == (DWORD_PTR)dwDriverId) {
+		switch (dwMessage) {
+		case DRV_LOAD:  case DRV_ENABLE:  case DRV_DISABLE:
+		case DRV_FREE:  case DRV_OPEN:    case DRV_CLOSE:
+			return driver_life(dwMessage, dwParam1, dwParam2);
+		default:
+			break;
+		}
+	}
 	DWORD r = on_output_message(dwMessage, dwParam1, dwParam2);
 	if (r != MMSYSERR_NOTSUPPORTED) return r;
 	return on_input_message(dwMessage, dwParam1, dwParam2);
