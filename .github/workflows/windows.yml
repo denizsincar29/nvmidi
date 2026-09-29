@@ -935,11 +935,6 @@ jobs:
           # from that same file cannot answer it. git rev-parse reads the
           # commit object, which the checkout fetched from GitHub, so it is
           # outside the thing being measured.
-          $wantSha = (git -C $env:GITHUB_WORKSPACE rev-parse "HEAD:scripts/windows/e2e_winmm.nvgt" 2>&1)
-          if ($LASTEXITCODE -ne 0) { $wantSha = '' }
-          Write-Host ("blob sha for the script at this commit: " + $wantSha)
-          "WANT_SHA=$wantSha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
           # The engine's own stdout, unfiltered, for the script that has
           # been dying at load. It is the only file whose first byte would
           # be the plugin's, and the probes above never touch it. It has to
@@ -994,6 +989,23 @@ jobs:
           # from the filesystem, and the sha of the file is compared against it
           # in the job summary line that follows.
           $realSrc = Join-Path $env:GITHUB_WORKSPACE 'scripts\windows\e2e_winmm.nvgt'
+          # The expected value is taken here, from git, and not read out of
+          # the file being measured. A number lifted from the file cannot
+          # answer whether that file is this commit's file; git's own object
+          # store can, because the checkout fetched it from GitHub and it is
+          # outside everything this step is looking at.
+          #
+          # This line has to stand inside the same block as the comparison
+          # that reads it. The first version sat at the step's top level, one
+          # level out, where it parsed, ran, and was discarded - the step
+          # printed its own export line and then said no value had been
+          # handed to it. The comment four hundred lines up describes this
+          # exact failure; it was written about $realDump and did not stop me
+          # walking into it with $WANT_SHA.
+          $wantSha = (git -C $env:GITHUB_WORKSPACE rev-parse "HEAD:scripts/windows/e2e_winmm.nvgt")
+          if ($LASTEXITCODE -ne 0) { $wantSha = '' }
+          Write-Host ("blob sha for the script at this commit: " + $wantSha)
+          $env:WANT_SHA = $wantSha
           Write-Host ("commit under test: " + $env:GITHUB_SHA)
           Write-Host ("looking for the script at: " + $realSrc)
           if (Test-Path $realSrc) {
