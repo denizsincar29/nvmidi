@@ -62,12 +62,12 @@
 //
 // Only ascii is folded, which is the whole of the alphabet these names use.
 string fold_case(const string&in text) {
-	string out = text;
-	for (uint i = 0; i < out.length(); i++) {
-		const uint c = out[i];
-		if (c >= 65 && c <= 90) out[i] = c + 32;
+	string folded = text;
+	for (uint i = 0; i < folded.length(); i++) {
+		const uint c = folded[i];
+		if (c >= 65 && c <= 90) folded[i] = c + 32;
 	}
-	return out;
+	return folded;
 }
 
 bool matches_ignoring_case(const string&in haystack, const string&in needle) {
