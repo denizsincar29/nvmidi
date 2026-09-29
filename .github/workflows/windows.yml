@@ -97,6 +97,48 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "the driver probe exited $LASTEXITCODE" }
           if (Test-Path $crash) { Write-Host "crash: $(Get-Content $crash -Raw)" }
 
+      - name: what the registry says about the driver
+        shell: pwsh
+        # The driver reports open-failed with error=0: winmm would not start it
+        # and would not say why. Three runs and two code changes later the one
+        # thing never measured is whether the value the driver writes is
+        # visible to anything else in a later process. If the value does not
+        # land, or lands under a name nobody reads, the fault is in the write.
+        # If it lands and winmm still refuses, the fault is on winmm's side and
+        # no amount of arranging this file will reach it. That fork is what
+        # this step settles, and it costs a registry read.
+        continue-on-error: true
+        run: |
+          $py = @'
+          import winreg
+          p = r'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Drivers32'
+          for hive, name in ((winreg.HKEY_LOCAL_MACHINE, 'HKLM'), (winreg.HKEY_CURRENT_USER, 'HKCU')):
+              try:
+                  k = winreg.OpenKey(hive, p, 0, winreg.KEY_READ)
+              except OSError as e:
+                  print('%s %s unreadable: %s' % (name, p, e)); continue
+              n = winreg.QueryInfoKey(k)[1]
+              for i in range(n):
+                  vn, vd, vt = winreg.EnumValue(k, i)
+                  if vn.startswith('midi'):
+                      print('%s %s = %s' % (name, vn, vd))
+              winreg.CloseKey(k)
+          m = r'Software\Microsoft\Windows\CurrentVersion\Multimedia\MIDIMap'
+          try:
+              k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, m, 0, winreg.KEY_READ)
+              n = winreg.QueryInfoKey(k)[1]
+              print('MIDIMap values: %d' % n)
+              for i in range(n):
+                  vn, vd, vt = winreg.EnumValue(k, i)
+                  print('MIDIMap %s = %s' % (vn, vd))
+          except OSError as e:
+              print('MIDIMap unreadable: %s' % e)
+          '@
+          $py | Set-Content -Encoding utf8 "$env:RUNNER_TEMP\reg.py"
+          python -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$env:RUNNER_TEMP\reg.py"
+          if ($LASTEXITCODE -ne 0) { throw "the registry probe script does not parse" }
+          python "$env:RUNNER_TEMP\reg.py"
+
       - name: keep the driver next to the dll
         uses: actions/upload-artifact@v4
         with:
