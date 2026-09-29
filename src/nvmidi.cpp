@@ -1456,10 +1456,15 @@ static CScriptArray* make_string_array(const std::vector<std::string>& names) {
 // whole change is about was a shape mismatch nobody could see, and a shape
 // nobody can see is exactly what a macro hides.
 
-int midi_message::to_string_byte_count() const { return (int)to_string().size(); }
+// midi_message::to_string returns a const char* into a member buffer, not a
+// std::string like the other two - the only one of the three that does. The
+// strlen is right here and safe, because the buffer is the message's own and
+// holds text this file built.
+int midi_message::to_string_byte_count() const { return (int)std::strlen(to_string()); }
 int midi_message::to_string_byte(unsigned int index) const {
-	const std::string s = to_string();
-	if (index >= s.size()) return -1;
+	const char* s = to_string();
+	const std::size_t n = std::strlen(s);
+	if (index >= n) return -1;
 	return (int)(unsigned char)s[index];
 }
 
