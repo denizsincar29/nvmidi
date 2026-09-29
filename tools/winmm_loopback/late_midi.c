@@ -102,12 +102,48 @@ static void report(const char *where) {
 	GetModuleFileNameA(g_self, path, MAX_PATH);
 	GetModuleFileNameA(NULL, host, MAX_PATH);
 	fprintf(f, "HOST where=%s host=%s self=%s\n", where, host, path);
+	/* Written and closed before the first winmm call, and reopened at the end.
+	 *
+	 * probe_load_failed.txt is absent in both executables while this file is
+	 * absent too (run 36600067002), so LoadLibraryExA accepted the dll and the
+	 * report never finished - and a file that only gets written after the
+	 * registry walk cannot say whether the walk was reached at all. Each stage
+	 * below now leaves its own line, so the last line in the file names the
+	 * call that did not return instead of leaving the whole report to be read
+	 * as one silent failure. */
+	fputs("STAGE host-done\n", f);
+	fclose(f);
 
+	f = fopen("C:\\late_midi_host.txt", "ab");
+	if (!f) return;
 	BOOL pub = publish(slot, 32);
+	fputs("STAGE publish-done\n", f);
+	fflush(f);
+	fclose(f);
+
+	f = fopen("C:\\late_midi_host.txt", "ab");
+	if (!f) return;
 	UINT outs = midiOutGetNumDevs();
+	fprintf(f, "STAGE outnum-done outs=%u\n", (unsigned)outs);
+	fflush(f);
+	fclose(f);
+
+	f = fopen("C:\\late_midi_host.txt", "ab");
+	if (!f) return;
 	UINT ins = midiInGetNumDevs();
+	fprintf(f, "STAGE innum-done ins=%u\n", (unsigned)ins);
+	fflush(f);
+	fclose(f);
+
+	f = fopen("C:\\late_midi_host.txt", "ab");
+	if (!f) return;
 	h = OpenDriver(slot, NULL, 0);
 	err = GetLastError();
+	fprintf(f, "STAGE opendriver-done open=%lld err=%lu\n", (long long)h, (unsigned long)err);
+	fclose(f);
+
+	f = fopen("C:\\late_midi_host.txt", "ab");
+	if (!f) return;
 	snprintf(line, sizeof(line),
 		"LATE_PROBE where=%s published=%d slot=%ls outs=%u ins=%u open=%lld err=%lu\n",
 		where, (int)pub, slot, outs, ins, (long long)h, (unsigned long)err);

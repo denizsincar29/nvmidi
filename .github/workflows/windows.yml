@@ -877,6 +877,7 @@ jobs:
           while ((Get-Date) -lt $deadline) {
             if (Test-Path logs_e2e.txt) {
               $t = Get-Content logs_e2e.txt -Raw
+              if ($null -eq $t) { $t = '' }
               if ($t -match 'E2E_CHOSEN\s+(.+)') { $chosen = $Matches[1].Trim() }
               if ($t -match 'E2E_OUTPUT_PORT\s+(\d+)\s+(.+?)\s*$') {
                 # The last such line the script printed for the chosen name is
@@ -923,6 +924,7 @@ jobs:
           while ((Get-Date) -lt $deadline) {
             if (Test-Path logs_e2e.txt) {
               $t = Get-Content logs_e2e.txt -Raw
+              if ($null -eq $t) { $t = '' }
               if ($t -match 'E2E_PORT\s+(.+)') {
                 $name = $Matches[1].Trim()
                 Write-Host "the script chose the port: $name"
@@ -947,6 +949,9 @@ jobs:
             }
             Start-Sleep -Milliseconds 250
           }
+          # -Raw of an empty file pipes $null, not '', and Write-Host of $null
+          # prints an empty line - harmless here, but the line still has to be
+          # named so that the three reads above are visible as one pattern.
           Get-Content logs_e2e.txt -Raw | Write-Host
           Write-Host "::warning::the script never named a port within 60s; reading it as the script not reaching that line rather than as a hang"
           exit 0
@@ -988,6 +993,7 @@ jobs:
           # The size is stated because 0 bytes and a failed redirect look the
           # same in a fold and mean different things.
           $s = if (Test-Path logs_e2e.txt) { Get-Content logs_e2e.txt -Raw } else { '' }
+          if ($null -eq $s) { $s = '' }
           if ([string]::IsNullOrEmpty($s)) {
             $len = if (Test-Path logs_e2e.txt) { (Get-Item logs_e2e.txt).Length } else { -1 }
             Write-Host "::warning::the sender log is empty ($len bytes): the script produced no output at all"
@@ -1013,7 +1019,15 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          # Get-Content answers $null for a file that exists and holds nothing, and
+          # that $null reaches the regex below unchanged. Measured: run
+          # 36600067002 threw "Value cannot be null. (Parameter 'input')" out
+          # of [regex]::Match here and ended the step, so the reading never
+          # happened. $null read as a string is the empty string, which is
+          # what the rest of this step already expects.
           $t = if (Test-Path logs_e2e.txt) { Get-Content logs_e2e.txt -Raw } else { '' }
+          if ($null -eq $t) { $t = '' }
+
           if ($t -notmatch 'E2E_BEGIN') {
             Write-Host "::error::the script never started: nvgt did not run it at all"
             exit 1
@@ -1033,7 +1047,15 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          # Get-Content answers $null for a file that exists and holds nothing, and
+          # that $null reaches the regex below unchanged. Measured: run
+          # 36600067002 threw "Value cannot be null. (Parameter 'input')" out
+          # of [regex]::Match here and ended the step, so the reading never
+          # happened. $null read as a string is the empty string, which is
+          # what the rest of this step already expects.
           $t = if (Test-Path logs_e2e.txt) { Get-Content logs_e2e.txt -Raw } else { '' }
+          if ($null -eq $t) { $t = '' }
+
           # The backend name is decoded here, from the numbers the script
           # printed, rather than read out of the text it rebuilt.
           #
@@ -1083,7 +1105,15 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          # Get-Content answers $null for a file that exists and holds nothing, and
+          # that $null reaches the regex below unchanged. Measured: run
+          # 36600067002 threw "Value cannot be null. (Parameter 'input')" out
+          # of [regex]::Match here and ended the step, so the reading never
+          # happened. $null read as a string is the empty string, which is
+          # what the rest of this step already expects.
           $t = if (Test-Path logs_e2e.txt) { Get-Content logs_e2e.txt -Raw } else { '' }
+          if ($null -eq $t) { $t = '' }
+
           if ($t -match 'E2E_NO_BUS') {
             Write-Host "::error::this runner has no midi output port at all, so nothing could be played into anything. The plugin was never exercised."
             exit 1
@@ -1208,7 +1238,15 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          # Get-Content answers $null for a file that exists and holds nothing, and
+          # that $null reaches the regex below unchanged. Measured: run
+          # 36600067002 threw "Value cannot be null. (Parameter 'input')" out
+          # of [regex]::Match here and ended the step, so the reading never
+          # happened. $null read as a string is the empty string, which is
+          # what the rest of this step already expects.
           $t = if (Test-Path logs_e2e.txt) { Get-Content logs_e2e.txt -Raw } else { '' }
+          if ($null -eq $t) { $t = '' }
+
           if ($t -match 'E2E_FAIL (.+)') {
             Write-Host "::error::the script reported: $($Matches[1].Trim())"
           }
