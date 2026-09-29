@@ -1,0 +1,8 @@
+// probe: n_inputonly
+
+// Each name alone, so a refusal names one word and not a list.
+void main() {
+
+	midi_input@ in = null;
+	return;
+}

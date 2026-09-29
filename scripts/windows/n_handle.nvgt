@@ -1,0 +1,11 @@
+// probe: n_handle
+
+// Each name alone, so a refusal names one word and not a list.
+void main() {
+
+	midi_note@ n = null;
+	midi_config@ c = null;
+	midi_input@ in = null;
+	midi_output@ out = null;
+	return;
+}

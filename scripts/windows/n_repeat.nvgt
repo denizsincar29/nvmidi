@@ -1,0 +1,9 @@
+// probe: n_repeat
+
+// Each name alone, so a refusal names one word and not a list.
+void main() {
+
+	midi_note@ a = null;
+	midi_note@ b = null;
+	return;
+}
