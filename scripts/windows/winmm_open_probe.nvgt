@@ -19,11 +19,6 @@
 // device, because MidiOutWinMM::getPortCount() is midiOutGetNumDevs(): if an
 // input open succeeds where the output open fails, the failure belongs to the
 // output direction rather than to this process being unable to talk to winmm.
-const string DLL = "nvmidi";
-const int MMSYSERR_NOERROR = 0;
-
-// The synth, and the mapper - both are output devices winmm reports whether or
-// not a card is present. The mapper is the first entry on any windows machine.
 void main() {
 	print("W_BEGIN");
 	const uint OUTPUTS = midi_output_port_count();
@@ -60,7 +55,7 @@ void main() {
 	midi_output@ out = midi_output_create();
 	bool opened = false;
 	if (synth_index >= 0) {
-		opened = out.open(uint(synth_index), "probe");
+			opened = out.open(uint(synth_index), "probe");
 	} else {
 		print("W_SKIP no synth in the enumeration");
 	}
