@@ -406,6 +406,25 @@ jobs:
         run: |
           Write-Host "=== the sender's own account ==="
           if (Test-Path logs_e2e.txt) { Get-Content logs_e2e.txt } else { Write-Host "(no sender log)" }
+
+          # The lines that say which port was played into and how much went out
+          # are already in the file above, but they are buried in stdout that
+          # github folds by default and interleaved with the engine's own
+          # chatter, so a reader looking at a green run cannot see them without
+          # opening the fold. Repeated here as notices, which github lifts to
+          # the top of the job summary: a run that passes should say what it
+          # passed against, not only that it did.
+          #
+          # These are notices and not assertions - the steps below decide - so a
+          # missing line here cannot turn a real pass into a failure, and cannot
+          # turn a real failure into a pass either.
+          $s = if (Test-Path logs_e2e.txt) { Get-Content logs_e2e.txt -Raw } else { '' }
+          foreach ($m in [regex]::Matches($s, 'E2E_(?:OUTPUT_PORTS|CHOSEN|OPENED|PORT|SENT|END)\s*[^\r\n]*')) {
+            Write-Host "::notice::$($m.Value.Trim())"
+          }
+          $sent = [regex]::Matches($s, 'E2E_NOTE_SENT\s+\d+').Count
+          if ($sent -gt 0) { Write-Host "::notice::the script placed $sent note(s) on its own clock" }
+
           Write-Host "=== what was heard from outside ==="
           if (Test-Path logs_listen.txt) { Get-Content logs_listen.txt } else { Write-Host "(no listener log)" }
 
