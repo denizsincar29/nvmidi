@@ -445,7 +445,18 @@ static void trace_call(DWORD id, DWORD msg, DWORD_PTR p1) {
 	if (dot) *dot = 0;
 	strncat(path, ".trace.txt", sizeof(path) - strlen(path) - 1);
 	FILE *f = fopen(path, "ab");
-	if (!f) return;
+	// fopen failing is a real possibility here and it used to be silent, which
+	// made "no trace file" mean two different things at once: the entry point is
+	// never called, or the write never happened. Those are opposite findings -
+	// one says winmm does not load this driver at all, the other says it does -
+	// and the same empty result was being read as the first. The adjacent
+	// write_status has the same hole. The return value goes into the file's
+	// first line so the next empty search reports which of the two it was.
+	if (!f) {
+		f = fopen("nvmidi_trace_open_failed.txt", "ab");
+		if (f) { fputs("fopen failed for the trace path\n", f); fclose(f); }
+		return;
+	}
 	fprintf(f, "CALL msg=0x%04lx id=0x%08lx p1=0x%08lx\n",
 		(unsigned long)msg, (unsigned long)id, (unsigned long)(DWORD_PTR)p1);
 	fclose(f);

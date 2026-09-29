@@ -1090,15 +1090,36 @@ jobs:
         # trace says which answer.
         continue-on-error: true
         run: |
-          Get-ChildItem $env:RUNNER_TEMP\nvmidi -Filter *.trace.txt -ErrorAction SilentlyContinue | ForEach-Object {
-            Write-Host "trace $($_.FullName):"
-            Get-Content $_.FullName | ForEach-Object { Write-Host "  $_" }
+          # The earlier version of this step searched the runner temp directory
+          # and the workspace and found nothing, and that told us nothing: the
+          # trace is written beside the dll, and what "beside the dll" means
+          # depends on where windows loaded the copy from. A driver dll dropped
+          # on the loader path is loaded from there, so the file lands in that
+          # directory - python's own, one level above the DLLs folder - and not
+          # in the folder the step was looking at. The search now covers the
+          # loader's directory and the staging directory, and it prints the
+          # count rather than staying silent when it finds none, so the two
+          # readings - absent file, and file present but empty - are separable.
+          $dirs = @(
+            (Split-Path (Get-Command python).Source -Parent),
+            (Join-Path (Split-Path (Get-Command python).Source -Parent) 'DLLs'),
+            "$env:RUNNER_TEMP\loopback",
+            $env:GITHUB_WORKSPACE
+          ) | Select-Object -Unique
+          $found = 0
+          foreach ($d in $dirs) {
+            Write-Host "looking in $d"
+            Get-ChildItem $d -Filter *.trace.txt -ErrorAction SilentlyContinue | ForEach-Object {
+              $found++
+              Write-Host "trace $($_.FullName) ($($_.Length) bytes):"
+              Get-Content $_.FullName | ForEach-Object { Write-Host "  $_" }
+            }
+            Get-ChildItem $d -Filter nvmidi_trace_open_failed.txt -ErrorAction SilentlyContinue | ForEach-Object {
+              Write-Host "TRACE FILE COULD NOT BE OPENED: $($_.FullName)"
+              Get-Content $_.FullName | ForEach-Object { Write-Host "  $_" }
+            }
           }
-          Get-ChildItem . -Recurse -Filter *.trace.txt -ErrorAction SilentlyContinue | ForEach-Object {
-            Write-Host "trace $($_.FullName):"
-            Get-Content $_.FullName | ForEach-Object { Write-Host "  $_" }
-          }
-          Write-Host "trace scan done"
+          Write-Host "trace scan done, $found trace file(s) found"
 
       - name: keep both logs
         if: always()
