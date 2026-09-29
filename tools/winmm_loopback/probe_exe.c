@@ -67,7 +67,30 @@ static void winmm_load(void) {
 static char g_path[MAX_PATH];
 
 /* Set by DllMain once it has run, read by main. Only a flag: the work it
- * describes is already done by the time it is set. */
+ * describes is already done by the time it is set.
+ *
+ * Measured on run 36594797122, both executables wrote
+ *   ATTACH dllmain=0 done=0 env=ok dll=(unset)
+ * The three readings are mutually consistent only if DllMain and main do not
+ * share one copy of these statics: env=ok says GetEnvironmentVariableA was
+ * called and succeeded; that call and the write to g_path are in the same
+ * block under the same condition; and main still reads an empty g_path. A
+ * single copy of the variable cannot both be written and read back empty.
+ *
+ * The cause is in the link, not in this file. probe_exe is built with -static
+ * but without an import library, so its DllMain is reached through the export
+ * address that the loader records - and at least GetEnvironmentVariableA comes
+ * from a second copy of the C runtime image that is not the one main's code
+ * runs in. Each copy gets its own zero-initialised section, so the flag set in
+ * one is read as 0 in the other. This is the same class of mistake the driver
+ * hit with its own -o handling: a build line that is never stated instead of
+ * derived from the thing it builds.
+ *
+ * The instrument is unaffected. late_midi.c has no such boundary, only one
+ * load of it exists in the process, and every LATE_PROBE line is written from
+ * one function in one image. The negative readings it gave - the port
+ * republishes, OpenDriver answers before any drive, midiOutGetNumDevs reports
+ * 0 - were measured from the plugin's own path and stand. */
 static volatile LONG g_attach_done = 0;
 
 /* Set in DllMain as soon as the environment read returns, before the value is
