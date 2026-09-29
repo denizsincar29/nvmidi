@@ -38,6 +38,9 @@
 // reports for itself, the handshake is not the gate - and if it differs, the
 // difference is the finding.
 //
+// It also calls the entry point once, with a deliberately wrong version, to
+// put the plugin's own mismatch line on stdout. See the comment at that call.
+//
 // This is a probe. It is not the shipping fix for the runner half, and it goes
 // away once the number has been read.
 
@@ -47,10 +50,12 @@
 #include "plug_blob.h"
 
 typedef int (*version_func)();
+typedef bool (*entry_func)(void*);
 
 int main(void) {
     HMODULE h;
     version_func vf;
+    entry_func entry;
     int v;
 
     h = LoadLibraryA("nvmidi.dll");
@@ -62,5 +67,31 @@ int main(void) {
 
     v = vf();
     printf("the dll was compiled against plugin api version %d\n", v);
+
+    // Read: is the line the plugin writes on a version mismatch the engine's
+    // own line, or the plugin's? That decides whether the plugin's stderr
+    // reaches anything at all - and until it does, every silent registration
+    // has two readings and no way to pick between them.
+    //
+    // The blob is the struct in plug_blob.h: version first, zeroes behind it.
+    // It is NOT nvgt's real nvgt_plugin_shared - only the version field is
+    // read before the mismatch returns, so only that field has to be right.
+    //
+    // Give it the WRONG version on purpose. prepare_plugin compares the field
+    // against its own NVGT_PLUGIN_API_VERSION and returns false *before*
+    // touching a single function pointer (src/nvgt_plugin.h:157), so the
+    // plugin prints its one line and stops. No call through a null pointer is
+    // reachable this way, which is what makes the deliberately-wrong number
+    // the safe one to hand it - the version it actually wants is the one that
+    // would carry it on to asPrepareMultithread and fault.
+    blob.version = (unsigned int)(v + 1);
+    entry = (entry_func)GetProcAddress(h, "nvgt_plugin");
+    printf("nvgt_plugin=%p\n", (void*)entry);
+    if (!entry) { printf("no nvgt_plugin export\n"); return 5; }
+
+    printf("--- calling the entry point with a deliberately wrong version ---\n");
+    fflush(stdout);
+    printf("returned %d\n", entry(&blob) ? 1 : 0);
+    printf("--- end of the entry point's attempt ---\n");
     return 0;
 }
