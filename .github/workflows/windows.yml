@@ -97,47 +97,62 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "the driver probe exited $LASTEXITCODE" }
           if (Test-Path $crash) { Write-Host "crash: $(Get-Content $crash -Raw)" }
 
-      - name: what the registry says about the driver
+      - name: where windows keeps its midi drivers
         shell: pwsh
-        # The driver reports open-failed with error=0: winmm would not start it
-        # and would not say why. Three runs and two code changes later the one
-        # thing never measured is whether the value the driver writes is
-        # visible to anything else in a later process. If the value does not
-        # land, or lands under a name nobody reads, the fault is in the write.
-        # If it lands and winmm still refuses, the fault is on winmm's side and
-        # no amount of arranging this file will reach it. That fork is what
-        # this step settles, and it costs a registry read.
+        # The previous dump answered half the question and raised the other
+        # half. The value we write is there, under the right name, pointing at
+        # the right file - and the plugin's own process still enumerates one
+        # output device, the phantom at index 0. If the driver had been found
+        # and loaded, our own port would be in that list. So winmm is not
+        # reading the key we are writing, and the only way to find the key it
+        # does read is to look where a real, working midi port leaves its
+        # entries. This dumps every location winmm is known to consult, plus
+        # the 32-bit mirrors and the mapper's own key, so the next change has
+        # a measured target instead of a plausible one.
         continue-on-error: true
         run: |
           $py = @'
           import winreg
-          p = r'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Drivers32'
-          for hive, name in ((winreg.HKEY_LOCAL_MACHINE, 'HKLM'), (winreg.HKEY_CURRENT_USER, 'HKCU')):
+          def dump(root, path, label):
               try:
-                  k = winreg.OpenKey(hive, p, 0, winreg.KEY_READ)
+                  k = winreg.OpenKey(root, path, 0, winreg.KEY_READ)
               except OSError as e:
-                  print('%s %s unreadable: %s' % (name, p, e)); continue
-              n = winreg.QueryInfoKey(k)[1]
-              for i in range(n):
+                  print('%s MISSING: %s' % (label, e)); return
+              nsub, nval, _ = winreg.QueryInfoKey(k)
+              print('%s: %d subkeys, %d values' % (label, nsub, nval))
+              for i in range(nval):
                   vn, vd, vt = winreg.EnumValue(k, i)
-                  if vn.startswith('midi'):
-                      print('%s %s = %s' % (name, vn, vd))
+                  print('   %s = %s' % (vn, vd))
+              for i in range(nsub):
+                  sn = winreg.EnumKey(k, i)
+                  print('   [sub] %s' % sn)
+                  try:
+                      sk = winreg.OpenKey(k, sn, 0, winreg.KEY_READ)
+                      for j in range(winreg.QueryInfoKey(sk)[1]):
+                          vn, vd, vt = winreg.EnumValue(sk, j)
+                          print('        %s = %s' % (vn, vd))
+                      winreg.CloseKey(sk)
+                  except OSError as e:
+                      print('        unreadable: %s' % e)
               winreg.CloseKey(k)
-          m = r'Software\Microsoft\Windows\CurrentVersion\Multimedia\MIDIMap'
-          try:
-              k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, m, 0, winreg.KEY_READ)
-              n = winreg.QueryInfoKey(k)[1]
-              print('MIDIMap values: %d' % n)
-              for i in range(n):
-                  vn, vd, vt = winreg.EnumValue(k, i)
-                  print('MIDIMap %s = %s' % (vn, vd))
-          except OSError as e:
-              print('MIDIMap unreadable: %s' % e)
+
+          HKLM = winreg.HKEY_LOCAL_MACHINE
+          dumps = [
+           (HKLM, r'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Drivers32', 'Drivers32'),
+           (HKLM, r'SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\Drivers32', 'Drivers32 WOW6432'),
+           (HKLM, r'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Drivers', 'Drivers (MEDIA)'),
+           (HKLM, r'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Userinstallable.drivers', 'Userinstallable.drivers'),
+           (HKLM, r'SOFTWARE\Microsoft\Windows\CurrentVersion\Drivers32', 'WinVer Drivers32'),
+           (winreg.HKEY_CURRENT_USER, r'Software\Microsoft\Windows\CurrentVersion\Multimedia\MIDIMap', 'HKCU MIDIMap'),
+           (winreg.HKEY_CURRENT_USER, r'Software\Microsoft\Windows\CurrentVersion\Multimedia\SystemProfile', 'HKCU SystemProfile'),
+          ]
+          for r, p, l in dumps:
+              dump(r, p, l)
           '@
-          $py | Set-Content -Encoding utf8 "$env:RUNNER_TEMP\reg.py"
-          python -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$env:RUNNER_TEMP\reg.py"
-          if ($LASTEXITCODE -ne 0) { throw "the registry probe script does not parse" }
-          python "$env:RUNNER_TEMP\reg.py"
+          $py | Set-Content -Encoding utf8 "$env:RUNNER_TEMP\regkeys.py"
+          python -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$env:RUNNER_TEMP\regkeys.py"
+          if ($LASTEXITCODE -ne 0) { throw "the registry key probe does not parse" }
+          python "$env:RUNNER_TEMP\regkeys.py"
 
       - name: keep the driver next to the dll
         uses: actions/upload-artifact@v4
