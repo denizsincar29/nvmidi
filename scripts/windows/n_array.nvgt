@@ -1,0 +1,43 @@
+// probe: n_array
+#pragma plugin nvmidi
+
+// The candidate, and the run that put it here.
+//
+// Run 36638827355 refused midi_input and midi_output as declared types while
+// midi_note and midi_config declared without a word. Two of those four names
+// were registered at a real size and two at 0 - but in both pairs one name
+// worked and one did not, so size was never the common term and the size line
+// was never the cause. The registrations differ in one other way, and it is
+// the same way for both broken names and absent for both working ones:
+//
+//   midi_note    : RegisteredObjectType, properties, methods - no array
+//   midi_config  : RegisteredObjectType, properties, methods - no array
+//   midi_input   : ... then play_chord(array<midi_note@>@ notes)
+//   midi_output  : ... then play_chord(array<midi_note@>@ notes)
+//
+// The array type is the engine's own registered script array, and a method
+// declaration that names it can fail to register. This plugin registers
+// nothing else that mentions it. The claim is therefore that the port type
+// registration stops at the first array method, leaving the port name
+// half-built in a way a script sees as "not a data type".
+//
+// This file does not test that claim and must not be read as testing it: the
+// plugin it runs against has had the array methods left alone in the source
+// and the size line changed, so a clean result here would not separate the
+// two. It is a regression guard. If a future run shows these declarations
+// accepted, the array is exonerated along with the size; if they are refused
+// again, both candidates are alive and the next file to write is one that
+// asks the engine for the array type alone, by name, with no port in it.
+void main() {
+	print("ARRAY_BEGIN");
+
+	midi_message m;
+	midi_duration u;
+	midi_note@ n = null;
+	midi_config@ c = null;
+	midi_input@ in = null;
+	midi_output@ out = null;
+	print("ARRAY_DECLS_OK");
+
+	print("ARRAY_END ");
+}

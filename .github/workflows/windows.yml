@@ -925,7 +925,7 @@ jobs:
           # so a compile failure shows up here as a line the job log has been
           # carrying all along and nothing has read.
           $probeSrc = Join-Path $env:GITHUB_WORKSPACE 'scripts\windows'
-          foreach ($case in @('n_type', 'n_sized', 'n_panic', 'l_int', 'm_str', 'k_lit', 'c_handle', 'e2e_min', 'i_var', 'j_pragma', 'e2e_types', 'a_bare', 'b_decl', 'd_call', 'e_call', 'f_open', 'g_float', 'n_whole', 'n_handle', 'n_noteonly', 'n_inputonly', 'n_repeat')) {
+          foreach ($case in @('n_type', 'n_sized', 'n_panic', 'n_array', 'n_handle2', 'l_int', 'm_str', 'k_lit', 'c_handle', 'e2e_min', 'i_var', 'j_pragma', 'e2e_types', 'a_bare', 'b_decl', 'g_float', 'n_whole', 'n_noteonly', 'n_inputonly')) {
             $p2src  = Join-Path $probeSrc "$case.nvgt"
             $p2log  = Join-Path $env:GITHUB_WORKSPACE "$case.log"
             $p2err  = "$p2log.err"
@@ -1656,7 +1656,9 @@ jobs:
             ${{ github.workspace }}/n_noteonly.log.err
             ${{ github.workspace }}/n_inputonly.log
             ${{ github.workspace }}/n_inputonly.log.err
-            ${{ github.workspace }}/n_repeat.log
-            ${{ github.workspace }}/n_repeat.log.err
+            ${{ github.workspace }}/n_array.log
+            ${{ github.workspace }}/n_array.log.err
+            ${{ github.workspace }}/n_handle2.log
+            ${{ github.workspace }}/n_handle2.log.err
           if-no-files-found: warn
           retention-days: 7

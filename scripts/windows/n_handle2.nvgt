@@ -1,0 +1,38 @@
+// probe: n_handle2
+#pragma plugin nvmidi
+
+// The array type and the port type, asked for separately, in a script that
+// makes no call at all.
+//
+// n_array.nvgt declares the ports and stops there. This file goes one step
+// further and asks the engine for the array type itself, spelled the way the
+// plugin spells it, with no port anywhere in the file. If `array<midi_note@>@`
+// is refused here, then the array type is the thing that does not survive the
+// registration and the port methods were never the fault. If it is accepted,
+// the array is fine and the fault is in the port registration itself.
+//
+// The second question is the array spelling, not the port spelling, and it is
+// asked of midi_note - the one type measured to declare cleanly. A port name
+// must not appear anywhere in this file: run 36638827355 showed that declaring
+// a port in the same translation unit costs midi_note its data type (see
+// n_noteonly and n_repeat), and a file that declares both would answer its own
+// question with its own contamination.
+//
+// `array<midi_note@>@ notes` is the by-handle spelling. It is the one that
+// stood in the plugin's registration lines until this commit. If it is refused
+// here while `midi_note@ n` in the line above is accepted, the array spelling
+// is the fault and the port methods were collateral. If it is accepted, the
+// array is exonerated and what remains is the port registration itself.
+void main() {
+	print("HANDLE2_BEGIN");
+
+	print("BLOCK_NOTE");
+	midi_note@ n2 = null;
+	print("BLOCK_NOTE_OK");
+
+	print("BLOCK_ARRAY");
+	array<midi_note@>@ notes = null;
+	print("BLOCK_ARRAY_OK");
+
+	print("HANDLE2_END");
+}

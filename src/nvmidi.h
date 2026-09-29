@@ -182,8 +182,8 @@ midi_note* midi_note_create_ms(int pitch, int velocity, double duration_ms);
 // Copies the notes that go to a music class, resolving every length against
 // that class's tempo: read_notes overloads the tempo from the class while
 // read_notes_at leaves the tempo written into each note in charge.
-bool read_notes(CScriptArray* notes, double tempo, std::vector<midi_note>& out);
-bool read_notes_at(CScriptArray* notes, std::vector<midi_note>& out);
+bool read_notes(CScriptArray& notes, double tempo, std::vector<midi_note>& out);
+bool read_notes_at(CScriptArray& notes, std::vector<midi_note>& out);
 
 // One MIDI message queued for the script to read.
 // Messages arrive on RtMidi's own thread, so they are buffered here and
@@ -203,17 +203,17 @@ public:
 	// sent back out and the keyboard's own sound engine makes them heard. For
 	// a keyboard with a built in synth this is the shortest way to sound a
 	// chord without writing any synthesis. Blocks until the chord is over.
-	bool play_chord(CScriptArray* notes);
-	bool play_chord_wait(CScriptArray* notes);
+	bool play_chord(CScriptArray& notes);
+	bool play_chord_wait(CScriptArray& notes);
 	bool play_note(const midi_note& note);
 	bool play_note_wait(const midi_note& note);
 	// The same patterns midi_output offers, played through the keyboard's own
 	// engine: the notes go back out of the port they came from, so a script
 	// that only ever talks to one device needs this class alone.
-	bool play_midi_chord(CScriptArray* notes, const std::string& pattern);
-	bool play_midi_chord_wait(CScriptArray* notes, const std::string& pattern);
+	bool play_midi_chord(CScriptArray& notes, const std::string& pattern);
+	bool play_midi_chord_wait(CScriptArray& notes, const std::string& pattern);
 	// The notes one after another, each for its own length.
-	bool play_sequence(CScriptArray* notes);
+	bool play_sequence(CScriptArray& notes);
 	// A duration written at this class's tempo: a chord whose length is
 	// "one beat" is one beat at the tempo set here, not always at 120.
 	midi_duration duration(double amount, int unit) const;
@@ -306,8 +306,8 @@ public:
 	//
 	// Both return false when there is no open port or the array is empty,
 	// with midi_last_error() saying which.
-	bool play_chord(CScriptArray* notes);
-	bool play_chord_wait(CScriptArray* notes);
+	bool play_chord(CScriptArray& notes);
+	bool play_chord_wait(CScriptArray& notes);
 
 	// One note, with the same split: play_note returns at once and schedules
 	// the release, play_note_wait returns when the note has finished.
@@ -336,12 +336,12 @@ public:
 	// has been released. A script that wants to do something while a pattern
 	// plays should call the non waiting variants or drive the raw send_*
 	// calls from its own clock.
-	bool play_midi_chord(CScriptArray* notes, const std::string& pattern);
-	bool play_midi_chord_wait(CScriptArray* notes, const std::string& pattern);
+	bool play_midi_chord(CScriptArray& notes, const std::string& pattern);
+	bool play_midi_chord_wait(CScriptArray& notes, const std::string& pattern);
 
 	// Plays the notes one after another, each for its own length. Blocking,
 	// so a scale sounds as a scale and not as a chord.
-	bool play_sequence(CScriptArray* notes);
+	bool play_sequence(CScriptArray& notes);
 
 	// Sends one message. The three bytes are the raw MIDI bytes, so
 	// send(0x90, 60, 100) is a note-on on channel 1.

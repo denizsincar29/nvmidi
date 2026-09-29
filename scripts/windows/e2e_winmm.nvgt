@@ -574,8 +574,9 @@ void main() {
 		// The factory's result is a handle, and a handle is what insert_last
 		// takes - `@n` would be a handle *to* the variable n, not the object
 		// the factory made, and the element type of the array is midi_note@.
-		// The array itself is declared bare for the same reason the port is:
-		// `array<midi_note@>@` is refused at the declaration.
+		// The array is declared bare because that is how it is passed to the
+		// chord methods, which take it by reference: the script names the
+		// array's own type, not a handle to it.
 		array<midi_note@> chord = array<midi_note@>();
 		uint[]@ chord_pitches = {60, 64, 67};
 		for (uint i = 0; i < 3; i++) {
