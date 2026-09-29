@@ -22,7 +22,14 @@ cd "$(dirname "$0")"
 OUT="nvmidi-loopback.exe"
 if [ "${1:-}" = "-o" ]; then
 	[ -n "${2:-}" ] || { echo "-o needs a path" >&2; exit 2; }
-	OUT="$2"
+	# Resolved against the directory the caller is standing in, before the cd
+	# above moves us. A relative -o that meant "right here" would silently
+	# write into tools/winmm_loopback/ instead, and the caller - the ci job -
+	# would go looking at the path it asked for and find nothing there.
+	case "$2" in
+		/*) OUT="$2" ;;
+		*)  OUT="$OLDPWD/$2" ;;
+	esac
 fi
 
 CC="${CC:-x86_64-w64-mingw32-gcc}"

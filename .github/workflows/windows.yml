@@ -33,10 +33,13 @@ jobs:
       - name: build the loopback driver
         shell: bash
         # -o puts the dll where the artifact upload and the e2e's staged copy
-        # both expect it. Leaving it in a build/ subdirectory made the e2e
-        # report the driver as never built while it was sitting there compiled
-        # and correct, which is a worse failure than a compile error: it sends
-        # the reader after a build problem that does not exist.
+        # both expect it. build.sh resolves a relative -o against the caller's
+        # directory, so this path is a path in the workspace and not one inside
+        # the driver's own folder. That distinction is the whole bug this flag
+        # is here for: without it the driver landed in a build/ subdirectory,
+        # and then - once - at a path nobody looked at, which the e2e read as
+        # a driver that was never built. That reading sends the reader after a
+        # compile problem that does not exist, which is worse than an error.
         run: bash tools/winmm_loopback/build.sh -o tools/winmm_loopback/nvmidi-loopback.exe
 
       # The driver has to reach the e2e job, which runs on a different runner:
