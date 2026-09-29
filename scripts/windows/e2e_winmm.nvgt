@@ -180,3 +180,220 @@ string bytes_of_object_port_name(midi_output@ o) {
 	}
 	return s;
 }
+
+void main() {
+	print("E2E_BEGIN");
+
+	// The two lists have to describe the same run, and a mismatch would be
+	// read as a timing fault further down, so it is named here where it is.
+	// The count is taken from the melody rather than written beside it: a
+	// constant that drifted from the list it sizes would make the timing
+	// check below measure the wrong interval without ever saying so.
+	if (g_note.length() != g_vel.length()) {
+		fail("the melody has " + g_note.length() + " notes and " + g_vel.length() + " velocities, so the two lists do not describe the same run");
+		print("E2E_END failures=" + failures);
+		return;
+	}
+	const uint NOTES = g_note.length();
+	// Read by the listener, which is already looking for this line: the port
+	// name below is deterministic (winmm ports are), but the *number* the
+	// plugin addresses them by is not, and the listener needs the name.
+	print("nvmidi e2e winmm is open");
+
+	// A name to prefer, handed in by the job. The runner this runs on has no
+	// loopback driver - measured, not assumed - so the port that is actually
+	// there is the synth windows ships with, and the job passes its name in
+	// rather than this file hard coding a vendor string that differs between
+	// windows versions and locales.
+	// The hint arrives as a word after `--`, so it is in COMMAND_LINE and not
+	// in an `args` array. The linux script reads it the same way, and that
+	// script compiles on every push - `args` has never been confirmed to exist
+	// in this engine at all, and an unconfirmed identifier in the first lines
+	// of main is a compilation error that runs nothing and prints no marker.
+	string hint = "";
+	const string[]@ words = COMMAND_LINE.split(" ");
+	for (uint i = 0; i < words.length(); i++) {
+		const string word = words[i].trim_whitespace();
+		if (word.length() == 0) continue;
+		hint = word;
+		break;
+	}
+	if (hint != "") print("E2E_HINT " + hint);
+
+	string api = "";
+	for (int i = 0; i < midi_api_name_byte_count(); i++) api += char_of(midi_api_name_byte(i));
+	if (api == "") {
+		fail("midi_api_name returned nothing, so the plugin is not registered");
+		print("E2E_END failures=" + failures);
+		return;
+	}
+	ok("LOADED " + api);
+
+	// The dummy backend compiles, loads, registers, opens nothing and prints
+	// every line below this one. That is the failure mode this whole job
+	// exists to catch, so it is a failure here, not a note.
+	if (api.find("Dummy") >= 0) {
+		fail("the backend is Dummy: it will open no port and deliver no note, so nothing this script claims would be true");
+		print("E2E_END failures=" + failures);
+		return;
+	}
+	if (api.find("Windows") < 0 && api.find("MM") < 0) {
+		fail("expected a windows midi backend, got " + api + ": this script and its listener only make sense against winmm");
+		print("E2E_END failures=" + failures);
+		return;
+	}
+	ok("BACKEND " + api);
+
+	// --- what this machine offers ------------------------------------------
+	//
+	// Enumerated before anything is opened, and printed in full, because the
+	// listener has to be given a port by name and this is the only place the
+	// names exist. A runner with no midi output at all says 0 here, and that
+	// is the machine's shape rather than the plugin's bug - the same
+	// distinction the alsa script draws around E2E_NO_BUS.
+	const uint outs = midi_output_port_count();
+	print("E2E_OUTPUT_PORTS " + outs);
+	for (uint i = 0; i < outs; i++) {
+		print("E2E_OUTPUT_PORT " + i + " " + bytes_of_output_port_name(i));
+	}
+
+	// --- pick one -----------------------------------------------------------
+	//
+	// The order is deliberate. A virtual port cannot exist on this platform,
+	// so a build that believes it made one is lying; and a real device port is
+	// what a user's keyboard is. Loopback first, then a synth, then whatever
+	// is there - the runner is a windows machine, so the fallback always
+	// matches something, and the name in the log says which was chosen.
+	int chosen = -1;
+	string chosen_name = "";
+	for (uint i = 0; i < outs; i++) {
+		const string n = bytes_of_output_port_name(i);
+		if (chosen < 0) chosen = int(i);
+		// Case insensitive without a lower-case helper: the engine has no
+		// to_lowercase on string (measured - "No matching symbol 'to_lowercase'"
+		// at this line), and port names differ from the job's hint in case on
+		// some windows builds, so an exact find() would silently pick the wrong
+		// port and the listener would hear nothing.
+		if (chosen_name == "" && hint != "" && matches_ignoring_case(n, hint)) {
+			chosen = int(i);
+			chosen_name = n;
+		}
+		if (chosen_name == "" && (matches_ignoring_case(n, "loopbe") || matches_ignoring_case(n, "loopmidi")
+			|| matches_ignoring_case(n, "virtual") || matches_ignoring_case(n, "loop"))) {
+			chosen = int(i);
+			chosen_name = n;
+		}
+	}
+	if (chosen < 0) {
+		print("E2E_NO_BUS no midi output port exists on this machine, so nothing can be played into anything");
+		note("the machine has no midi out at all: the runner's configuration, not the plugin's behaviour");
+		print("E2E_END failures=" + failures);
+		return;
+	}
+	if (chosen_name == "") chosen_name = bytes_of_output_port_name(chosen);
+	ok("PORTS " + outs);
+	ok("CHOSEN " + chosen_name);
+
+	// --- open it ------------------------------------------------------------
+	midi_output@ port = midi_output_create();
+	if (!port.open(chosen, "nvmidi e2e windows")) {
+		fail("cannot open output port " + chosen + " (" + chosen_name + "): " + bytes_of_last_error());
+		print("E2E_END failures=" + failures);
+		return;
+	}
+	ok("OPENED " + bytes_of_object_port_name(port));
+	// Handed to the listener, which needs it for its own open() call and gets
+	// it from this line rather than from winmm's numbering order, which is not
+	// guaranteed to match the enumeration above under two processes.
+	print("E2E_PORT " + chosen_name);
+
+	// --- the send half of the api -------------------------------------------
+	//
+	// Every write call the plugin has, not just note on/off, and the listener
+	// checks all of them. A backend that drops one class of message is a real
+	// bug - the winmm path goes through one packed word per message, and the
+	// packing is where that kind of drop happens.
+	port.send_note_on(0, g_note[0], g_vel[0]);
+	port.send_note_off(0, g_note[0], 0);
+	port.send_control_change(0, 7, 100);
+	port.send_control_change(0, 10, 64);
+	port.send_program_change(0, 24);
+	port.send_pitch_bend(0, 8192);
+	port.send_sysex("\\xF0\\x7E\\x7F\\x09\\x01\\xF7");
+	note("wrote one of each message class before the melody, so the listener can check them all");
+
+	// --- the melody ---------------------------------------------------------
+	//
+	// Timed by the engine's own clock rather than by sleeping: the whole point
+	// of the listener's timestamps is that it can tell a note played on time
+	// from a note played in a burst at the end, and that comparison needs the
+	// sender to have actually spaced them.
+	//
+	// The interval is sent to the listener as a line of its own before the
+	// first note, which is what makes the comparison possible without either
+	// side guessing. 60 is middle C; the engine's clock is milliseconds.
+	print("E2E_GAP " + GAP_MS + " " + HOLD_MS);
+	uint start = ticks();
+	for (uint i = 0; i < NOTES; i++) {
+		const uint due = start + i * GAP_MS;
+		while (ticks() < due) wait(1);
+		port.send_note_on(0, g_note[i], g_vel[i]);
+		uint off_due = ticks() + HOLD_MS;
+		while (ticks() < off_due) wait(1);
+		port.send_note_off(0, g_note[i], 0);
+		print("E2E_NOTE_SENT " + i + " " + g_note[i] + " " + g_vel[i] + " at " + (ticks() - start));
+	}
+	print("E2E_SENT sequence");
+	// The engine's own millisecond clock is the instrument for those numbers,
+	// so a clock that does not advance would make every event look
+	// simultaneous. Reported rather than assumed.
+	const uint elapsed = ticks() - start;
+	if (elapsed < (NOTES - 1) * GAP_MS) {
+		fail("the melody took " + elapsed + " ms, which is less than its own spacing: the engine clock did not advance and the timing in the listener's log is not evidence of anything");
+	}
+
+	if (port.is_open()) ok("OUTPUT OK " + bytes_of_object_port_name(port));
+	else fail("the output port reports itself closed right after sending");
+
+	// --- the high level layer, playing out of the same port -----------------
+	//
+	// play_chord_wait opens the port at a given index and plays through it. If
+	// it does not open, the chord is reported as a failure rather than skipped:
+	// this is the call every example in the repository uses.
+	if (port.open(chosen, "nvmidi e2e windows")) {
+		array<midi_note@>@ chord = array<midi_note@>();
+		uint[]@ chord_pitches = {60, 64, 67};
+		for (uint i = 0; i < 3; i++) {
+			midi_note@ n = nvmidi_note_create(chord_pitches[i]);
+			n.velocity = 100;
+			n.length = midi_duration(100, MIDI_MS);
+			chord.insert_last(@n);
+		}
+		if (port.play_chord_wait(chord)) ok("PLAYED chord");
+		else fail("play_chord_wait refused: " + bytes_of_last_error());
+
+		string[]@ patterns = {"chord", "spread", "arpeggio", "quick", "fast", "strum", "repeat"};
+		for (uint i = 0; i < patterns.length(); i++) {
+			if (port.play_midi_chord_wait(chord, patterns[i])) ok("PLAYED " + patterns[i]);
+			else fail("pattern " + patterns[i] + " refused: " + bytes_of_last_error());
+		}
+		// The listener counts what arrives; these came through the same port as
+		// the melody, so its total is a lower bound on how many of the notes
+		// above actually left the process.
+		note("played the chord in seven schemes through the same port");
+	} else {
+		fail("cannot reopen the port for the chord: " + bytes_of_last_error());
+	}
+
+	// A moment for the last note to leave the port before the process exits:
+	// winmm's queue is drained by the driver, not by us, and a process that
+	// goes away immediately can take an undelivered message with it. Long
+	// enough to cover a runner under load, short enough not to look like a
+	// hang if it is the last thing in the job.
+	wait(1500);
+
+	port.close();
+	print("E2E_END failures=" + failures);
+	// The count is the summary and the job greps for it, the same contract the
+	// alsa script has: the engine's exit code is about the engine.
+}
