@@ -428,7 +428,10 @@ static DWORD WINAPI publish_thread(LPVOID unused) {
 	// the live one and the port it published is the one to use. Measured, from
 	// a run where the publish thread ran again after the listener had already
 	// loaded the file.
-	if (!h && h != HDRVR(-1)) {
+	// The compare is on an integer cast and not on HDRVR(-1): this compiler
+	// will not cast a literal into the handle type, and both lines that tried
+	// it were a build error rather than a runtime one.
+	if (!h && (long long)h != -1) {
 		write_status("LOOPBACK_STATUS=open-failed");
 		return 0;
 	}
@@ -443,7 +446,7 @@ static DWORD WINAPI publish_thread(LPVOID unused) {
 	// debugging the build after a bug that is not in this file.
 	snprintf(report, sizeof(report),
 		"LOOPBACK_STATUS=%s slot=%s outputs=%u inputs=%u inputs_before=%u",
-		(h == HDRVR(-1)) ? "stale" : "ok", slot8, outs, ins, g_inputs_before);
+		((long long)h == -1) ? "stale" : "ok", slot8, outs, ins, g_inputs_before);
 	write_status(report);
 	// The handle is held, not closed: this thread is the device's lifetime.
 	for (;;) Sleep(1000);
