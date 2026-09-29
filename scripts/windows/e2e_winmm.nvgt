@@ -61,11 +61,15 @@
 // hand here rather than by a call that does not exist.
 //
 // Only ascii is folded, which is the whole of the alphabet these names use.
+// Written as a rebuild rather than an in-place edit: indexing a string hands
+// back a string of length one ("Can't implicitly convert from 'const string'
+// to 'uint'" at the line below, measured), and there is no set-char here, so
+// the folded copy is assembled from the parts either side of each letter.
 string fold_case(const string&in text) {
-	string folded = text;
-	for (uint i = 0; i < folded.length(); i++) {
-		const uint c = folded[i];
-		if (c >= 65 && c <= 90) folded[i] = c + 32;
+	string folded = "";
+	for (uint i = 0; i < text.length(); i++) {
+		const uint c = text[i][0];
+		folded += (c >= 65 && c <= 90) ? string(c + 32) : text.substr(i, 1);
 	}
 	return folded;
 }
