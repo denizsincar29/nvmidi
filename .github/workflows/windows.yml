@@ -338,8 +338,15 @@ jobs:
       # listener that is already waiting.
       - name: play the melody (script)
         shell: cmd
+        # The script path is built from GITHUB_WORKSPACE and not from %~dp0.
+        # %~dp0 is the directory of the .cmd file github writes this step into,
+        # which lives under RUNNER_TEMP, not in the checkout - so the step has
+        # been asking nvgt for a script that does not exist, in every run since
+        # it was written, and the only trace was one line in the runner's own
+        # log: "error: Path not found: D:\a\_temp\scripts\...". Nothing in the
+        # job read that line, so it read as "nvgt never started".
         run: |
-          start /b cmd /c ""%NVGT_DIR%\nvgt.exe" "%~dp0scripts\windows\e2e_winmm.nvgt" -- "%SYNTH_HINT%" > "%GITHUB_WORKSPACE%\logs_e2e.txt" 2>&1"
+          start /b cmd /c ""%NVGT_DIR%\nvgt.exe" "%GITHUB_WORKSPACE%\scripts\windows\e2e_winmm.nvgt" -- "%SYNTH_HINT%" > "%GITHUB_WORKSPACE%\logs_e2e.txt" 2>&1"
 
       - name: wait for the script to name its port
         shell: pwsh
