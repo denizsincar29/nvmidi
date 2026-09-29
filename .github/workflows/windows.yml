@@ -114,14 +114,80 @@ jobs:
 
       - name: does the device list depend on who attaches first
         shell: pwsh
-        # NEUTRALISED (temporary measurement). Case 3 or 4 crashed with
-        # 0xC0000005 BEFORE the matrix step ran, or at case 1. This run has the
-        # matrix step reduced to a marker so "did the crash happen inside the
-        # matrix, or before it" is an answer rather than a guess. Reverted in
-        # the commit that follows.
+        # The matrix, run in one place so the four answers can be read against
+        # each other. Every line ends in the same two numbers - how many output
+        # devices winmm reports and whether the mapper opens - and the directory
+        # each probe writes its own file into is printed as it is produced
+        # rather than searched for afterwards.
         continue-on-error: true
         run: |
-          Write-Host "probe matrix neutralised for this run"
+          $env:PYTHONNOUSERSITE = '1'
+          $py = Split-Path (Get-Command python).Source -Parent
+          $dlls = Join-Path $py 'DLLs'
+          $probe = "$env:RUNNER_TEMP\probe"
+          $play = "$env:RUNNER_TEMP\play"
+          New-Item -ItemType Directory -Force -Path $play | Out-Null
+          Copy-Item "$probe\late_midi.dll" "$dlls\winmm.dll" -Force
+
+          Write-Host "=== 1. winmm replaced by the probe, then python runs ==="
+          Write-Host "(the list is built the moment winmm is first pulled in, so"
+          Write-Host " the slot this file publishes at attach is as late as it gets)"
+          python -c "print('python ok')" 2>&1 | ForEach-Object { Write-Host "  $_" }
+          Get-ChildItem $dlls -Filter late_midi.status -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "  $($_.FullName):"; Get-Content $_.FullName | ForEach-Object { Write-Host "    $_" }
+          }
+          Get-ChildItem $py -Filter late_midi.status -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "  $($_.FullName):"; Get-Content $_.FullName | ForEach-Object { Write-Host "    $_" }
+          }
+
+          Write-Host "=== 2. winmm back to normal, the slot stays published ==="
+          Copy-Item "$env:SystemRoot\System32\winmm.dll" "$dlls\winmm.dll" -Force
+          python -c "print('python ok')" 2>&1 | ForEach-Object { Write-Host "  $_" }
+
+          # Run one probe and say out loud what came back. The previous version
+          # of this step called the binary and printed its output, and printed
+          # nothing at all for both cases - which is the same picture whether
+          # the process never started, started and wrote nothing, or wrote
+          # somewhere this step does not look. A missing file and an exit code
+          # are what tell those apart, so both are printed for every case
+          # before any status file is read.
+          function Run-Probe($label, $exe, $dll) {
+            Write-Host $label
+            if (-not (Test-Path $exe)) { Write-Host "  MISSING BINARY: $exe"; return }
+            if ($dll) { $env:NVPROBE_DLL = $dll }
+            $out = & $exe 2>&1
+            $code = $LASTEXITCODE
+            if ($out) { $out | ForEach-Object { Write-Host "  $_" } }
+            else { Write-Host "  (no stdout)" }
+            Write-Host "  exit code: $code"
+          }
+
+          Write-Host "=== 3. our dll loaded before winmm is touched, no winmm import ==="
+          # Late-bound, because NVPROBE_DLL is read inside DllMain and that
+          # runs before main() ever sees argv - the environment is the only
+          # channel that is filled in that early.
+          Run-Probe "  probe_noexe, no winmm import" "$probe\probe_noexe.exe" "$probe\late_midi_as_exe.dll"
+          Get-ChildItem $play -Filter late_midi.status -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "  $($_.FullName):"; Get-Content $_.FullName | ForEach-Object { Write-Host "    $_" }
+          }
+          if (-not (Test-Path "$play\late_midi.status")) { Write-Host "  no late_midi.status in $play" }
+
+          Write-Host "=== 4. same dll, executable that links winmm ==="
+          Run-Probe "  probe_exe, winmm in the import table" "$probe\probe_exe.exe" $null
+          Get-ChildItem $play -Filter late_midi.status -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "  $($_.FullName):"; Get-Content $_.FullName | ForEach-Object { Write-Host "    $_" }
+          }
+          if (-not (Test-Path "$play\late_midi.status")) { Write-Host "  no late_midi.status in $play" }
+
+          Write-Host "=== 5. a fresh winmm, slot already in the registry ==="
+          Write-Host "(python has never run in this step until now, so its winmm is loaded here)"
+          python -c "print('warm')" 2>&1 | ForEach-Object { Write-Host "  $_" }
+
+          Write-Host "--- every status file this step produced ---"
+          Get-ChildItem $env:RUNNER_TEMP -Recurse -Filter *.status -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "$($_.FullName):"; Get-Content $_.FullName | ForEach-Object { Write-Host "  $_" }
+          }
+          Write-Host "probe matrix done"
 
       - name: where windows keeps its midi drivers
         shell: pwsh
