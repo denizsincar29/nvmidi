@@ -903,14 +903,26 @@ jobs:
             if (-not $dbg) {
               Write-Host "no cdb.exe on this runner, so the faulting stack cannot be read here"
             } else {
-              $dump = Join-Path $env:GITHUB_WORKSPACE 'crash_e2e.txt'
-              # -o opens the crash dump rather than a live process, so the
-              # debugger never has to attach to anything; -c "g;q" runs to the
-              # fault and quits. -y points at the plugin's own export table so
-              # the frames below nvgt.exe get symbols when the pdb carries them.
+              $trace = Join-Path $env:GITHUB_WORKSPACE 'crash_e2e.txt'
+              # -logo writes the debugger's own output to a file; it must not be
+              # confused with -o, which opens a dump instead of launching the
+              # debuggee (that mistake made the previous run die with "Cannot
+              # execute 'crash_e2e.txt -c g;q'"). -c "g;q" runs to the fault and
+              # quits, .ecxr selects the faulting context so k names the stack
+              # that actually took the access violation, ~*k adds every other
+              # thread, and !analyze -v lets the debugger name the faulting
+              # module and the instruction. -y points at the plugin's own
+              # export table so frames below nvgt.exe get symbols when the pdb
+              # carries them.
               $pluginDir = Join-Path $env:GITHUB_WORKSPACE 'tools\winmm_loopback'
-              & $dbg.FullName -y "$pluginDir" -o $dump -c "g;q" $exe $src 2>&1 |
+              & $dbg.FullName -y "$pluginDir" -logo "$trace" `
+                -c ".symfix; .reload; g; .ecxr; k; ~*k; !analyze -v; q" $exe $src 2>&1 |
                 Select-Object -First 400 | ForEach-Object { Write-Host "cdb: $_" }
+              if (Test-Path $trace) {
+                Write-Host "--- crash_e2e.txt: $((Get-Item $trace).Length) bytes ---"
+                Get-Content $trace -TotalCount 250 |
+                  ForEach-Object { Write-Host "trace: $_" }
+              }
             }
           }
           "E2E_RAN_SECONDS=$([math]::Round($elapsed,1))" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
