@@ -134,7 +134,7 @@ jobs:
       # "failed to load plugin всё равно" after downloading v0.7.1.
       #
       # The dummy build needs libc and libstdc++ only, so the loader always
-      # takes it on a stock linux, and it says so through midi_api_name().
+      # takes it on a stock linux, and it says so through midi_api_name_byte().
       # Nothing else is built here: an alsa build in a release is a trap, not
       # a fallback, because the error it produces names nothing.
       - name: build the library a release ships

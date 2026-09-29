@@ -79,6 +79,7 @@ string bytes_of_message(midi_message@ m) {
 	return s;
 }
 
+
 void main() {
 	if (midi_input_port_count() == 0 || midi_output_port_count() == 0) {
 		announce("Need at least one input and one output port.");

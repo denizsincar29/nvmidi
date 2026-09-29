@@ -169,7 +169,8 @@ jobs:
           Write-Host "engine exited $($v.ExitCode); release $($rel.tag_name), product 0.90.0"
 
       # What nvmidi_api_name's return actually is, measured inside the runner
-      # rather than reasoned about from a desk. midi_api_name() returns the
+      # rather than reasoned about from a desk. midi_api_name is the byte pair
+      # midi_api_name_byte_count()/midi_api_name_byte(i); it returns the
       # literal "nvmidi/" prepended to a string that RtMidi's own object file
       # produces in the same process; if that string comes back as garbage the
       # pointer is the whole story, so the pointer is what is printed.
@@ -516,7 +517,7 @@ jobs:
           if ($t -match 'E2E_OK LOADED') {
             Write-Host "::notice::the plugin loaded and registered"
           } else {
-            Write-Host "::error::the plugin did not register: midi_api_name() returned nothing"
+            Write-Host "::error::the plugin did not register: the api name came over as 0 bytes"
             exit 1
           }
 
