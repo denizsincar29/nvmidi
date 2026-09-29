@@ -436,9 +436,12 @@ jobs:
           if ($synth) { Write-Host "sound device: $($synth.Name)" }
           else { Write-Host "no wavetable synth in the sound device list" }
           # The name the plugin will see is winmm's, and the line to match on is
-          # one of these. Written to the environment so the script step can pass
-          # it through untouched.
-          "SYNTH_HINT=gs wavetable" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          # one of these. It goes into the environment under the name the script
+          # reads, because a command line flag cannot get there: the engine's
+          # option parser runs before the script does and refuses anything it
+          # does not know (measured, run 36571447467: `Unknown option
+          # specified: hint`, exit 78, empty stdout).
+          "NVGT_E2E_HINT=gs wavetable" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       # The sending half. The script plays a six note melody into whatever
       # port the plugin can find, and prints what it played. Run in the
@@ -526,8 +529,11 @@ jobs:
           $exe = Join-Path $env:NVGT_DIR 'nvgt.exe'
           $src = Join-Path $env:GITHUB_WORKSPACE 'scripts\windows\e2e_winmm.nvgt'
           $log = Join-Path $env:GITHUB_WORKSPACE 'logs_e2e.txt'
+          # No arguments after the script: the hint travels in the environment
+          # (NVGT_E2E_HINT, set by the synth step) because the engine's option
+          # parser rejects an unknown flag before it ever reads the script.
           $p = Start-Process -FilePath $exe `
-            -ArgumentList @($src, '--hint', $env:SYNTH_HINT) `
+            -ArgumentList @($src) `
             -NoNewWindow -PassThru `
             -RedirectStandardOutput $log -RedirectStandardError "$log.err"
           $code = -1

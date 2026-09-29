@@ -263,30 +263,42 @@ void main() {
 	// there is the synth windows ships with, and the job passes its name in
 	// rather than this file hard coding a vendor string that differs between
 	// windows versions and locales.
-	// The hint arrives as the word after `--hint`, so it is in COMMAND_LINE
-	// and not in an `args` array. The linux script reads it the same way, and
-	// that script compiles on every push - `args` has never been confirmed to
-	// exist in this engine at all, and an unconfirmed identifier in the first
-	// lines of main is a compilation error that runs nothing and prints no
-	// marker.
+	// The hint arrives in the environment, and that is a repair rather than a
+	// preference. It used to arrive as the word after `--hint` on the command
+	// line, and the engine refused to start at all: measured on run
+	// 36571447467, `Unknown option specified: hint`, exit code 78, and an
+	// empty stdout because the script had not been read yet. Anything that
+	// begins with a dash belongs to the engine's own option parser, and it is
+	// consulted before the script exists - so no spelling of a flag can work
+	// here, and `--` does not fence it off either.
 	//
-	// The flag is there because the bare word it replaced could not be told
-	// apart from the script path. The job launched this as
-	// `nvgt.exe <script> -- <hint>`, and on a runner whose argv[0] handling
-	// differs the first word can be the executable itself - measured once as
-	// the hint `E2E_HINT D:\a\nvgt\nvgt.exe` - after which a hint that means
-	// "gs wavetable" points at nothing and the selection falls through to
-	// whatever the loop finds. A named flag cannot be confused with a path.
-	string hint = "";
-	const string[]@ words = COMMAND_LINE.split(" ");
-	for (uint i = 0; i + 1 < words.length(); i++) {
-		// Not named `word`: this engine's string(uint) is the array
-		// constructor, and a local called word shadows it for the whole
-		// function - which turns `string(...)` into a sized array of empty
-		// strings further down, 26 and 30 characters long by accident.
-		if (words[i].trim_whitespace() != "--hint") continue;
-		hint = words[i + 1].trim_whitespace();
-		break;
+	// The environment has no such parser in front of it. `read_environment_
+	// variable` is registered by the engine itself (src/pocostuff.cpp, the
+	// Environment block), so this is a published api and not a guess; the name
+	// it reads is set by the job step.
+	//
+	// COMMAND_LINE is still read as a fallback, one bare word with no dash in
+	// front of it, because a person running this by hand has no environment to
+	// set and needs a way in. Nothing here asserts what that word will be when
+	// the engine is launched by a path: the attempt that would have measured it
+	// never ran, so the fallback is written to be harmless when it is absent
+	// and the print below is what says which of the two answered.
+	string hint = read_environment_variable("NVGT_E2E_HINT");
+	if (hint == "") {
+		const string[]@ words = COMMAND_LINE.split(" ");
+		for (uint i = 0; i < words.length(); i++) {
+			// Not named `word`: this engine's string(uint) is the array
+			// constructor, and a local called word shadows it for the whole
+			// function - which turns `string(...)` into a sized array of empty
+			// strings further down, 26 and 30 characters long by accident.
+			string candidate = words[i].trim_whitespace();
+			if (candidate.length() == 0) continue;
+			if (candidate.find("-") != -1) continue;
+			if (candidate.find(".nvgt") != -1) continue;
+			if (candidate.find("\\") != -1 || candidate.find("/") != -1) continue;
+			hint = candidate;
+			break;
+		}
 	}
 	if (hint != "") print("E2E_HINT " + hint);
 
