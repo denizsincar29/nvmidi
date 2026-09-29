@@ -91,12 +91,3 @@ string bytes_of_input_port_name(midi_input@ o) {
 	}
 	return s;
 }
-string bytes_of_message(midi_message@ m) {
-	string s = "";
-	midi_message@ msg = m;
-	for (int i = 0; i < msg.to_string_byte_count(); i++) {
-		int b = msg.to_string_byte(i);
-		s += char_of(b);
-	}
-	return s;
-}
