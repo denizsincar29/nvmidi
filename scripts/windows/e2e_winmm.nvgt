@@ -182,14 +182,14 @@ void main() {
 	for (uint i = 0; i < outs; i++) {
 		const string n = midi_output_port_name(i);
 		const string lower = n.to_lowercase();
-		if (chosen < 0) chosen = static_cast<int>(i);
+		if (chosen < 0) chosen = int(i);
 		if (chosen_name == "" && hint != "" && lower.find(hint) >= 0) {
-			chosen = static_cast<int>(i);
+			chosen = int(i);
 			chosen_name = n;
 		}
 		if (chosen_name == "" && (lower.find("loopbe") >= 0 || lower.find("loopmidi") >= 0
 			|| lower.find("virtual") >= 0 || lower.find("loop") >= 0)) {
-			chosen = static_cast<int>(i);
+			chosen = int(i);
 			chosen_name = n;
 		}
 	}
