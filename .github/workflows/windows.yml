@@ -930,6 +930,16 @@ jobs:
             $p2log  = Join-Path $env:GITHUB_WORKSPACE "$case.log"
             $p2err  = "$p2log.err"
             if (-not (Test-Path $p2src)) { Write-Host "::warning::$case.nvgt is missing from the checkout"; continue }
+            # The blob of the file that is about to run, printed next to its
+            # own output. The engine compiles what is on disk; the job's other
+            # blob line compares e2e_winmm.nvgt only, so until now nothing
+            # said whether the file behind a probe's verdict was the file the
+            # commit carries. Two runs of the same case with different bytes
+            # are two different experiments, and n_whole is exactly that case:
+            # ff541190f39095fe0d27f1c3ebdd3d5e422f415f is it with the pragma,
+            # d027f824508ceccab562aef6a45d08f97fa34202 is it without, and the
+            # first run's file is on record because it was in git.
+            Write-Host ("  script blob " + (git -C $env:GITHUB_WORKSPACE hash-object -- $p2src))
             $p2 = Start-Process -FilePath $exe `
               -ArgumentList @($p2src) `
               -NoNewWindow -PassThru `
