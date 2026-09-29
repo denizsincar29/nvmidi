@@ -70,6 +70,23 @@ static char g_path[MAX_PATH];
  * describes is already done by the time it is set. */
 static volatile LONG g_attach_done = 0;
 
+/* Set in DllMain as soon as the environment read returns, before the value is
+ * looked at. The flag above cannot tell "DllMain ran and found nothing" from
+ * "DllMain never ran"; this can. Measured on run 36593841753, both probes
+ * wrote ATTACH done=0 dll=(unset) - and g_path has exactly one writer, the
+ * read inside DllMain, so an empty path means the read never happened. The two
+ * readings that survive are "the process died before its own DllMain" and
+ * "GetEnvironmentVariableA failed", and they are told apart by whether main
+ * runs at all. */
+static volatile LONG g_dllmain_ran = 0;
+
+/* GetEnvironmentVariableA's own return: 0 when the variable is absent, the
+ * character count when it is present, and GetLastError's code - conventionally
+ * 0xFFFFFFFF here - when the call fails outright. Kept because "the variable
+ * was empty" and "the call did not work" are different facts about the loader
+ * and only the return code separates them. */
+static DWORD g_env_rc = 0;
+
 /* The exit path for a load that failed.
  *
  * GetLastError() is read inside DllMain, where it is still the loader's answer,
@@ -113,7 +130,14 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
 	(void)hinst;
 	(void)reserved;
 	if (reason == DLL_PROCESS_ATTACH) {
-		GetEnvironmentVariableA("NVPROBE_DLL", g_path, MAX_PATH);
+		g_env_rc = GetEnvironmentVariableA("NVPROBE_DLL", g_path, MAX_PATH);
+		/* Recorded immediately after the read and before the value is used, so
+		 * that a main which later reports an empty path can say whether the
+		 * read returned nothing or never ran. The read itself is in a variable
+		 * rather than only in g_path: a failed GetEnvironmentVariableA leaves
+		 * the buffer untouched, and an untouched buffer is also what a call
+		 * that never happened leaves. */
+		InterlockedExchange(&g_dllmain_ran, g_path[0] ? 2 : 1);
 		/* LoadLibraryExA with no flags, so the search is the ordinary one and
 		 * the loader does not go looking for dependencies beside the file.
 		 * The path is given in full, so the order does not matter here.
@@ -155,8 +179,16 @@ int main(int argc, char **argv) {
 	{
 		FILE *af = fopen("C:\\probe_attach_marker.txt", "ab");
 		if (af) {
-			fprintf(af, "ATTACH done=%ld dll=%s\n",
+			/* env= is the GetEnvironmentVariableA return code, so 0xFFFFFFFF
+			 * there is the call failing and a small number is it succeeding and
+			 * delivering that many characters. Neither is the same as dllmain=0,
+			 * which is this executable's own DllMain not having run before main
+			 * - and if that is what shows up, the fault is earlier than every
+			 * call this file makes and no instrumentation inside it can see it. */
+			fprintf(af, "ATTACH dllmain=%ld done=%ld env=%s dll=%s\n",
+				(long)InterlockedCompareExchange(&g_dllmain_ran, 0, 0),
 				(long)InterlockedCompareExchange(&g_attach_done, 0, 0),
+				g_env_rc == 0xFFFFFFFFu ? "failed" : "ok",
 				g_path[0] ? g_path : "(unset)");
 			fclose(af);
 		}

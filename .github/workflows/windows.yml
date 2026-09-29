@@ -176,8 +176,16 @@ jobs:
           function Run-Probe($label, $exe, $dll) {
             Write-Host $label
             if (-not (Test-Path $exe)) { Write-Host "  MISSING BINARY: $exe"; return }
+            # Both branches set it. The variable is process-wide and outlives
+            # this call, so a case passing $null that only skipped the
+            # assignment inherited the previous case's dll: on run 36593841753
+            # cases 3 and 4 both named late_midi_as_exe.dll, and the empty-path
+            # marker printed twice because it was the same run twice. Clearing
+            # it in the else is what makes the two cases differ at all.
             if ($dll) { $env:NVPROBE_DLL = $dll }
+            else { Remove-Item Env:\NVPROBE_DLL -ErrorAction SilentlyContinue }
             $out = & $exe 2>&1
+            $code = $LASTEXITCODE
             $code = $LASTEXITCODE
             if ($out) { $out | ForEach-Object { Write-Host "  $_" } }
             else { Write-Host "  (no stdout)" }
