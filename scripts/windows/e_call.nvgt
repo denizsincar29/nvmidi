@@ -1,0 +1,8 @@
+#pragma plugin nvmidi
+
+void main() {
+	print("E1");
+	int b = midi_api_name_byte_count();
+	print("E2 api_bytes=" + b);
+	print("E3");
+}
