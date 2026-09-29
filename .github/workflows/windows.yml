@@ -321,11 +321,30 @@ jobs:
       # A user mode driver written by us and started by rundll32 is a different
       # animal: nothing to install, so no installer to block, and no desktop
       # needed because the exe is launched by the same session that owns it.
-      - name: get a loopback midi driver
+      # The loopback driver, fetched, loaded and proved live in one step.
+      #
+      # One step and not two, because a LoadLibrary has to happen in the
+      # process that keeps it: a dll loaded into one step's PowerShell is gone
+      # when that process ends, and the next step is a new process. Measured
+      # here - the fetch used to be its own step and the device never appeared.
+      #
+      # The driver is its own installer: loading it starts a thread inside the
+      # same process that writes the Drivers32 entry, calls OpenDriver on it and
+      # opens the port. So "loaded and the port is in the machine's list" is the
+      # single fact this step establishes, and it is written to
+      # LOOPBACK_STATUS= in a status file beside the dll.
+      #
+      # What stood here before was two vendor installers, LoopBe1 and loopMIDI,
+      # and both were measured failing the same way: they download, they start,
+      # they are still running long after their own timeouts, and no device
+      # ever appears in the machine's list. An Inno setup put down by a service
+      # session with no interactive desktop is the reading that covers both.
+      - name: get and start a loopback midi driver
         shell: pwsh
         timeout-minutes: 3
         run: |
           $url = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/tags/loopback-driver"
+          $out = Join-Path $env:TEMP 'nvmidi-loopback.exe'
           try {
             $rel = Invoke-RestMethod -Uri $url -Headers @{ Authorization = "Bearer ${{ github.token }}" } -TimeoutSec 30
           } catch {
@@ -343,36 +362,66 @@ jobs:
             "LOOPBACK_AVAILABLE=$false" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
             exit 1
           }
-          $out = Join-Path $env:TEMP 'nvmidi-loopback.exe'
           Invoke-WebRequest -Uri $asset.url -Headers @{ Authorization = "Bearer ${{ github.token }}"; Accept = 'application/octet-stream' } -OutFile $out -UseBasicParsing -TimeoutSec 60
-          Write-Host "fetched $((Get-Item $out).Length) bytes"
-          # Loaded, not run: a user mode winmm driver has no process of its own
-          # and is called by winmm from whatever process uses the port, so this
-          # call is the install. The process that loads it must stay alive for
-          # the device to stay in the list, which is why it is a background job
-          # and not a call that returns.
+          # The fetch is the same file the driver writes its status beside, so
+          # a stale status from an earlier run is impossible to read by mistake.
+          $status = Join-Path $env:TEMP 'nvmidi-loopback.status'
+          if (Test-Path $status) { Remove-Item $status -Force }
+          Write-Host "fetched $((Get-Item $out).Length) bytes to $out"
+
           $src = @'
           using System;
           using System.Runtime.InteropServices;
           public static class Loop {
+            [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+            public static extern IntPtr LoadLibraryW(string path);
             [DllImport("kernel32.dll", SetLastError = true)]
-            public static extern IntPtr LoadLibrary(string path);
-            [DllImport("kernel32.dll", SetLastError = true)]
-            public static extern IntPtr GetProcAddress(IntPtr h, string name);
-            [DllImport("kernel32.dll")]
             public static extern uint GetLastError();
           }
           '@
           Add-Type -TypeDefinition $src
-          $h = [Loop]::LoadLibrary($out)
-          if ($h -eq [IntPtr]::Zero) { Write-Host "LoadLibrary failed, error $([Loop]::GetLastError())" }
-          else { Write-Host "driver module loaded at $h" }
-          "LOOPBACK_LOADED=$([bool]($h -ne [IntPtr]::Zero))".ToLower() | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "LOOPBACK_AVAILABLE=$([bool]($h -ne [IntPtr]::Zero))".ToLower() | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "midi devices after loading the driver:"
-          $devs = Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match 'loop|midi|nvmidi' }
-          if ($devs) { $devs | ForEach-Object { Write-Host "  $($_.Name)" } } else { Write-Host "  (none - user mode drivers do not appear in the PnP list, so this is not the check that matters)" }
+          # Loaded, not run. This process is the one that stays alive for the
+          # device; if it exits before the plugin runs, nothing else is running.
+          $h = [Loop]::LoadLibraryW($out)
+          if ($h -eq [IntPtr]::Zero) {
+            Write-Host "::error::LoadLibrary failed, error $([Loop]::GetLastError())"
+            "LOOPBACK_AVAILABLE=$false" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            exit 1
+          }
+          Write-Host "driver module loaded at $h"
+
+          # The dll reports what happened in a file rather than in its return
+          # value, because it is loaded rather than run and has no console.
+          $ok = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            if (Test-Path $status) { $ok = $true; break }
+            Start-Sleep -Milliseconds 200
+          }
+          if ($ok) { Write-Host (Get-Content $status -Raw) }
+          else { Write-Host "::error::the driver never wrote $status, so it is not known whether it published a port" }
+
+          # The fact that matters, established by asking winmm the same question
+          # the plugin is about to ask it, in the same process the driver lives
+          # in. Before the driver this list is the synth only.
+          $src2 = @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class Midi {
+            [DllImport("winmm.dll")] public static extern uint midiOutGetNumDevs();
+            [DllImport("winmm.dll")] public static extern uint midiInGetNumDevs();
+          }
+          '@
+          Add-Type -TypeDefinition $src2
+          $outs = [Midi]::midiOutGetNumDevs()
+          $ins  = [Midi]::midiInGetNumDevs()
+          Write-Host "midi outs winmm reports now: $outs"
+          Write-Host "midi ins  winmm reports now: $ins"
+
+          $available = $ok -and ($outs -gt 1) -and ($ins -ge 1)
+          if (-not $available) {
+            Write-Host "::warning::the loopback driver did not add an input port on this runner ($outs outs, $ins ins). The send half of the e2e still runs against the synth; cross process delivery will not be verified in this run."
+          }
+          "LOOPBACK_AVAILABLE=$($available.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       # What the listener is going to be measuring against, learned before it
       # measures. The listener opens a midi *input* and asserts the bytes it
