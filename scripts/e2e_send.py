@@ -98,6 +98,11 @@ def main(argv):
         print("usage: e2e_send.py <port name> [seconds to keep retrying]", file=sys.stderr)
         return 2
     wanted = argv[1]
+    # The port name to look for, when the process under test publishes it
+    # under a different name than the one it announces on the console. The
+    # alsa script uses the same string for both, so it can leave this out; a
+    # script whose console line is timed has to say where the port is.
+    port_name = argv[3] if len(argv) > 3 else wanted
     deadline_seconds = float(argv[2]) if len(argv) > 2 else 20.0
 
     name = ctypes.util.find_library("asound")
@@ -149,7 +154,7 @@ def main(argv):
         connected = False
         last = ""
         while time.time() < deadline:
-            rc = lib.snd_seq_parse_address(handle, ctypes.byref(addr), wanted.encode())
+            rc = lib.snd_seq_parse_address(handle, ctypes.byref(addr), port_name.encode())
             if rc >= 0:
                 rc = lib.snd_seq_connect_to(handle, port, addr[0], addr[1])
                 if rc >= 0:

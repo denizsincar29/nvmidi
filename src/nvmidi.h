@@ -369,6 +369,10 @@ std::string midi_input_port_name(unsigned int port);
 std::string midi_output_port_name(unsigned int port);
 std::string midi_api_name();
 
+// Whether that backend can create a virtual port at all. False on Windows and
+// on the dummy build, where RtMidi's openVirtualPort does nothing at all.
+bool midi_supports_virtual_ports();
+
 // Case insensitive search for a port whose name contains something.
 // Returns the index of the first match, or -1 when nothing matches. The
 // whole search is done on lower cased copies, so "nord" finds "Nord Piano 6".

@@ -1,7 +1,25 @@
 name: windows
+
+# Two jobs, because they answer two different questions and one of them can
+# only be answered on a tag.
+#
+#   build  - does the dll compile under MinGW, and what does it need at load
+#            time. Runs on every push.
+#   e2e    - does a note the plugin plays actually leave the process and
+#            arrive somewhere else. Runs on every push, because a test a user
+#            has to remember to run is a test that rots.
+#
+# The end-to-end test is split across two processes on purpose. The plugin
+# prints what it says it did; a second process prints what it heard; the job
+# compares the two. See scripts/windows/e2e_listen.py for why windows forces
+# this shape - winmm has no virtual ports, so the sending half is the only
+# half that can be real, and the receiving half has to come from somewhere
+# else.
+
 on:
   push:
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: windows-latest
@@ -12,13 +30,322 @@ jobs:
       - name: build
         shell: cmd
         run: mingw32-make
-
-      # The dll on its own is not evidence: it says the plugin compiled and
-      # linked, nothing about whether the types it registers are types the
-      # engine will accept. Keep it so the next step can be a real host.
       - name: keep the dll
         uses: actions/upload-artifact@v4
         with:
           name: nvmidi-dll
           path: nvmidi.dll
           if-no-files-found: error
+
+  e2e:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # nvgt itself, for the windows runner. scripts/nvgt_pin.sh cannot do
+      # this: it fetches the .tar.gz asset and untars it, and the windows
+      # release asset is a .zip. Fetching the archive through the release API
+      # rather than a hardcoded url means the job follows whatever `latest`
+      # points at, the same as the pin script does on linux.
+      - name: fetch nvgt
+        shell: pwsh
+        run: |
+          $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/samtupy/nvgt/releases/latest' -Headers @{ 'User-Agent' = 'nvmidi-ci' }
+          $asset = $rel.assets | Where-Object { $_.name -like '*.zip' } | Select-Object -First 1
+          if (-not $asset) { throw "no .zip asset in release $($rel.tag_name)" }
+          Write-Host "nvgt $($rel.tag_name): $($asset.name)"
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile nvgt.zip
+          Expand-Archive -Path nvgt.zip -DestinationPath nvgt-dl -Force
+          # The archive wraps everything in a directory named after the build.
+          # Flattening it means one path for the rest of the job whether upstream
+          # changes that name or not.
+          $exe = Get-ChildItem -Path nvgt-dl -Recurse -Filter 'nvgt.exe' | Select-Object -First 1
+          if (-not $exe) { throw "no nvgt.exe inside $($asset.name)" }
+          $dir = $exe.DirectoryName
+          Copy-Item "$dir\*" -Destination . -Recurse -Force
+          Write-Host "nvgt at $(Resolve-Path .\nvgt.exe)"
+          # The evidence for everything that follows: if this is not the engine
+          # the plugin was built against, every later failure is unreadable.
+          .\nvgt.exe -v
+
+      # The dll the script will load. Built with the same make target the
+      # release uses, because the point of the job is to test what ships.
+      - name: build the plugin
+        shell: cmd
+        run: mingw32-make
+
+      # Where did we put it. nvgt searches lib/ next to itself for a plugin
+      # named by #pragma plugin, so nvmidi.dll has to be there and not in the
+      # working directory. Reported because a plugin that is not found and a
+      # plugin that is found and refuses produce the same three words.
+      - name: install the plugin
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path lib | Out-Null
+          Copy-Item nvmidi.dll -Destination lib\nvmidi.dll -Force
+          Write-Host "lib\nvmidi.dll: $((Get-Item lib\nvmidi.dll).Length) bytes"
+          # A zero byte file here would make the whole job meaningless and
+          # silent - the loader says "failed to load plugin" for an empty file
+          # exactly as it does for a missing dependency.
+          if ((Get-Item lib\nvmidi.dll).Length -eq 0) { throw 'the built dll is empty' }
+          Get-ChildItem lib | Select-Object Name, Length
+
+      # A loopback driver is what makes two windows processes meet over midi.
+      # Neither of the two that exist ships with windows, so one is installed
+      # here - and the job stops now, before anything is claimed, if that
+      # cannot be done. A runner with no loopback is a runner where the
+      # receiving half of this test has nothing to listen on, and a later
+      # "nothing arrived" would be a fact about the runner reported as a fact
+      # about the plugin.
+      #
+      # LoopBe1 first: it is a plain installer, needs no reboot, and presents
+      # its port immediately. loopMIDI is the fallback because its installer
+      # is known to leave the driver unloaded until a user launches the
+      # application, which a runner has no one to do.
+      - name: get a loopback midi driver
+        shell: pwsh
+        run: |
+          $installed = $false
+          $candidates = @(
+            @{ Name = 'LoopBe1'; Url = 'https://www.nerds.de/data/setuploopbe1.exe'; Args = '/S' },
+            @{ Name = 'loopMIDI'; Url = 'https://www.tobias-erichsen.de/wp-content/uploads/2020/01/loopMIDISetup_1_0_16_27.zip'; Args = '/VERYSILENT /NORESTART' }
+          )
+          foreach ($c in $candidates) {
+            try {
+              Write-Host "trying $($c.Name)"
+              $f = Join-Path $env:TEMP ($c.Name + [System.IO.Path]::GetExtension($c.Url))
+              Invoke-WebRequest -Uri $c.Url -OutFile $f -UseBasicParsing
+              if ($f -like '*.zip') {
+                Expand-Archive -Path $f -DestinationPath (Join-Path $env:TEMP $c.Name) -Force
+                $f = Get-ChildItem (Join-Path $env:TEMP $c.Name) -Recurse -Include '*.exe','*.msi' | Select-Object -First 1 -ExpandProperty FullName
+              }
+              if ($f -like '*.msi') {
+                $p = Start-Process msiexec.exe -ArgumentList "/i `"$f`" /qn /norestart" -Wait -PassThru
+              } else {
+                $p = Start-Process $f -ArgumentList $c.Args -Wait -PassThru
+              }
+              Write-Host "$($c.Name) installer exited $($p.ExitCode)"
+              # An installer exiting zero is not evidence the driver is there.
+              # The list of midi devices is, and that is what is asked.
+              Start-Sleep -Seconds 8
+              $devs = Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match 'loop|midi' }
+              if ($devs) {
+                Write-Host "midi-ish devices now present:"
+                $devs | ForEach-Object { Write-Host "  $($_.Name)" }
+                $installed = $true
+                break
+              }
+              Write-Host "$($c.Name) installed but no midi device appeared"
+            } catch {
+              Write-Host "$($c.Name) did not install: $_"
+            }
+          }
+          if (-not $installed) {
+            Write-Host "::error::no loopback midi driver could be installed on this runner, so the receiving half of the end-to-end test has no port to listen on. This is the runner's shape, not the plugin's - rerun, or pin a runner image that carries one."
+            exit 1
+          }
+
+      # The sending half. The script plays a six note melody into whatever
+      # port the plugin can find, and prints what it played. Run in the
+      # background so the listener can be up while it plays - the listener
+      # needs the port name out of the script's log, and the script needs a
+      # listener that is already waiting.
+      - name: play the melody (script)
+        shell: cmd
+        run: |
+          start /b cmd /c "nvgt.exe scripts\windows\e2e_winmm.nvgt > logs_e2e.txt 2>&1"
+
+      - name: wait for the script to name its port
+        shell: pwsh
+        run: |
+          # Up to a minute. Longer than any plausible cold start of the engine
+          # plus the plugin load, short enough that a hang is a failure and not
+          # a timeout that eats the job's whole budget.
+          $deadline = (Get-Date).AddSeconds(60)
+          while ((Get-Date) -lt $deadline) {
+            if (Test-Path logs_e2e.txt) {
+              $t = Get-Content logs_e2e.txt -Raw
+              if ($t -match 'E2E_PORT\s+(.+)') {
+                $name = $Matches[1].Trim()
+                Write-Host "the script chose the port: $name"
+                # The script writes this line *after* opening, so the port is
+                # live by the time the listener reads it. The listener is
+                # started against the same name, which is the whole handshake.
+                "PORT_NAME=$name" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+                exit 0
+              }
+              if ($t -match 'E2E_END') {
+                Write-Host $t
+                Write-Host "::error::the script finished before naming a port, so no port was ever opened"
+                exit 1
+              }
+            }
+            Start-Sleep -Milliseconds 250
+          }
+          Get-Content logs_e2e.txt -Raw | Write-Host
+          Write-Host "::error::the script never named a port within 60s"
+          exit 1
+
+      # The receiving half, started only once a port is known to exist. The
+      # port name is passed as a substring because winmm's own naming is a
+      # vendor string and the enumeration order is not guaranteed to match
+      # between two processes.
+      - name: listen on the plugin's port
+        shell: pwsh
+        run: |
+          python scripts\windows\e2e_listen.py "$env:PORT_NAME" 90 2>&1 | Tee-Object -FilePath logs_listen.txt
+          Write-Host "listener exit code: $LASTEXITCODE"
+          "LISTEN_EXIT=$LASTEXITCODE" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: read both logs
+        shell: pwsh
+        run: |
+          Write-Host "=== the sender's own account ==="
+          if (Test-Path logs_e2e.txt) { Get-Content logs_e2e.txt } else { Write-Host "(no sender log)" }
+          Write-Host "=== what was heard from outside ==="
+          if (Test-Path logs_listen.txt) { Get-Content logs_listen.txt } else { Write-Host "(no listener log)" }
+
+      # The assertions. Everything above produces evidence; this decides.
+      #
+      # The order matters. A plugin that never loaded makes every later line
+      # absent, and reporting "no note heard" for that would send the reader
+      # after the midi code when the problem is the load. So each check says
+      # what it is and what its absence means.
+      - name: did the plugin load
+        if: always()
+        shell: pwsh
+        run: |
+          $t = if (Test-Path logs_e2e.txt) { Get-Content logs_e2e.txt -Raw } else { '' }
+          if ($t -notmatch 'E2E_BEGIN') {
+            Write-Host "::error::the script never started: nvgt did not run it at all"
+            exit 1
+          }
+          if ($t -match 'failed to load plugin') {
+            Write-Host "::error::nvgt refused to load nvmidi.dll - the load time dependencies are wrong"
+            exit 1
+          }
+          if ($t -match 'E2E_OK LOADED') {
+            Write-Host "::notice::the plugin loaded and registered"
+          } else {
+            Write-Host "::error::the plugin did not register: midi_api_name() returned nothing"
+            exit 1
+          }
+
+      - name: is the backend a real one
+        if: always()
+        shell: pwsh
+        run: |
+          $t = if (Test-Path logs_e2e.txt) { Get-Content logs_e2e.txt -Raw } else { '' }
+          # The released artefact is built with the dummy backend on linux, and
+          # a dummy build passes every structural check in this job while
+          # opening no port and delivering no byte. That is the failure this
+          # job exists to catch, so it is fatal and not a warning.
+          if ($t -match 'the backend is Dummy') {
+            Write-Host "::error::the plugin was built with the dummy backend: it opens no port and sends nothing"
+            exit 1
+          }
+          if ($t -match 'E2E_OK BACKEND') {
+            $m = [regex]::Match($t, 'E2E_OK BACKEND (.+)')
+            Write-Host "::notice::backend: $($m.Groups[1].Value.Trim())"
+          }
+
+      - name: did a note actually leave the process
+        if: always()
+        shell: pwsh
+        run: |
+          $t = if (Test-Path logs_e2e.txt) { Get-Content logs_e2e.txt -Raw } else { '' }
+          if ($t -match 'E2E_NO_BUS') {
+            Write-Host "::error::this runner has no midi output port at all, so nothing could be played into anything. The plugin was never exercised."
+            exit 1
+          }
+          $heard = @()
+          if (Test-Path logs_listen.txt) {
+            $heard = Select-String -Path logs_listen.txt -Pattern '^HEARD ' | ForEach-Object { $_.Line }
+          }
+          # The self test proves the loopback route carries midi before the
+          # plugin is involved. Without it, "nothing arrived" cannot be read as
+          # the plugin's fault, so the job stops here rather than reporting a
+          # verdict it has not earned.
+          $l = if (Test-Path logs_listen.txt) { Get-Content logs_listen.txt -Raw } else { '' }
+          if ($l -match 'SELFTEST_FAILED') {
+            Write-Host "::error::the loopback driver did not return the bytes it was given, so the midi route itself is dead. Nothing about the plugin can be concluded from this run."
+            exit 1
+          }
+          if ($heard.Count -eq 0) {
+            Write-Host "::error::not one midi message arrived at the listening process. The plugin opened a port and wrote into it, and nothing came out the other end."
+            exit 1
+          }
+          Write-Host "::notice::heard $($heard.Count) message(s) from outside the plugin's process"
+
+      # The comparison the whole job is for. The sender's log says which notes
+      # it played in which order; the listener's log says which notes arrived
+      # in which order. Matching them on (note, velocity) rather than on count
+      # is what makes a stale buffer or a replayed queue fail - both produce
+      # the right number of messages.
+      - name: did the notes arrive in order
+        if: always()
+        shell: pwsh
+        run: |
+          $sent = @()
+          if (Test-Path logs_e2e.txt) {
+            $sent = Select-String -Path logs_e2e.txt -Pattern '^E2E_NOTE_SENT \d+ (\d+) (\d+)' |
+              ForEach-Object { "$($_.Matches[0].Groups[1].Value):$($_.Matches[0].Groups[2].Value)" }
+          }
+          if ($sent.Count -eq 0) {
+            Write-Host "::error::the script reported playing no notes at all"
+            exit 1
+          }
+          $heardNotes = @()
+          if (Test-Path logs_listen.txt) {
+            $heardNotes = Select-String -Path logs_listen.txt -Pattern '^HEARD [\d.]+ note_on ch0 (\d+) (\d+)' |
+              ForEach-Object { "$($_.Matches[0].Groups[1].Value):$($_.Matches[0].Groups[2].Value)" }
+          }
+          Write-Host "played: $($sent -join ' ')"
+          Write-Host "heard : $($heardNotes -join ' ')"
+          # Order, not set membership: the melody's second half repeats its
+          # first half an octave down, so a set comparison would accept a
+          # scrambled run.
+          $i = 0
+          foreach ($n in $sent) {
+            if ($i -ge $heardNotes.Count) {
+              Write-Host "::error::the melody stops after $i note(s) from outside: '$n' and everything after it never arrived"
+              exit 1
+            }
+            if ($heardNotes[$i] -ne $n) {
+              Write-Host "::error::note $i left the process as '$n' and arrived as '$($heardNotes[$i])' - the bytes on the wire are not the bytes that were sent"
+              exit 1
+            }
+            $i++
+          }
+          Write-Host "::notice::all $($sent.Count) notes of the melody arrived, in order, with the velocities they were sent with"
+
+      - name: the script's own verdict
+        if: always()
+        shell: pwsh
+        run: |
+          $t = if (Test-Path logs_e2e.txt) { Get-Content logs_e2e.txt -Raw } else { '' }
+          if ($t -match 'E2E_FAIL (.+)') {
+            Write-Host "::error::the script reported: $($Matches[1].Trim())"
+          }
+          if ($t -match 'E2E_END failures=(\d+)') {
+            if ($Matches[1] -ne '0') {
+              Write-Host "::error::the script finished with $($Matches[1]) failure(s)"
+              exit 1
+            }
+            Write-Host "::notice::the script finished clean"
+          } else {
+            Write-Host "::warning::the script never reached E2E_END - it was cut short"
+          }
+
+      - name: keep both logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-e2e-logs
+          path: |
+            logs_e2e.txt
+            logs_listen.txt
+          if-no-files-found: warn
+          retention-days: 7

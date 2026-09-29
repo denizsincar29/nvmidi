@@ -732,6 +732,14 @@ midi_output::~midi_output() { close(); }
 
 bool midi_output::open(unsigned int port, const std::string& name) {
 	clear_error();
+	// Before anything is created, because this is the one outcome that no
+	// amount of opening and checking afterwards can recover: a backend
+	// without virtual ports ignores the call and leaves no trace of having
+	// ignored it, so the plugin would hold a port that does not exist.
+	if (virtual_port && !midi_supports_virtual_ports()) {
+		set_error("this build's MIDI backend (" + midi_api_name() + ") cannot create virtual ports, so set_virtual_port(true) has nothing to create - name a real output port instead");
+		return false;
+	}
 	close();
 	try {
 		RtMidiOut* out = new RtMidiOut(g_preferred_api, name);
@@ -1430,6 +1438,43 @@ std::string midi_api_name() {
 		return "nvmidi/" + RtMidiIn::getApiDisplayName(apis[0]);
 	} catch (RtMidiError&) {
 		return "";
+	}
+}
+
+// The backend a default-constructed RtMidi port would use, or UNSPECIFIED if
+// RtMidi was built with no backend at all.
+static RtMidi::Api midi_default_api() {
+	std::vector<RtMidi::Api> apis;
+	try {
+		RtMidiIn::getCompiledApi(apis);
+	} catch (RtMidiError&) {
+		return RtMidi::UNSPECIFIED;
+	}
+	return apis.empty() ? RtMidi::UNSPECIFIED : apis[0];
+}
+
+// Whether a backend can create a virtual output port at all.
+//
+// This is asked rather than discovered, because the answer is a property of
+// the backend and not of the machine it is running on. RtMidi's own header
+// says it plainly on openVirtualPort - "currently only supported by the
+// Macintosh OS-X, Linux ALSA and JACK APIs (the function does nothing with
+// the other APIs)" - and the Windows MM implementation is the comment and a
+// warning with no code between them.
+//
+// So on Windows set_virtual_port(true) is not a thing that can work, and a
+// plugin that lets it look like it worked is lying. Measured twice over: the
+// source of the WinMM backend, and open() of a virtual port on Windows
+// returning true while midiOutGetNumDevs() still counted only the devices the
+// machine already had.
+bool midi_supports_virtual_ports() {
+	switch (midi_default_api()) {
+		case RtMidi::MACOSX_CORE:
+		case RtMidi::LINUX_ALSA:
+		case RtMidi::UNIX_JACK:
+			return true;
+		default:
+			return false;
 	}
 }
 
