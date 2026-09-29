@@ -39,8 +39,12 @@
 
 #pragma plugin nvmidi
 
+// `out` is a reserved keyword in this engine - "ERROR: Instead found reserved
+// keyword 'out'" at the declaration, measured on the runner, not guessed. It
+// cost this probe two runs that looked like plugin failures and were compile
+// errors, which is why the accumulator below is named `hex` and not `out`.
 string hex_of(const string&in s) {
-	string out = "";
+	string hex = "";
 	const string digits = "0123456789abcdef";
 	for (uint i = 0; i < s.length(); i++) {
 		// A byte cannot be taken from a string in this engine - indexing
@@ -50,10 +54,10 @@ string hex_of(const string&in s) {
 		// table is the value, which is a find() and therefore parses.
 		const string ch = s.substr(i, 1);
 		const int hi = digits.find(ch);
-		if (hi < 0) { out += "?"; continue; }
-		out += digits.substr(hi, 1);
+		if (hi < 0) { hex += "?"; continue; }
+		hex += digits.substr(hi, 1);
 	}
-	return out;
+	return hex;
 }
 
 void main() {
