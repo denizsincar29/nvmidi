@@ -1,0 +1,21 @@
+// Nine globals, announced one at a time from a bare main. This is the delta
+// between e2e_min (pragma plus two prints, exit 0, measured) and the real
+// script (0xC0000005, nothing printed, measured). Whatever line here is the
+// last one printed names the global whose initialiser kills the process at
+// load, before main is ever entered.
+#pragma plugin nvmidi
+
+void main() {
+	print("G_BEGIN");
+	print("G_END");
+}
+
+const uint[]@ g_pod_array_handle = {60, 64, 67, 48, 52, 55};
+const uint[]@ g_pod_array_value  = {100, 90, 80, 70, 60, 50};
+bool g_bool = true;
+uint[]@ g_array_no_init;
+uint g_uint = 0;
+int g_int = 0;
+double g_double = 1.0;
+string g_string = "";
+string g_literal = "probe";
