@@ -74,5 +74,21 @@ void main() {
 	// - "ERROR: No matching symbol 'nvgt_plugin_version'", measured on the
 	// runner, which cost the probe a third run. The engine's export list is
 	// its own, and these numbers are what this file was written to read.
+	//
+	// The api name, read the same way through the byte pair, and this time the
+	// script rebuilds the text on its own side - where literals and
+	// concatenation were measured alive - so the line below is a readable
+	// answer and not a byte list. The string method of the same name is still
+	// registered during this run; if its value and this one disagree, the
+	// string path is corrupt and the byte path is not, in one run, for the
+	// same underlying number.
+	const int an = midi_api_name_byte_count();
+	print("PROBE_API_BYTES " + an);
+	string api = "";
+	for (int i = 0; i < an && i < 128; i++) {
+		api += string(midi_api_name_byte(i));
+	}
+	print("PROBE_API_TEXT " + api);
+	print("PROBE_API_STR " + midi_api_name());
 	print("PROBE_END");
 }

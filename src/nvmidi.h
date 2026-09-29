@@ -33,6 +33,11 @@ struct midi_message {
 	// it has no idea what a std::string return by value is, which made the
 	// binding below fail to register and left the type half-built.
 	const char* to_string() const;
+	// The same text as bytes, and the form that is registered. See the note
+	// above the definitions in nvmidi.cpp for why nothing string-shaped is
+	// handed to the engine any more.
+	int to_string_byte_count() const;
+	int to_string_byte(unsigned int index) const;
 private:
 	mutable std::string buffer; // holds the text the returned pointer points at
 };
@@ -92,6 +97,8 @@ struct midi_duration {
 	double ppq;
 
 	std::string to_string() const;
+	int to_string_byte_count() const;
+	int to_string_byte(unsigned int index) const;
 	// The length in milliseconds, after the unit conversion.
 	double to_ms() const;
 
@@ -144,6 +151,8 @@ struct midi_note {
 	// the first note is the one that counts; the others are ignored.
 	midi_duration length;
 	std::string to_string() const;
+	int to_string_byte_count() const;
+	int to_string_byte(unsigned int index) const;
 	// The length in milliseconds, which is what the layer below actually
 	// needs. Handy for a script that wants to show or print it.
 	double duration_ms() const;

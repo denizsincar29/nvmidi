@@ -1440,6 +1440,78 @@ static CScriptArray* make_string_array(const std::vector<std::string>& names) {
 	return array;
 }
 
+// ---------------------------------------------------------------------------
+// The byte views
+// ---------------------------------------------------------------------------
+//
+// Every string this plugin hands to a script goes out as a length and an
+// indexed byte. Not as a convenience - as the only form measured to survive.
+// The port name was the one that crashed the process; the rest were reached
+// through the same return slot and are exposed this way until a run says which
+// of them were actually broken.
+//
+// The three object methods cannot share a body through a free function because
+// each one calls a different to_string(), so the pattern is written out. It is
+// four lines each and there is no cleverness in it on purpose: the failure this
+// whole change is about was a shape mismatch nobody could see, and a shape
+// nobody can see is exactly what a macro hides.
+
+int midi_message::to_string_byte_count() const { return (int)to_string().size(); }
+int midi_message::to_string_byte(unsigned int index) const {
+	const std::string s = to_string();
+	if (index >= s.size()) return -1;
+	return (int)(unsigned char)s[index];
+}
+
+int midi_duration::to_string_byte_count() const { return (int)to_string().size(); }
+int midi_duration::to_string_byte(unsigned int index) const {
+	const std::string s = to_string();
+	if (index >= s.size()) return -1;
+	return (int)(unsigned char)s[index];
+}
+
+int midi_note::to_string_byte_count() const { return (int)to_string().size(); }
+int midi_note::to_string_byte(unsigned int index) const {
+	const std::string s = to_string();
+	if (index >= s.size()) return -1;
+	return (int)(unsigned char)s[index];
+}
+
+int midi_input_port_name_byte_count(unsigned int port) { return (int)midi_input_port_name(port).size(); }
+int midi_input_port_name_byte(unsigned int port, unsigned int index) {
+	const std::string name = midi_input_port_name(port);
+	if (index >= name.size()) return -1;
+	return (int)(unsigned char)name[index];
+}
+
+int midi_api_name_byte_count() { return (int)midi_api_name().size(); }
+int midi_api_name_byte(unsigned int index) {
+	const std::string name = midi_api_name();
+	if (index >= name.size()) return -1;
+	return (int)(unsigned char)name[index];
+}
+
+int midi_message_name_byte_count(const midi_message& m) { return (int)midi_message_name(m).size(); }
+int midi_message_name_byte(const midi_message& m, unsigned int index) {
+	const std::string name = midi_message_name(m);
+	if (index >= name.size()) return -1;
+	return (int)(unsigned char)name[index];
+}
+
+int midi_last_error_byte_count() { return (int)midi_last_error().size(); }
+int midi_last_error_byte(unsigned int index) {
+	const std::string e = midi_last_error();
+	if (index >= e.size()) return -1;
+	return (int)(unsigned char)e[index];
+}
+
+int midi_first_error_byte_count() { return (int)midi_first_error().size(); }
+int midi_first_error_byte(unsigned int index) {
+	const std::string e = midi_first_error();
+	if (index >= e.size()) return -1;
+	return (int)(unsigned char)e[index];
+}
+
 CScriptArray* midi_input_port_names() {
 	std::vector<std::string> names;
 	const unsigned int count = midi_input_port_count();
@@ -1877,27 +1949,26 @@ void register_midi_globals(asIScriptEngine* engine, registration* reg) {
 	// plugin calls, or it does not, and the plugin was compiled with a
 	// different Angelscript version than the engine was. Both are printed, so
 	// one run names the fault instead of two runs guessing at it.
-	// NOT GetStringFactoryReturnTypeId. That call was written here first and did
-	// not compile - "class asIScriptEngine has no member named" - because the
-	// Angelscript headers vendored in third_party/ only declare it inside
-	// `#ifdef AS_DEPRECATED`, so it is compiled out unless that macro is
-	// defined. `GetStringFactory` is the live replacement and is unconditional.
+	// Measure the thing the sweep below depends on, and stop relying on it.
 	//
-	// This matters beyond style: whether these headers describe the same
-	// Angelscript the running engine was built from is not knowable from here.
-	// If they do not, a string returned from this plugin is being copied using
-	// a layout the engine's own `string` does not have, which would corrupt
-	// every string return at once and leave literals in the script untouched -
-	// exactly the split measured on the runner.
+	// The string-factory number that used to be printed here is the evidence
+	// for the whole change: the engine answers 67108876, which as a signed int
+	// is -2, asINVALID_ARG - there is no string factory to convert with. That
+	// is why every string this plugin returned arrived as bytes and, once the
+	// port name was asked for, took the process down. It is asserted rather
+	// than printed now: if a future engine ever grows a factory the assertion
+	// fires and says so, instead of the sweep below silently becoming wrong.
 	{
-		std::cerr << "NVSTR plugin_angelscript=" << ANGELSCRIPT_VERSION_STRING
-		          << " (" << ANGELSCRIPT_VERSION << ")" << std::endl;
 		asDWORD mods = 0;
 		asIStringFactory* factory = nullptr;
 		const int r = engine->GetStringFactory(&mods, &factory);
-		std::cerr << "NVSTR GetStringFactory ret=" << r
-		          << " typeModifiers=" << mods
-		          << " factory=" << (void*)factory << std::endl;
+		if (r == 0) {
+			std::cerr << "nvmidi: the engine now publishes a string factory ("
+			          << ANGELSCRIPT_VERSION_STRING << "), so plugin-returned strings "
+			          << "may work directly and the byte-by-byte path in this file is "
+			          << "no longer necessary. Re-measure before trusting either."
+			          << std::endl;
+		}
 	}
 	// The same value, handed over as bytes instead of as a string. See the
 	// definition above for what the const char* attempt measured before this
@@ -1905,6 +1976,32 @@ void register_midi_globals(asIScriptEngine* engine, registration* reg) {
 	// string return is registered here any more.
 	reg->check( engine->RegisterGlobalFunction("int midi_output_port_name_byte_count(uint port)", asFUNCTION(midi_output_port_name_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("int midi_output_port_name_byte(uint port, uint index)", asFUNCTION(midi_output_port_name_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	// Every other string this plugin hands out, exposed the same way: a length
+	// and an indexed byte, so a string never crosses this boundary at all.
+	//
+	// These are registered BESIDE the original string methods, not instead of
+	// them, for one run. That run is the measurement that says whether the
+	// string form of each is broken too, or whether only the port name was -
+	// and it costs nothing, because both spellings are reachable from the
+	// script. Once the script has read a correct name through the byte pair,
+	// the string methods above come out and the byte pair takes their place,
+	// with their names.
+	reg->check( engine->RegisterObjectMethod("midi_message", "int to_string_byte_count() const", asMETHOD(midi_message, to_string_byte_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_message", "int to_string_byte(uint index) const", asMETHOD(midi_message, to_string_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_duration", "int to_string_byte_count() const", asMETHOD(midi_duration, to_string_byte_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_duration", "int to_string_byte(uint index) const", asMETHOD(midi_duration, to_string_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_note", "int to_string_byte_count() const", asMETHOD(midi_note, to_string_byte_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_note", "int to_string_byte(uint index) const", asMETHOD(midi_note, to_string_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_input_port_name_byte_count(uint port)", asFUNCTION(midi_input_port_name_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_input_port_name_byte(uint port, uint index)", asFUNCTION(midi_input_port_name_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_api_name_byte_count()", asFUNCTION(midi_api_name_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_api_name_byte(uint index)", asFUNCTION(midi_api_name_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_message_name_byte_count(const midi_message&in m)", asFUNCTION(midi_message_name_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_message_name_byte(const midi_message&in m, uint index)", asFUNCTION(midi_message_name_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_last_error_byte_count()", asFUNCTION(midi_last_error_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_last_error_byte(uint index)", asFUNCTION(midi_last_error_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_first_error_byte_count()", asFUNCTION(midi_first_error_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_first_error_byte(uint index)", asFUNCTION(midi_first_error_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_input@ midi_input_create()", asFUNCTION(midi_input_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_output@ midi_output_create()", asFUNCTION(midi_output_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 }
