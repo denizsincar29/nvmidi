@@ -1077,6 +1077,7 @@ jobs:
           }
 
       - name: every call the driver received
+        if: always()
         shell: pwsh
         # The one measurement nobody has taken. Three changes have been made to
         # the driver's message dispatcher and each one was judged by the same
