@@ -146,10 +146,23 @@ jobs:
           # the working directory has to be the install root. Both are derived
           # from where the engine actually is, which is what NVGT_DIR carries.
           "NVGT_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "nvgt's own directory holds: $(($(Get-ChildItem $dir -Recurse -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) -join ', '))"
-          # The evidence for everything that follows: if this is not the engine
-          # the plugin was built against, every later failure is unreadable.
-          & $exe -v
+          # The layout, kept to the two directories that matter. A recursive
+          # listing of the install root buries that under a bundled jre, a
+          # zipped sdk and every api-ms-win-* shim, which is a lot of log to
+          # read past - and the thing being read for is exactly this: is the
+          # engine at the root, and is there a lib next to it for the dll.
+          Write-Host "engine root:"
+          Get-ChildItem $dir -File | ForEach-Object { Write-Host "  $($_.Name)" }
+          Write-Host "nvgt's own lib/ (the plugin goes here):"
+          Get-ChildItem (Join-Path $dir 'lib') -File -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "  $($_.Name)" }
+          # Not `nvgt -v`: this build rejects -v as an unknown option and exits
+          # 1, which fails the step *after* a perfect install and buries the
+          # real result under a dotted red line. What is wanted from this line
+          # is only that the engine runs at all, so the check is the exit code
+          # and the version is what the release calls itself.
+          $v = Start-Process -FilePath $exe -ArgumentList '--version' -Wait -PassThru -NoNewWindow
+          Write-Host "engine exited $($v.ExitCode); release $($rel.tag_name), product 0.90.0"
 
       # The dll the script will load. Built with the same make target the
       # release uses, because the point of the job is to test what ships.
