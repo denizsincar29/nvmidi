@@ -672,7 +672,12 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
 		write_status(write_driver_entry(g_slot, 32)
 			? "ATTACH=registry-written" : "ATTACH=registry-failed");
 		HANDLE t = CreateThread(NULL, 0, publish_thread, NULL, 0, NULL);
-		write_status(t ? "ATTACH=thread-created" : "ATTACH=thread-create-failed");
+		// The thread's own name is not written here, and that is deliberate.
+		// A mark in this function outlives one in the thread, because the file
+		// keeps only its last write: writing thread-created after CreateThread
+		// would overwrite whatever the thread had managed to say, which is the
+		// whole reason three runs in a row showed nothing but the last mark
+		// DllMain made. The thread's verdict is the thread's to write.
 		if (t) CloseHandle(t);
 		// Written after the wait, so it means something. The file keeps only
 		// its last write, which is the whole difficulty here: a mark is worth
