@@ -26,6 +26,19 @@
 
 #pragma plugin nvmidi
 
+// One byte, back as a one-character string. This engine's string(byte) gives
+// the decimal digits of the number rather than the character they stand for -
+// measured on a windows runner, where the backend name came out of the byte
+// pair as "110118109105100105..." and every comparison against "Windows"
+// failed. A 64-letter table indexed by the byte is the conversion that works;
+// string() is the one that reads well in a byte list and is wrong in a string.
+const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
+string char_of(uint b) {
+	if (b < byte_letters.length()) return byte_letters.substr(b, 1);
+	return "?";
+}
+
+
 // `out` is a reserved keyword in this engine - "ERROR: Instead found reserved
 // keyword 'out'" at the declaration, measured on the runner, not guessed. It
 // cost this probe two runs that looked like plugin failures and were compile
@@ -72,7 +85,7 @@ void main() {
 	print("PROBE_API_BYTES " + an);
 	string api = "";
 	for (int i = 0; i < an && i < 128; i++) {
-		api += string(midi_api_name_byte(i));
+		api += char_of(midi_api_name_byte(i));
 	}
 	print("PROBE_API_TEXT " + api);
 	print("PROBE_END");

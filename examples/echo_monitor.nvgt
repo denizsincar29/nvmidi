@@ -2,6 +2,19 @@
 // the pragma below the engine never opens the library and every midi_* name
 #pragma plugin nvmidi
 
+// One byte, back as a one-character string. This engine's string(byte) gives
+// the decimal digits of the number rather than the character they stand for -
+// measured on a windows runner, where the backend name came out of the byte
+// pair as "110118109105100105..." and every comparison against "Windows"
+// failed. A 64-letter table indexed by the byte is the conversion that works;
+// string() is the one that reads well in a byte list and is wrong in a string.
+const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
+string char_of(uint b) {
+	if (b < byte_letters.length()) return byte_letters.substr(b, 1);
+	return "?";
+}
+
+
 // --- headless safety net -------------------------------------------------
 // Measured on the engine: when a script calls screen_reader_speak on a machine
 // with no screen reader attached, nvgt does not return from the call - the
@@ -21,7 +34,6 @@ void announce(const string&in text) {
 	alert(text, "nvmidi");
 }
 
-
 // echo_monitor.nvgt - speak every message a MIDI device sends.
 //
 // The quickest way to confirm input works end to end. Play a few notes, turn
@@ -32,36 +44,36 @@ void announce(const string&in text) {
 //
 // Press escape to stop.
 
-
-
 // The plugin hands its strings over as a count plus an indexed byte - see the
 // readme. These put them back together here, where the engine's own strings
 // were measured alive.
 string bytes_of_config(midi_config@ c) {
 	string s = "";
-	for (int i = 0; i < c.describe_byte_count(); i++) s += string(c.describe_byte(i));
+	for (int i = 0; i < c.describe_byte_count(); i++) s += char_of(c.describe_byte(i));
 	return s;
 }
 
 string bytes_of_last_error() {
 	string s = "";
-	for (int i = 0; i < midi_last_error_byte_count(); i++) s += string(midi_last_error_byte(i));
+	for (int i = 0; i < midi_last_error_byte_count(); i++) s += char_of(midi_last_error_byte(i));
 	return s;
 }
 
 string bytes_of_port_name(midi_output@ o) {
 	string s = "";
-	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += string(o.get_port_name_byte(i));
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += char_of(o.get_port_name_byte(i));
 	return s;
 }
 
 string bytes_of_input_port_name(midi_input@ o) {
 	string s = "";
-	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += string(o.get_port_name_byte(i));
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += char_of(o.get_port_name_byte(i));
 	return s;
-}string bytes_of_message(midi_message@ m) {
+}
+
+string bytes_of_message(midi_message@ m) {
 	string s = "";
-	for (int i = 0; i < m.to_string_byte_count(); i++) s += string(m.to_string_byte(i));
+	for (int i = 0; i < m.to_string_byte_count(); i++) s += char_of(m.to_string_byte(i));
 	return s;
 }
 

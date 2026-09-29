@@ -4,6 +4,19 @@
 // script failed, so the line is the first thing in the file on purpose.
 #pragma plugin nvmidi
 
+// One byte, back as a one-character string. This engine's string(byte) gives
+// the decimal digits of the number rather than the character they stand for -
+// measured on a windows runner, where the backend name came out of the byte
+// pair as "110118109105100105..." and every comparison against "Windows"
+// failed. A 64-letter table indexed by the byte is the conversion that works;
+// string() is the one that reads well in a byte list and is wrong in a string.
+const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
+string char_of(uint b) {
+	if (b < byte_letters.length()) return byte_letters.substr(b, 1);
+	return "?";
+}
+
+
 // e2e_midi.nvgt - the whole plugin, exercised once, with the console as the
 // only microphone.
 //
@@ -71,31 +84,31 @@ bool have_bus = true;
 
 string bytes_of_object_port_name(midi_output@ o) {
 	string s = "";
-	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += string(o.get_port_name_byte(i));
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += char_of(o.get_port_name_byte(i));
 	return s;
 }
 
 string bytes_of_object_port_name(midi_input@ o) {
 	string s = "";
-	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += string(o.get_port_name_byte(i));
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += char_of(o.get_port_name_byte(i));
 	return s;
 }
 
 string bytes_of_port_name(uint port) {
 	string s = "";
-	for (int i = 0; i < midi_output_port_name_byte_count(port); i++) s += string(midi_output_port_name_byte(port, i));
+	for (int i = 0; i < midi_output_port_name_byte_count(port); i++) s += char_of(midi_output_port_name_byte(port, i));
 	return s;
 }
 
 string bytes_of_input_port_name(uint port) {
 	string s = "";
-	for (int i = 0; i < midi_input_port_name_byte_count(port); i++) s += string(midi_input_port_name_byte(port, i));
+	for (int i = 0; i < midi_input_port_name_byte_count(port); i++) s += char_of(midi_input_port_name_byte(port, i));
 	return s;
 }
 
 string bytes_of_last_error() {
 	string s = "";
-	for (int i = 0; i < midi_last_error_byte_count(); i++) s += string(midi_last_error_byte(i));
+	for (int i = 0; i < midi_last_error_byte_count(); i++) s += char_of(midi_last_error_byte(i));
 	return s;
 }
 
@@ -107,7 +120,7 @@ void main() {
 	print("nvmidi e2e is open");
 
 	string api = "";
-	for (int i = 0; i < midi_api_name_byte_count(); i++) api += string(midi_api_name_byte(i));
+	for (int i = 0; i < midi_api_name_byte_count(); i++) api += char_of(midi_api_name_byte(i));
 	if (api == "") {
 		fail("midi_api_name returned nothing, so the plugin is not registered");
 		print("E2E_END failures=" + failures);
@@ -181,7 +194,7 @@ void main() {
 			midi_message m;
 			if (!reader.next_message(m)) break;
 			string text = "";
-			for (int bi = 0; bi < midi_message_name_byte_count(m); bi++) text += string(midi_message_name_byte(m, bi));
+			for (int bi = 0; bi < midi_message_name_byte_count(m); bi++) text += char_of(midi_message_name_byte(m, bi));
 			print("E2E_HEARD " + text);
 			if (text.find("note on") >= 0) {
 				ok("HEARD " + text);
