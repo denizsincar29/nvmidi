@@ -262,7 +262,7 @@ jobs:
         continue-on-error: true
         run: |
           $exe = Join-Path $env:NVGT_DIR 'nvgt.exe'
-          foreach ($name in @('probe_api_name', 'char_at_probe', 'char_of_probe', 'char_of2_probe')) {
+          foreach ($name in @('probe_api_name', 'char_at_probe', 'char_of_probe', 'char_of2_probe', 'winmm_open_probe')) {
             $src = Join-Path $env:GITHUB_WORKSPACE "scripts/windows/$name.nvgt"
             $log = Join-Path $env:GITHUB_WORKSPACE "$name.out"
             Write-Host "=== $name ==="
@@ -416,7 +416,7 @@ jobs:
       # needs the port name out of the script's log, and the script needs a
       # listener that is already waiting.
       - name: play the melody (script)
-        shell: cmd
+        shell: pwsh
         # The script path is built from GITHUB_WORKSPACE and not from %~dp0.
         # %~dp0 is the directory of the .cmd file github writes this step into,
         # which lives under RUNNER_TEMP, not in the checkout - so the step has
@@ -424,8 +424,51 @@ jobs:
         # it was written, and the only trace was one line in the runner's own
         # log: "error: Path not found: D:\a\_temp\scripts\...". Nothing in the
         # job read that line, so it read as "nvgt never started".
+        #
+        # The launch itself used to be `start /b`, which returns at once and
+        # throws the process away. That is fine while the script only ends by
+        # finishing its own prints, and wrong as soon as the engine dies: a
+        # crash mid sentence leaves logs_e2e.txt ending wherever it got to, and
+        # the wait step below then reports "the script finished without naming
+        # a port" - the same words a clean early return produces. The two are
+        # not the same finding. Start-Process with -PassThru keeps the handle,
+        # the step waits for it, and the exit code goes in the log: 0 for a
+        # clean end, and 0xC0000409 or 0xC0000005 for the stack overrun and the
+        # access violation this work has already met. The wait step reads it.
         run: |
-          start /b cmd /c ""%NVGT_DIR%\nvgt.exe" "%GITHUB_WORKSPACE%\scripts\windows\e2e_winmm.nvgt" -- "%SYNTH_HINT%" > "%GITHUB_WORKSPACE%\logs_e2e.txt" 2>&1"
+          $exe = Join-Path $env:NVGT_DIR 'nvgt.exe'
+          $src = Join-Path $env:GITHUB_WORKSPACE 'scripts\windows\e2e_winmm.nvgt'
+          $log = Join-Path $env:GITHUB_WORKSPACE 'logs_e2e.txt'
+          $p = Start-Process -FilePath $exe `
+            -ArgumentList @($src, '--', $env:SYNTH_HINT) `
+            -NoNewWindow -PassThru `
+            -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+          $code = -1
+          if (-not $p.WaitForExit(180000)) {
+            Write-Host "the script was still running after three minutes; killing it"
+            try { $p.Kill() } catch {}
+            $code = -2
+          } else {
+            $code = $p.ExitCode
+          }
+          # Signed and unsigned, because the crash codes read as negative ints.
+          $hex = ('0x{0:X8}' -f ($code -band 0xFFFFFFFF))
+          Write-Host "nvgt exited $code ($hex)"
+          "E2E_EXIT_CODE=$code"   | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "E2E_EXIT_HEX=$hex"     | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          if (Test-Path "$log.err") {
+            $err = Get-Content "$log.err" -Raw
+            if ($err -and $err.Trim().Length -gt 0) { Write-Host "stderr:"; Write-Host $err }
+          }
+          if (Test-Path $log) {
+            $t = Get-Content $log -Raw
+            if ($t -and $t.Trim().Length -gt 0) {
+              # The last line, because a crash truncates the file wherever it
+              # got to and that is exactly the position worth seeing.
+              Write-Host "logs_e2e.txt ends with:"
+              Write-Host (($t -split "`n" | Select-Object -Last 3) -join "`n")
+            }
+          }
 
       - name: wait for the script to name its port
         shell: pwsh
@@ -454,6 +497,7 @@ jobs:
                 # log that says which is ever read.
                 Write-Host "the script finished without naming a port:"
                 Write-Host $t
+                Write-Host "nvgt exit was $env:E2E_EXIT_CODE ($env:E2E_EXIT_HEX)"
                 Write-Host "::warning::no port was opened - the verdict steps decide whether that is the runner or the plugin"
                 exit 0
               }

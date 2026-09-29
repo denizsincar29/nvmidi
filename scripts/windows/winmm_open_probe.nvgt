@@ -1,0 +1,145 @@
+// winmm_open_probe.nvgt - two separate questions, kept separate.
+//
+// The e2e script cannot open the Microsoft GS Wavetable Synth. The plugin says
+// so with "MMRESULT 1", which is MMSYSERR_ERROR - winmm's general "something
+// went wrong" and nothing more specific. Two very different findings produce
+// that same code, and telling them apart decides what the project does next:
+//
+//   a) the plugin opens the wrong port, or opens it wrongly, so the port is
+//      reachable and our hands are the problem - a bug here, fixable here;
+//   b) winmm itself refuses a MIDI output from this process, so the port was
+//      never reachable from the runner at all - nothing about the plugin
+//      explains it and the e2e needs a different way to hear a message.
+//
+// So this file opens the same device twice, the same way, and prints the code
+// each attempt returns, before any plugin is loaded. Its output is the
+// baseline the plugin's behaviour is then measured against.
+//
+// An input is opened too, on the synth and on the only other winmm output
+// device, because MidiOutWinMM::getPortCount() is midiOutGetNumDevs(): if an
+// input open succeeds where the output open fails, the failure belongs to the
+// output direction rather than to this process being unable to talk to winmm.
+const string DLL = "nvmidi";
+const int MMSYSERR_NOERROR = 0;
+
+// The synth, and the mapper - both are output devices winmm reports whether or
+// not a card is present. The mapper is the first entry on any windows machine.
+void main() {
+	print("W_BEGIN");
+	const uint OUTPUTS = midi_output_port_count();
+	print("W_OUTPUTS " + OUTPUTS);
+	string synth_name = "";
+	int synth_index = -1;
+	for (uint i = 0; i < OUTPUTS; i++) {
+		string n = "";
+		for (int j = 0; j < midi_output_port_name_byte_count(i); j++) {
+			int b = midi_output_port_name_byte(i, j);
+			if (b < 0) break;
+			n += char_of(b);
+		}
+		print("W_OUT_" + i + " " + n);
+		if (n.find("GS Wavetable") >= 0 && synth_index < 0) {
+			synth_index = int(i);
+			synth_name = n;
+		}
+	}
+	print("W_SYNTH_INDEX " + synth_index + " " + synth_name);
+
+	// The backend the plugin chose, so a failure below is read against the
+	// right api. Same decode the e2e script uses.
+	string api = "";
+	for (int j = 0; j < midi_api_name_byte_count(); j++) {
+		int b = midi_api_name_byte(j);
+		if (b < 0) break;
+		api += char_of(b);
+	}
+	print("W_API " + api);
+
+	// Attempt one. Every step is printed, not just the verdict, so the log
+	// says how far the call got.
+	midi_output@ out = midi_output_create();
+	bool opened = false;
+	if (synth_index >= 0) {
+		opened = out.open(uint(synth_index), "probe");
+	} else {
+		print("W_SKIP no synth in the enumeration");
+	}
+	print("W_OPEN " + opened);
+	print("W_OPEN_ERROR " + bytes_of_last_error());
+	if (opened) {
+		print("W_OPEN_PORT_NAME " + port_name_of(out));
+		// A real message, so a port that opens but cannot take a write is
+		// caught here rather than two steps later in the verdict.
+		out.send_note_on(1, 60, 100);
+		print("W_SEND_NOTE_ON_ERROR " + bytes_of_last_error());
+		out.send_note_off(1, 60, 0);
+		print("W_SEND_NOTE_OFF_ERROR " + bytes_of_last_error());
+		print("W_ACTIVE " + out.get_active_notes());
+		out.close();
+		print("W_CLOSED");
+	}
+
+	// Attempt two: the other direction. An input open that succeeds is the
+	// evidence that this process was never shut out of winmm.
+	for (uint i = 0; i < midi_input_port_count(); i++) {
+		string n = "";
+		for (int j = 0; j < midi_input_port_name_byte_count(i); j++) {
+			int b = midi_input_port_name_byte(i, j);
+			if (b < 0) break;
+			n += char_of(b);
+		}
+		print("W_IN_" + i + " " + n);
+	}
+	midi_input@ in = midi_input_create();
+	bool in_opened = false;
+	if (midi_input_port_count() > 0) in_opened = in.open(0, "probe");
+	print("W_INPUT_OPEN " + in_opened);
+	print("W_INPUT_OPEN_ERROR " + bytes_of_last_error());
+	if (in_opened) in.close();
+
+	// The final reading. A failure that is about the output direction alone
+	// shows up here as W_INPUT_OPEN true next to W_OPEN false.
+	print("W_VERDICT output=" + opened + " input=" + in_opened
+		+ " synth_index=" + synth_index + " outputs=" + OUTPUTS);
+	print("W_END");
+}
+
+// One byte as one character, by range. The engine's own string(byte) gives the
+// decimal digits of the number, and a table walked with substr() answers the
+// wrong characters - both measured, both written up in PROBE-FINDINGS.md.
+const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
+const string digits = "0123456789";
+string char_of(uint b) {
+	if (b >= 48 && b <= 57) return digits.substr(b - 48, 1);
+	if (b >= 65 && b <= 90) return byte_letters.substr(b - 65 + 10, 1);
+	if (b >= 97 && b <= 122) return byte_letters.substr(b - 97 + 36, 1);
+	if (b == 47) return "/";
+	if (b == 46) return ".";
+	if (b == 95) return "_";
+	if (b == 45) return "-";
+	if (b == 43) return "+";
+	if (b == 32) return " ";
+	return ".";
+}
+
+// The last error, as text. Empty means the last call succeeded.
+string bytes_of_last_error() {
+	string s = "";
+	for (int i = 0; i < midi_last_error_byte_count(); i++) {
+		int b = midi_last_error_byte(i);
+		if (b < 0) break;
+		s += char_of(b);
+	}
+	return s;
+}
+
+// The open port's name, read back the same way.
+string port_name_of(midi_output@ port) {
+	string s = "";
+	for (int i = 0; i < port.get_port_name_byte_count(); i++) {
+		int b = port.get_port_name_byte(i);
+		if (b < 0) break;
+		s += char_of(b);
+	}
+	return s;
+}
