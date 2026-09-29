@@ -1,0 +1,24 @@
+// probe: n_sized
+#pragma plugin nvmidi
+
+// The candidate this file tests, and the run that put it here.
+//
+// midi_input and midi_output are registered with a nonzero size now, where
+// every earlier run registered them at 0. scripts/windows/n_type.nvgt is the
+// same declarations the previous run rejected - so if that file still refuses
+// the two names while this one accepts them, the size was the cause and the
+// declarations never had anything wrong with them.
+//
+// Read the two files together. This one differs from n_type.nvgt in the plugin
+// it was run against, not in its text: the text is deliberately identical, and
+// identical text against two builds is what attributes the change.
+void main() {
+
+	midi_message m;
+	midi_duration u;
+	midi_note@ n = null;
+	midi_config@ c = null;
+	midi_input@ in = null;
+	midi_output@ out = null;
+	return;
+}

@@ -1,0 +1,47 @@
+// probe: n_panic
+#pragma plugin nvmidi
+
+// Why this file exists.
+//
+// n_type.nvgt measured that midi_input and midi_output are the only names of
+// this plugin a script cannot declare, while midi_note and midi_config - which
+// this plugin registers at the same size 0 - declare without a word. Two
+// candidates survive that measurement, and they are indistinguishable from
+// outside: the engine may be refusing the registration of those two types, or
+// a method further down the registering function may be panicking and taking
+// the still-unregistered type with it. A panic prints nothing, and a refusal
+// caused by earlier damage prints the same sentence as a refusal caused by the
+// declaration itself, so asking for the name again cannot tell them apart.
+//
+// What separates them is asking for something ELSE that is certainly wrong.
+//
+// MIDI_PROBE_A declares a handle to the port and then calls open with an
+// argument no overload accepts. If the type is usable the engine resolves it,
+// walks the overloads, finds none and says so. If the type is damaged the
+// engine cannot resolve it at all and says that instead. The wording of the
+// refusal is the answer.
+//
+// MIDI_PROBE_B is the control. An array of the same type is a mistake too, but
+// the array is a registered type of its own, so the declaration reaches the
+// element type with a compiler that is already past the "is this a type"
+// question. If A refuses the type and B does not, the type is fine and the
+// declaration in n_type.nvgt was refused for another reason.
+void main() {
+	print("PANIC_BEGIN");
+
+	print("MIDI_PROBE_A");
+	midi_output@ p = null;
+	p.open("not a port number");
+	print("MIDI_PROBE_A_DONE");
+
+	print("MIDI_PROBE_B");
+	midi_output[]@ a;
+	print("MIDI_PROBE_B_DONE");
+
+	print("MIDI_PROBE_C");
+	midi_input@ q = null;
+	q.open("not a port number");
+	print("MIDI_PROBE_C_DONE");
+
+	print("PANIC_END");
+}

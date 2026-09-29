@@ -1823,12 +1823,12 @@ void register_midi_message(asIScriptEngine* engine, registration* reg) {
 }
 
 void register_midi_input(asIScriptEngine* engine, registration* reg) {
-	reg->check( engine->RegisterObjectType("midi_input", 0, asOBJ_REF | asOBJ_NOCOUNT), "RegisterObjectType", __LINE__);
+	reg->check( engine->RegisterObjectType("midi_input", sizeof(midi_input), asOBJ_REF | asOBJ_NOCOUNT), "RegisterObjectType", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool open(uint port, const string&in name = \"nvmidi\")", asMETHOD(midi_input, open), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool open_by_name(const string&in substring, const string&in name = \"nvmidi\")", asMETHOD(midi_input, open_by_name), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool open_config(midi_config@ config, const string&in name = \"nvmidi\")", asMETHOD(midi_input, open_config), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_chord(midi_note@[]@ notes)", asMETHOD(midi_input, play_chord), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_chord_wait(midi_note@[]@ notes)", asMETHOD(midi_input, play_chord_wait), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_chord(array<midi_note@>@ notes)", asMETHOD(midi_input, play_chord), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_chord_wait(array<midi_note@>@ notes)", asMETHOD(midi_input, play_chord_wait), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_note(const midi_note&in note)", asMETHOD(midi_input, play_note), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_note_wait(const midi_note&in note)", asMETHOD(midi_input, play_note_wait), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "uint stop_all_notes()", asMETHOD(midi_input, stop_all_notes), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
@@ -1846,22 +1846,44 @@ void register_midi_input(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool get_ignore_sysex() const", asMETHOD(midi_input, get_ignore_sysex), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "void set_ignore_timing(bool)", asMETHOD(midi_input, set_ignore_timing), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool get_ignore_timing() const", asMETHOD(midi_input, get_ignore_timing), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_midi_chord(midi_note@[]@ notes, const string&in pattern)", asMETHOD(midi_input, play_midi_chord), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_midi_chord_wait(midi_note@[]@ notes, const string&in pattern)", asMETHOD(midi_input, play_midi_chord_wait), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_sequence(midi_note@[]@ notes)", asMETHOD(midi_input, play_sequence), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_midi_chord(array<midi_note@>@ notes, const string&in pattern)", asMETHOD(midi_input, play_midi_chord), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_midi_chord_wait(array<midi_note@>@ notes, const string&in pattern)", asMETHOD(midi_input, play_midi_chord_wait), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_sequence(array<midi_note@>@ notes)", asMETHOD(midi_input, play_sequence), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "midi_duration duration(double amount, int unit) const", asMETHOD(midi_input, duration), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_input", "double tempo", asOFFSET(midi_input, tempo)), "RegisterObjectProperty", __LINE__);
 }
 
 void register_midi_output(asIScriptEngine* engine, registration* reg) {
-	reg->check( engine->RegisterObjectType("midi_output", 0, asOBJ_REF | asOBJ_NOCOUNT), "RegisterObjectType", __LINE__);
+	// sizeof(midi_output) and not 0, in step with midi_input above.
+	//
+	// What is measured. The two port names are the only ones a script cannot
+	// declare. scripts/windows/n_type.nvgt names all six of this plugin's types
+	// in one run - midi_message, midi_duration, midi_note@, midi_config@,
+	// midi_input@, midi_output@ - and the compiler refuses exactly two of them,
+	// the two ports; midi_note@ and midi_config@ declare without a word. The
+	// refusal is therefore on the name and not on the syntax, and `midi_output
+	// port = midi_output_create();` failing in scripts/windows/e2e_winmm.nvgt
+	// while `midi_output@` fails elsewhere is one fault seen twice, not two.
+	//
+	// What is not measured. Both of those cleanly-declared names are registered
+	// at size 0 exactly like the ports, so size 0 is NOT shown to be the cause
+	// and this line is a candidate, not a cure. The surviving candidate sits in
+	// the log comment further down this file: register_midi_input and
+	// register_midi_output run last and reference midi_note, midi_config and
+	// midi_duration in their own method declarations, so a method that fails to
+	// register aborts the remainder of that function and leaves the port type
+	// half-built - which would look precisely like this. Both ports are moved
+	// to a real size here so that the next run separates the two: if the
+	// decls come back clean the size was the cause, and if they do not, the
+	// build log's own registration error names the method that panicked.
+	reg->check( engine->RegisterObjectType("midi_output", sizeof(midi_output), asOBJ_REF | asOBJ_NOCOUNT), "RegisterObjectType", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool open(uint port, const string&in name = \"nvmidi\")", asMETHOD(midi_output, open), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool open_by_name(const string&in substring, const string&in name = \"nvmidi\")", asMETHOD(midi_output, open_by_name), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool open_config(midi_config@ config, const string&in name = \"nvmidi\")", asMETHOD(midi_output, open_config), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_chord(midi_note@[]@ notes)", asMETHOD(midi_output, play_chord), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_chord_wait(midi_note@[]@ notes)", asMETHOD(midi_output, play_chord_wait), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_midi_chord(midi_note@[]@ notes, const string&in pattern)", asMETHOD(midi_output, play_midi_chord), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_midi_chord_wait(midi_note@[]@ notes, const string&in pattern)", asMETHOD(midi_output, play_midi_chord_wait), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_chord(array<midi_note@>@ notes)", asMETHOD(midi_output, play_chord), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_chord_wait(array<midi_note@>@ notes)", asMETHOD(midi_output, play_chord_wait), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_midi_chord(array<midi_note@>@ notes, const string&in pattern)", asMETHOD(midi_output, play_midi_chord), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_midi_chord_wait(array<midi_note@>@ notes, const string&in pattern)", asMETHOD(midi_output, play_midi_chord_wait), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_note(const midi_note&in note)", asMETHOD(midi_output, play_note), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_note_wait(const midi_note&in note)", asMETHOD(midi_output, play_note_wait), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "uint stop_all_notes()", asMETHOD(midi_output, stop_all_notes), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
@@ -2087,9 +2109,9 @@ void register_nvmidi(asIScriptEngine* engine) {
 	// with it.
 	//
 	// midi_config first of the three, and the reason is the same rule read one
-	// step further on: register_midi_output registers play_chord(midi_note@[]@)
-	// and play_midi_chord(midi_note@[]@, ...) as well, and above these
-	// registrations they were failing. Measured, run 36615690048: the n_type
+	// step further on: register_midi_output registers play_chord, which takes an
+	// array of midi_note, and above these registrations it was failing.
+	// Measured, run 36615690048: the n_type
 	// probe asked for every name this plugin registers as a declared type and
 	// the engine refused exactly two of them - midi_input@ and midi_output@,
 	// "Expected ';'" / "Instead found '@'" at those two lines - while
