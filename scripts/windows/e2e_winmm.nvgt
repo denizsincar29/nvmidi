@@ -55,6 +55,19 @@ string char_of(uint b) {
 	return "?";
 }
 
+// One character of an ascii literal, back as its number. Used by the backend
+// classification below, which compares bytes rather than text and therefore
+// needs the wanted character as an int.
+//
+// Read out of the table and not out of the literal: `"abc"[0]` is "Can't
+// implicitly convert from 'const string' to 'int'" in this engine, measured
+// on the runner, and that error cost a run of its own.
+int char_at(const string&in s, uint at) {
+	if (at >= s.length()) return 0;
+	const string one = s.substr(at, 1);
+	return int(byte_letters.find(one));
+}
+
 
 // --- the harness -----------------------------------------------------------
 //
@@ -282,7 +295,13 @@ void main() {
 			const int c = midi_api_name_byte(i + int(k) + 1);
 			// Folded by hand for the same reason the port matching below is:
 			// this engine has no to_lowercase, measured.
-			const int want = tail.substr(k, 1)[0];
+			//
+			// The wanted character is read out of the table rather than by
+			// indexing the literal: `"ndows"[0]` is "Can't implicitly convert
+			// from 'const string' to 'int'", measured on the runner, and that
+			// error cost a run. The table is already there and already indexed
+			// successfully everywhere above.
+			const int want = char_at(tail, k);
 			if (c != want && c != want - 32) { tail_ok = false; break; }
 		}
 		if (tail_ok) is_winmm = true;
@@ -293,7 +312,7 @@ void main() {
 		for (uint k = 0; k < rest.length(); k++) {
 			if (i + int(k) + 1 >= API_BYTES) { rest_ok = false; break; }
 			const int c = midi_api_name_byte(i + int(k) + 1);
-			const int want = rest.substr(k, 1)[0];
+			const int want = char_at(rest, k);
 			if (c != want && c != want - 32) { rest_ok = false; break; }
 		}
 		if (rest_ok) is_dummy = true;
