@@ -51,6 +51,30 @@
 // word of it goes into a dialog nobody opens. There is a transcript here
 // instead.
 
+// --- case insensitive matching ---------------------------------------------
+//
+// The engine's string type carries find() and substr() but no case folding at
+// all: `to_lowercase` is "No matching symbol" and the angelscript add-ons
+// vendored here define nothing of the kind either. Port names are compared
+// against fixed words ("loopmidi", the job's hint) that arrive in whatever case
+// the driver and the workflow happen to use, so the comparison is folded by
+// hand here rather than by a call that does not exist.
+//
+// Only ascii is folded, which is the whole of the alphabet these names use.
+string fold_case(const string&in text) {
+	string out = text;
+	for (uint i = 0; i < out.length(); i++) {
+		const uint c = out[i];
+		if (c >= 65 && c <= 90) out[i] = c + 32;
+	}
+	return out;
+}
+
+bool matches_ignoring_case(const string&in haystack, const string&in needle) {
+	if (needle.length() == 0) return false;
+	return fold_case(haystack).find(fold_case(needle)) >= 0;
+}
+
 int failures = 0;
 
 void ok(const string&in what) {
@@ -129,7 +153,7 @@ void main() {
 	for (uint i = 0; i < words.length(); i++) {
 		const string word = words[i].trim_whitespace();
 		if (word.length() == 0) continue;
-		hint = word.to_lowercase();
+		hint = word;
 		break;
 	}
 	if (hint != "") print("E2E_HINT " + hint);
@@ -181,14 +205,18 @@ void main() {
 	string chosen_name = "";
 	for (uint i = 0; i < outs; i++) {
 		const string n = midi_output_port_name(i);
-		const string lower = n.to_lowercase();
 		if (chosen < 0) chosen = int(i);
-		if (chosen_name == "" && hint != "" && lower.find(hint) >= 0) {
+		// Case insensitive without a lower-case helper: the engine has no
+		// to_lowercase on string (measured - "No matching symbol 'to_lowercase'"
+		// at this line), and port names differ from the job's hint in case on
+		// some windows builds, so an exact find() would silently pick the wrong
+		// port and the listener would hear nothing.
+		if (chosen_name == "" && hint != "" && matches_ignoring_case(n, hint)) {
 			chosen = int(i);
 			chosen_name = n;
 		}
-		if (chosen_name == "" && (lower.find("loopbe") >= 0 || lower.find("loopmidi") >= 0
-			|| lower.find("virtual") >= 0 || lower.find("loop") >= 0)) {
+		if (chosen_name == "" && (matches_ignoring_case(n, "loopbe") || matches_ignoring_case(n, "loopmidi")
+			|| matches_ignoring_case(n, "virtual") || matches_ignoring_case(n, "loop"))) {
 			chosen = int(i);
 			chosen_name = n;
 		}
