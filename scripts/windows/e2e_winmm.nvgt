@@ -248,6 +248,23 @@ void main() {
 		return;
 	}
 
+	// The same length of text, built in the same loop, with every character
+	// deliberately ascii and known: 87 as two characters, because 87 is out of
+	// the range this engine's substr() renders, and 64 as one character and
+	// one byte, which this engine's length() counts as two.
+	//
+	// This is the control for the line below it and it is why the line below
+	// it is worth printing at all. The plugin's 25 bytes are correct - the job
+	// decodes them itself and reads the real name - and the text rebuilt from
+	// them is not, and without a fixed input to compare against there is no
+	// way to tell a corrupted plugin from a builder that never worked. Every
+	// character here is a literal in this file.
+	string api_control = "";
+	for (int i = 0; i < API_BYTES; i++) api_control += (i % 2 == 0) ? "8" : "7";
+	print("E2E_API_CONTROL_LEN " + api_control.length());
+	print("E2E_API_CONTROL_TEXT " + api_control);
+	print("E2E_API_CONTROL_FIND " + api_control.find("87"));
+
 	string api = "";
 	for (int i = 0; i < API_BYTES; i++) api += char_of(midi_api_name_byte(i));
 	ok("LOADED " + api);
