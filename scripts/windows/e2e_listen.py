@@ -336,6 +336,18 @@ def load_driver(path, timeout=20.0):
             with open(status_path, "r", errors="replace") as f:
                 text = f.read()
             print("DRIVER_STATUS %s" % text.strip().replace("\n", " | "))
+            # The driver writes a line per call that reaches its entry point,
+            # beside itself, in the same way it writes the status. Printing it
+            # here rather than letting a workflow step go looking for it is the
+            # difference between measuring and hoping: the file is created
+            # inside whichever process winmm loaded the driver into, and this
+            # script is that process, so reading it from the outside means
+            # guessing where the process was running.
+            trace_path = os.path.splitext(path)[0] + ".trace.txt"
+            if os.path.getsize(trace_path) > 0 if os.path.exists(trace_path) else False:
+                with open(trace_path, "r", errors="replace") as f:
+                    for line in f:
+                        print("DRIVER_TRACE %s" % line.rstrip())
             if "LOOPBACK_STATUS=ok" in text:
                 return True, text
             return False, "the driver loaded but did not open its device: %s" % text.strip()
