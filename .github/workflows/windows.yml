@@ -141,7 +141,13 @@ jobs:
           Write-Host "=== 1. winmm replaced by the probe, then python runs ==="
           Write-Host "(the list is built the moment winmm is first pulled in, so"
           Write-Host " the slot this file publishes at attach is as late as it gets)"
+          # The exit code is printed, not only the output. A python that prints
+          # its line has unquestionably run; a python that dies inside
+          # LoadLibrary still returns a code, and until this was printed this
+          # case could not tell "ran and quiet" from "died on the replacement"
+          # - which is the one thing it exists to distinguish.
           python -c "print('python ok')" 2>&1 | ForEach-Object { Write-Host "  $_" }
+          Write-Host "  python exit code: $LASTEXITCODE"
           Get-ChildItem $dlls -Filter late_midi.status -ErrorAction SilentlyContinue | ForEach-Object {
             Write-Host "  $($_.FullName):"; Get-Content $_.FullName | ForEach-Object { Write-Host "    $_" }
           }

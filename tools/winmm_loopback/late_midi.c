@@ -82,10 +82,16 @@ static void report(const char *where) {
 	DWORD err;
 	FILE *f;
 
-	GetModuleFileNameA(g_self, path, MAX_PATH);
-	strcpy(strrchr(path, '.'), STATUS_SUFFIX);
-
-	f = fopen(path, "ab");
+	/* Fixed path, not the running module's own directory. The log file used to
+	 * be <this module>.status, and on run 36588463233 both cases reported the
+	 * same directory, D:\a\_temp\play - which is where the runner copy of this
+	 * file lives, not where python lives. python's own directory is the one
+	 * whose winmm is being replaced, and the whole question is whether that
+	 * replacement loads at all, so the answer has to land somewhere neither
+	 * interpreter nor loader can decide. Measured: run 36589358498, no file at
+	 * C:\late_midi_host.txt after the loaded-as-winmm run, which reads the same
+	 * as the load never happening. */
+	f = fopen("C:\\late_midi_host.txt", "ab");
 	if (!f) return;
 
 	/* Who is asking. On the attach run the process is python.exe, so the
@@ -93,9 +99,9 @@ static void report(const char *where) {
 	 * file's own module and the directory is wherever the runner put it. Those
 	 * are two different directories on the runner, and only the log kept them
 	 * apart - the probe filename alone said the same thing twice. */
+	GetModuleFileNameA(g_self, path, MAX_PATH);
 	GetModuleFileNameA(NULL, host, MAX_PATH);
-	{ FILE *hf = fopen("C:\\late_midi_host.txt", "ab");
-	  if (hf) { fputs(host, hf); fputc('\n', hf); fclose(hf); } }
+	fprintf(f, "HOST where=%s host=%s self=%s\n", where, host, path);
 
 	BOOL pub = publish(slot, 32);
 	UINT outs = midiOutGetNumDevs();
