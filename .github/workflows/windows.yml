@@ -40,7 +40,7 @@ jobs:
         # and then - once - at a path nobody looked at, which the e2e read as
         # a driver that was never built. That reading sends the reader after a
         # compile problem that does not exist, which is worse than an error.
-        run: bash tools/winmm_loopback/build.sh -o tools/winmm_loopback/nvmidi-loopback.dll
+        run: bash tools/winmm_loopback/build.sh -o tools/winmm_loopback/nvmidi.dll
 
       - name: does the driver publish a port
         shell: pwsh
@@ -59,11 +59,11 @@ jobs:
         # step judged is the file the next reader can look at.
         continue-on-error: true
         run: |
-          $dll = (Resolve-Path "tools\winmm_loopback\nvmidi-loopback.dll").Path
+          $dll = (Resolve-Path "tools\winmm_loopback\nvmidi.dll").Path
           $status = [IO.Path]::ChangeExtension($dll, ".status")
           $crash = [IO.Path]::ChangeExtension($dll, ".crash.txt")
           Remove-Item $status, $crash -ErrorAction SilentlyContinue
-          $py = @"
+          $py = @'
           import ctypes, os, sys, time
           path = sys.argv[1]
           status = os.path.splitext(path)[0] + '.status'
@@ -80,17 +80,28 @@ jobs:
               time.sleep(0.25)
           else:
               print('STATUS absent after 10s')
-          "`n
+          '@
           $py | Set-Content -Encoding utf8 "$env:RUNNER_TEMP\drv.py"
+          # Parsed here, in pwsh, before python ever sees it. The previous
+          # version of this step built the script with a "@ here-string that had
+          # a newline appended to the opening line, which is not a here-string
+          # at all - it is an unterminated string, a ParserError, and not one
+          # line of the script ever ran. Worse, continue-on-error turned that
+          # into a green tick, so the run read as though the driver had been
+          # tested when nothing had been executed. The parse is a cheap check
+          # that this class of failure cannot pass, and the step is no longer
+          # allowed to fail quietly either.
+          python -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$env:RUNNER_TEMP\drv.py"
+          if ($LASTEXITCODE -ne 0) { throw "the driver probe script does not parse" }
           python "$env:RUNNER_TEMP\drv.py" $dll
-          Write-Host "exit code: $LASTEXITCODE"
+          if ($LASTEXITCODE -ne 0) { throw "the driver probe exited $LASTEXITCODE" }
           if (Test-Path $crash) { Write-Host "crash: $(Get-Content $crash -Raw)" }
 
       - name: keep the driver next to the dll
         uses: actions/upload-artifact@v4
         with:
           name: nvmidi-loopback
-          path: tools/winmm_loopback/nvmidi-loopback.dll
+          path: tools/winmm_loopback/nvmidi.dll
           if-no-files-found: error
 
       # The driver has to reach the e2e job, which runs on a different runner:
@@ -422,10 +433,20 @@ jobs:
       - name: stage the loopback driver
         shell: pwsh
         run: |
-          $dir = Join-Path $env:RUNNER_TEMP 'nvmidi'
+          # Its own directory, and deliberately not the one the plugin lives in.
+          # Both files are now called nvmidi.dll, so staging the driver into the
+          # plugin's directory - which is what 'nvmidi' under RUNNER_TEMP is,
+          # and what this step did until the names collided - would put an
+          # 80 KB driver over the real plugin and every later step would then be
+          # measuring the wrong library. The name has to be nvmidi.dll now: a
+          # winmm driver registers its own path in the registry and winmm loads
+          # that second image in process, so two names would mean two images of
+          # the same driver and OpenDriver answering the driver's own call with
+          # HDRVR(-1).
+          $dir = Join-Path $env:RUNNER_TEMP 'loopback'
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
-          $out = Join-Path $dir 'nvmidi.dll'   # the name does not matter; the extension does
-          $src = Join-Path $env:GITHUB_WORKSPACE 'tools\winmm_loopback\nvmidi-loopback.dll'
+          $out = Join-Path $dir 'nvmidi.dll'
+          $src = Join-Path $env:GITHUB_WORKSPACE 'tools\winmm_loopback\nvmidi.dll'
           if (-not (Test-Path $src)) {
             Write-Host "::error::the driver was not built, so there is nothing for the listener to load. Nothing below here can be concluded about midi."
             # No LOOPBACK_DLL is exported either, and the listener step is
