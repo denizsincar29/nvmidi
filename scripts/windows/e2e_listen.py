@@ -296,7 +296,30 @@ def load_driver(path, timeout=20.0):
     if os.path.exists(status_path):
         os.remove(status_path)
     print("DRIVER_LOADING %s" % path)
-    ctypes.WinDLL(path)
+    # LoadLibraryA and not ctypes.WinDLL. WinDLL calls LoadLibraryExW with
+    # LOAD_WITH_ALTERED_SEARCH_PATH, which makes windows look for the dll's own
+    # dependencies beside it - and on this runner that is the directory the
+    # plugin's build left 50590 bytes of driver named nvmidi.dll in, next to a
+    # libwinpthread-1.dll built against a different shared runtime than the one
+    # this python was started with. LoadLibraryA takes the ordinary search order
+    # instead, called through ctypes with the result restype set to c_void_p:
+    # the default restype is c_int, which truncates the handle to 32 bits on a
+    # 64 bit runner and hands everything downstream a base address that was
+    # never a real one.
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.LoadLibraryA.restype = ctypes.c_void_p
+    kernel32.LoadLibraryA.argtypes = [ctypes.c_char_p]
+    module_base = kernel32.LoadLibraryA(path.encode("mbcs"))
+    if not module_base:
+        err = ctypes.get_last_error()
+        # The dispatch in DllMain is not obeyed - the loader calls DllMain for
+        # DLL_PROCESS_ATTACH regardless - so a resolve failure elsewhere in the
+        # file would still start the publish thread before LoadLibraryA returns
+        # and the wait below would still succeed. A return of 0 is therefore a
+        # loader fault and not the driver declining to publish.
+        print("DRIVER_LOAD_RC 0 (LoadLibraryA failed, error %d)" % err)
+    else:
+        print("DRIVER_LOAD_RC base=0x%x" % module_base)
     deadline = time.time() + timeout
     while time.time() < deadline:
         if os.path.exists(status_path):
@@ -307,7 +330,10 @@ def load_driver(path, timeout=20.0):
                 return True, text
             return False, "the driver loaded but did not open its device: %s" % text.strip()
         time.sleep(0.25)
-    return False, "the driver loaded but wrote no status within %.0fs" % timeout
+    return False, ("the driver loaded but wrote no status within %.0fs"
+                   " (status file %s, module base %r)"
+                   % (timeout, "present" if os.path.exists(status_path) else "absent",
+                      module_base))
 
 
 def self_test(device_id):

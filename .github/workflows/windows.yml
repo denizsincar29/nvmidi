@@ -516,6 +516,12 @@ jobs:
 
       - name: count the midi outs in the plugin's process
         shell: pwsh
+        # The list is the point; the exit code is incidental. This probe opens
+        # no port and its reading is taken from stdout, so a non-zero exit
+        # after the list printed must not stop the sender from running - which
+        # is exactly what happened on run 36573765902, where this step exited 1
+        # and the four steps below it were skipped.
+        continue-on-error: true
         run: |
           $ports = python scripts\windows\winmm_ports.py
           $ports | Write-Host
