@@ -67,6 +67,9 @@ void main() {
 	print("PROBE_RAW |" + api + "|");
 	print("PROBE_HEX " + hex_of(api));
 	print("PROBE_LEN " + api.length());
-	print("PROBE_VERSION " + nvgt_plugin_version());
+	// nvgt_plugin_version() was called here and is not a symbol this engine
+	// has - "ERROR: No matching symbol 'nvgt_plugin_version'" on the runner,
+	// which cost the probe a third run. The engine's export list is its own;
+	// the api name is what this file was written to read.
 	print("PROBE_END");
 }
