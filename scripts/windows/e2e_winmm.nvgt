@@ -263,21 +263,29 @@ void main() {
 	// there is the synth windows ships with, and the job passes its name in
 	// rather than this file hard coding a vendor string that differs between
 	// windows versions and locales.
-	// The hint arrives as a word after `--`, so it is in COMMAND_LINE and not
-	// in an `args` array. The linux script reads it the same way, and that
-	// script compiles on every push - `args` has never been confirmed to exist
-	// in this engine at all, and an unconfirmed identifier in the first lines
-	// of main is a compilation error that runs nothing and prints no marker.
+	// The hint arrives as the word after `--hint`, so it is in COMMAND_LINE
+	// and not in an `args` array. The linux script reads it the same way, and
+	// that script compiles on every push - `args` has never been confirmed to
+	// exist in this engine at all, and an unconfirmed identifier in the first
+	// lines of main is a compilation error that runs nothing and prints no
+	// marker.
+	//
+	// The flag is there because the bare word it replaced could not be told
+	// apart from the script path. The job launched this as
+	// `nvgt.exe <script> -- <hint>`, and on a runner whose argv[0] handling
+	// differs the first word can be the executable itself - measured once as
+	// the hint `E2E_HINT D:\a\nvgt\nvgt.exe` - after which a hint that means
+	// "gs wavetable" points at nothing and the selection falls through to
+	// whatever the loop finds. A named flag cannot be confused with a path.
 	string hint = "";
 	const string[]@ words = COMMAND_LINE.split(" ");
-	for (uint i = 0; i < words.length(); i++) {
+	for (uint i = 0; i + 1 < words.length(); i++) {
 		// Not named `word`: this engine's string(uint) is the array
 		// constructor, and a local called word shadows it for the whole
 		// function - which turns `string(...)` into a sized array of empty
 		// strings further down, 26 and 30 characters long by accident.
-		const string candidate = words[i].trim_whitespace();
-		if (candidate.length() == 0) continue;
-		hint = candidate;
+		if (words[i].trim_whitespace() != "--hint") continue;
+		hint = words[i + 1].trim_whitespace();
 		break;
 	}
 	if (hint != "") print("E2E_HINT " + hint);

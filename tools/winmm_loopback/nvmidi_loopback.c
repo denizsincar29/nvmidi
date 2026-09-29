@@ -68,7 +68,16 @@
 #include <string.h>
 #include <stdio.h>
 
-#define DEVICE_NAME    "nvmidi loopback"
+// The name is "nvmidi" on purpose and not something longer. MODM_GETDEVCAPS
+// copies it into MIDIOUTCAPS.szPname, which is a fixed 32 character field, and
+// the midiout GetDevCaps **W** entry point that the listener and the plugin
+// both use puts it there as UTF-16 - not the UTF-8 a wide-name api usually
+// means. Measured: a name decoded as UTF-16 by ctypes out of a buffer the
+// driver filled with 8-bit bytes does not raise and does not truncate, it comes
+// back as the first bytes with a NUL after each, "nvmidi loopback" reading as
+// "n". A short ascii-only name is what survives that conversion intact, so the
+// port a person sees in the log is the port that is really there.
+#define DEVICE_NAME    "nvmidi"
 #define RING_SIZE      4096
 
 // The contract between this file and the ci step that starts it: the file next
@@ -91,6 +100,12 @@ typedef struct {
 static DEVICE g_out;
 static DEVICE g_in;
 static HMODULE g_self;
+// How many midi inputs the machine reported before this file published
+// anything. The difference after is this driver's own contribution, which is
+// the only number that says whether the midi half of the driver is visible -
+// midiInGetNumDevs alone cannot tell a device this file added from one a synth
+// driver would have reported anyway.
+static UINT g_inputs_before;
 
 // The callback kind, as midiOutOpen and midiInOpen name it: CALLBACK_FUNCTION
 // means "call this address". It is the only kind that can work here, because
@@ -148,6 +163,20 @@ static DWORD on_output_message(DWORD msg, DWORD_PTR p1, DWORD_PTR p2) {
 		ring_put(&g_in, (DWORD)p1);
 		notify_input();
 		return MMSYSERR_NOERROR;
+	case MODM_GETDEVCAPS: {
+		// p1 is the MIDIOUTCAPS winmm built from the registry entry, and only
+		// its szPname is ours to write: the field is fixed width, so a shorter
+		// name is zero filled and terminated rather than strcpy'd, and
+		// widening the bytes in place would run off the end of it.
+		MIDIOUTCAPS *caps = (MIDIOUTCAPS *)p1;
+		if (!caps) return MMSYSERR_INVALPARAM;
+		ZeroMemory(caps->szPname, sizeof(caps->szPname));
+		for (int i = 0; i < (int)(sizeof(caps->szPname) / sizeof(WCHAR)) - 1
+				&& DEVICE_NAME[i]; i++) {
+			caps->szPname[i] = (WCHAR)(unsigned char)DEVICE_NAME[i];
+		}
+		return MMSYSERR_NOERROR;
+	}
 	case MODM_LONGDATA:
 	case MODM_PREPARE:
 	case MODM_UNPREPARE:
@@ -177,6 +206,16 @@ static DWORD on_input_message(DWORD msg, DWORD_PTR p1, DWORD_PTR p2) {
 	case MIDM_OPEN:
 		ring_init(&g_in);
 		return MMSYSERR_NOERROR;
+	case MIDM_GETDEVCAPS: {
+		MIDIINCAPS *caps = (MIDIINCAPS *)p1;
+		if (!caps) return MMSYSERR_INVALPARAM;
+		ZeroMemory(caps->szPname, sizeof(caps->szPname));
+		for (int i = 0; i < (int)(sizeof(caps->szPname) / sizeof(WCHAR)) - 1
+				&& DEVICE_NAME[i]; i++) {
+			caps->szPname[i] = (WCHAR)(unsigned char)DEVICE_NAME[i];
+		}
+		return MMSYSERR_NOERROR;
+	}
 	case MIDM_CLOSE:
 		return MMSYSERR_NOERROR;
 	case MIDM_ADDBUFFER: {
@@ -381,8 +420,15 @@ static DWORD WINAPI publish_thread(LPVOID unused) {
 	// winmm loads the dll fresh from the registry - a second image of this same
 	// file, in this same process. OpenDriver is what starts it. The name goes
 	// over as UTF-16, which is what the declaration asks for by its LPCWSTR.
+	g_inputs_before = midiInGetNumDevs();
 	HDRVR h = OpenDriver(slot, NULL, 0);
-	if (!h) {
+	// -1 is not a failure here. winmm answers a driver that is already open
+	// with a handle of -1 rather than opening a second one, and the previous
+	// image in this same process still holds the device: the earlier load is
+	// the live one and the port it published is the one to use. Measured, from
+	// a run where the publish thread ran again after the listener had already
+	// loaded the file.
+	if (!h && h != HDRVR(-1)) {
 		write_status("LOOPBACK_STATUS=open-failed");
 		return 0;
 	}
@@ -390,8 +436,14 @@ static DWORD WINAPI publish_thread(LPVOID unused) {
 	UINT ins = midiInGetNumDevs();
 	char slot8[64] = { 0 };
 	WideCharToMultiByte(CP_ACP, 0, slot, -1, slot8, sizeof(slot8) - 1, NULL, NULL);
+	// A slot whose name a previous run already left behind is read back, not
+	// taken: a driver that is still held answers its own name. That is a
+	// finding, not a failure - the device is there and usable, which is all
+	// the listener needs - and calling it open-failed would send whoever
+	// debugging the build after a bug that is not in this file.
 	snprintf(report, sizeof(report),
-		"LOOPBACK_STATUS=ok slot=%s outputs=%u inputs=%u", slot8, outs, ins);
+		"LOOPBACK_STATUS=%s slot=%s outputs=%u inputs=%u inputs_before=%u",
+		(h == HDRVR(-1)) ? "stale" : "ok", slot8, outs, ins, g_inputs_before);
 	write_status(report);
 	// The handle is held, not closed: this thread is the device's lifetime.
 	for (;;) Sleep(1000);

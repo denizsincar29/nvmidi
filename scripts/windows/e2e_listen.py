@@ -51,6 +51,27 @@ message this process emits to the loopback driver's output comes back to it.
 That proves the route is live before the plugin is involved at all, so a
 failure later is the plugin's and not the runner's.
 
+Two devices, one of them ours
+-----------------------------
+
+The driver publishes a midi output and a midi input, and loading it and then
+listing the machine gives both - measured on a runner: `outputs_after=2
+inputs_after=1`, the second output being this file's. The input is opened here
+without a question; the output is where the plugin will write.
+
+The plugin is a second process, and a midi device belongs to the process that
+owns the driver: the plugin's own `midiOutGetNumDevs` therefore cannot see the
+port this file made. Its port list is one entry shorter than this file's, and
+the plugin can only name what it can see. So the job is given a name to hand
+the script and the script is told which entry in *its* list that name means -
+`--index` - rather than left to match on a string that does not exist on its
+side. Without that, the script picks the first port in its own shorter list,
+which on a runner with no sound device is the unopenable GS Wavetable entry,
+and the failure reads as a plugin bug when it is a fact about two processes.
+
+The same ownership is why `midiInOpen` and `midiOutOpen` both behave here: the
+driver installs itself into the midi slots and answers the input side too.
+
 What the exit code means
 ------------------------
 
@@ -90,7 +111,30 @@ class MIDIINCAPS(ctypes.Structure):
         ("wMid", ctypes.c_ushort),
         ("wPid", ctypes.c_ushort),
         ("vDriverVersion", ctypes.c_uint),
-        ("szPname", ctypes.c_wchar * MAXPNAMELEN),
+        # c_char and not c_wchar, and that is the whole reason this structure
+        # is written out by hand. The narrow midiInGetDevCapsW entry point is
+        # the one that exists - there is no narrow sibling - and it fills the
+        # field from the driver's 8 bit string, one byte per character. ctypes
+        # reading those bytes as UTF-16 does not fail and does not truncate:
+        # it keeps the first byte and takes the following NUL as the end, so a
+        # driver named "nvmidi loopback" arrives here as "n". Measured, and the
+        # reason the driver's name is now short and ascii-only.
+        ("szPname", ctypes.c_char * MAXPNAMELEN),
+        ("dwSupport", ctypes.c_uint),
+    ]
+
+
+class MIDIOUTCAPS(ctypes.Structure):
+    _fields_ = [
+        ("wMid", ctypes.c_ushort),
+        ("wPid", ctypes.c_ushort),
+        ("vDriverVersion", ctypes.c_uint),
+        # c_char for the same reason as MIDIINCAPS above.
+        ("szPname", ctypes.c_char * MAXPNAMELEN),
+        ("wTechnology", ctypes.c_ushort),
+        ("wVoices", ctypes.c_ushort),
+        ("wNotes", ctypes.c_ushort),
+        ("wChannelMask", ctypes.c_ushort),
         ("dwSupport", ctypes.c_uint),
     ]
 
@@ -194,6 +238,11 @@ class Listener:
         return out
 
 
+def cap_name(raw):
+    """The device name as the driver wrote it: bytes up to the first NUL."""
+    return raw.split(b"\x00", 1)[0].decode("latin-1")
+
+
 def list_inputs():
     winmm = ctypes.WinDLL("winmm")
     n = winmm.midiInGetNumDevs()
@@ -201,8 +250,28 @@ def list_inputs():
     for i in range(n):
         caps = MIDIINCAPS()
         if winmm.midiInGetDevCapsW(i, ctypes.byref(caps), ctypes.sizeof(caps)) == 0:
-            names.append((i, caps.szPname))
+            names.append((i, cap_name(caps.szPname)))
     return names
+
+
+def list_outputs():
+    """The midi outputs, the same way and for the same reason as list_inputs."""
+    winmm = ctypes.WinDLL("winmm")
+    n = winmm.midiOutGetNumDevs()
+    names = []
+    for i in range(n):
+        caps = MIDIOUTCAPS()
+        if winmm.midiOutGetDevCapsW(i, ctypes.byref(caps), ctypes.sizeof(caps)) == 0:
+            names.append((i, cap_name(caps.szPname)))
+    return names
+
+
+def driver_field(text, key):
+    """One field out of the driver's status file: slot=, outputs=, inputs=."""
+    for word in text.replace("\n", " ").split():
+        if word.startswith(key + "="):
+            return word.split("=", 1)[1]
+    return None
 
 
 def load_driver(path, timeout=20.0):
@@ -259,28 +328,48 @@ def main(argv):
     # vendor spelling and a runner's device order is not guaranteed.
     if len(argv) < 2:
         print("usage: e2e_listen.py <port name substring> [deadline seconds]"
-              " [--driver <path to nvmidi-loopback.exe>]", file=sys.stderr)
+              " [--driver <path to nvmidi-loopback.dll>]", file=sys.stderr)
         return 2
     # The driver flag is parsed out by hand rather than with argparse: this
     # file is read by people debugging a red build, and the two positional
     # arguments are easier to see than a usage block.
     driver = ""
+    index_arg = ""
     rest = []
     i = 1
     while i < len(argv):
         if argv[i] == "--driver":
             driver = argv[i + 1] if i + 1 < len(argv) else ""
             i += 2
+        elif argv[i] == "--index":
+            index_arg = argv[i + 1] if i + 1 < len(argv) else ""
+            i += 2
         else:
             rest.append(argv[i])
             i += 1
     if not rest:
         print("usage: e2e_listen.py <port name substring> [deadline seconds]"
-              " [--driver <path>]", file=sys.stderr)
+              " [--driver <path>] [--index <n>]", file=sys.stderr)
         return 2
     wanted = rest[0].lower()
     deadline = float(rest[1]) if len(rest) > 1 else 60.0
+    # The index the plugin's own process enumerated its port under, when the
+    # job could read it out of the script's log. A flag and not only an
+    # environment variable, because the environment is inherited by every
+    # process the step starts and a stale NVGT_PORT_INDEX from an earlier step
+    # would be read here as if this run had produced it. -1 means "match on
+    # the name instead".
+    index = -1
+    if index_arg:
+        try:
+            index = int(index_arg)
+        except ValueError:
+            print("--index %r is not a number" % index_arg, file=sys.stderr)
+            return 2
+    elif os.environ.get("NVGT_PORT_INDEX"):
+        index = int(os.environ["NVGT_PORT_INDEX"])
 
+    driver_text = ""
     if driver:
         ok, why = load_driver(driver)
         if not ok:
@@ -289,15 +378,45 @@ def main(argv):
                   " say anything about whether a message crossed a process boundary"
                   " in this run.", file=sys.stderr)
             return 1
+        driver_text = why
         print("DRIVER_LOADED")
+        print("DRIVER_ADDED outputs_before=%s outputs_after=%d inputs_before=%s inputs_after=%d"
+              % (driver_field(driver_text, "outputs_before"), 0,
+                 driver_field(driver_text, "inputs_before"), 0))
 
+    # The output list as well as the input one, because the index the script
+    # was told is an index into *outputs* and this file has to translate it
+    # here, where both lists are visible. The two lists do not run in step on
+    # a driver that publishes both halves, so the index cannot be carried
+    # across as-is: it is used to read a name off the output list and the name
+    # is then looked up among the inputs.
+    outputs = list_outputs()
+    print("winmm lists %d midi output device(s):" % len(outputs))
+    for i, name in outputs:
+        print("  %d %s" % (i, name))
     inputs = list_inputs()
     print("winmm lists %d midi input device(s):" % len(inputs))
     for i, name in inputs:
         print("  %d %s" % (i, name))
-    # With the driver loaded the name it publishes is the whole story, so the
-    # job passes the substring it chose; without one, any match will do.
-    matches = [(i, n) for i, n in inputs if wanted in n.lower()]
+
+    matches = []
+    if 0 <= index < len(outputs):
+        # The script's index names an output; the same name on the input side
+        # is what there is to listen on. Exact match first, substring second:
+        # two drivers shortened to the same 31 characters would collide, and a
+        # substring that happens to match the wrong one would be worse than
+        # saying so.
+        named = outputs[index][1]
+        print("NVGT_PORT_INDEX %d is %r on the output side" % (index, named))
+        matches = [(i, n) for i, n in inputs if n == named]
+        if not matches:
+            matches = [(i, n) for i, n in inputs if named.lower() in n.lower()]
+        if not matches:
+            print("the output at index %d (%r) has no input side of the same name,"
+                  " so there is nothing here to listen on" % (index, named), file=sys.stderr)
+            return 1
+    else:
+        matches = [(i, n) for i, n in inputs if wanted in n.lower()]
     if not matches:
         print("no midi input device matches %r" % rest[0], file=sys.stderr)
         print("a loopback driver is what puts a port on the input side;", file=sys.stderr)

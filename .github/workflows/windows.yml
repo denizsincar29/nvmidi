@@ -40,13 +40,13 @@ jobs:
         # and then - once - at a path nobody looked at, which the e2e read as
         # a driver that was never built. That reading sends the reader after a
         # compile problem that does not exist, which is worse than an error.
-        run: bash tools/winmm_loopback/build.sh -o tools/winmm_loopback/nvmidi-loopback.exe
+        run: bash tools/winmm_loopback/build.sh -o tools/winmm_loopback/nvmidi-loopback.dll
 
       - name: keep the driver next to the dll
         uses: actions/upload-artifact@v4
         with:
           name: nvmidi-loopback
-          path: tools/winmm_loopback/nvmidi-loopback.exe
+          path: tools/winmm_loopback/nvmidi-loopback.dll
           if-no-files-found: error
 
       # The driver has to reach the e2e job, which runs on a different runner:
@@ -212,24 +212,24 @@ jobs:
           # Windows on a machine with no sound device still reports one midi
           # out: device 0, named "Microsoft GS Wavetable Synth" after the
           # software synth's applet and backed by nothing. Opening it fails
-          # with MMRESULT 1. The engine ships its own windows midi plugin -
-          # nvgt_midi.dll, next to nvgt.exe - whose name contains the string
-          # this test sends to the engine to find the backend, so the script
-          # picks the engine's plugin by its name, tries its synth port, and
-          # dies there before nvmidi is ever asked anything. The run this was
-          # measured on spent its whole e2e proving that a backend file name
-          # contains "midi".
+          # with MMRESULT 1.
           #
-          # Renaming it leaves nvmidi as the only backend whose name answers,
-          # and the port the script opens is the loopback driver's, which is
-          # the one port on this runner that is real. The file is not deleted:
-          # the install is restored by the runner being thrown away.
+          # An earlier version of this block renamed a file called nvgt_midi.*
+          # beside nvgt.exe, on the theory that the engine's own midi plugin
+          # was answering the backend lookup first. That was a guess and the
+          # runner disproved it: the install ships no such file. The line was
+          # "the engine shipped no nvgt_midi.* to move aside", the plugin was
+          # registered as nvmidi all along, and the script's own log says so -
+          # E2E_API_TEXT came back as "nvmidi/Windows MultiMedia". Nothing was
+          # ever shadowed. The block is gone rather than kept as a no-op: a
+          # rename that matches nothing reads, to the next person, as a fix
+          # that is doing something.
           $engineMidi = Get-ChildItem -Path $dir -Recurse -Filter 'nvgt_midi.*' -ErrorAction SilentlyContinue
-          foreach ($f in $engineMidi) {
-            Rename-Item -Path $f.FullName -NewName ($f.Name + '.disabled')
-            Write-Host "moved the engine's own midi backend aside: $($f.FullName)"
+          if ($engineMidi) {
+            Write-Host '::warning::the engine now ships a midi backend of its own, which earlier did not exist:'
+            $engineMidi | ForEach-Object { Write-Host "  $($_.FullName)" }
+            Write-Host 'nothing is renamed here - read the script log to see which backend actually answered'
           }
-          if (-not $engineMidi) { Write-Host "the engine shipped no nvgt_midi.* to move aside" }
 
           "NVGT_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           # The layout, kept to the two directories that matter. A recursive
@@ -386,8 +386,8 @@ jobs:
         run: |
           $dir = Join-Path $env:RUNNER_TEMP 'nvmidi'
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
-          $out = Join-Path $dir 'nvmidi-loopback.exe'
-          $src = Join-Path $env:GITHUB_WORKSPACE 'tools\winmm_loopback\nvmidi-loopback.exe'
+          $out = Join-Path $dir 'nvmidi.dll'   # the name does not matter; the extension does
+          $src = Join-Path $env:GITHUB_WORKSPACE 'tools\winmm_loopback\nvmidi-loopback.dll'
           if (-not (Test-Path $src)) {
             Write-Host "::error::the driver was not built, so there is nothing for the listener to load. Nothing below here can be concluded about midi."
             # No LOOPBACK_DLL is exported either, and the listener step is
@@ -445,6 +445,63 @@ jobs:
       # background so the listener can be up while it plays - the listener
       # needs the port name out of the script's log, and the script needs a
       # listener that is already waiting.
+      # The port list as a plain process sees it, which is not the list the
+      # listener sees and is the only list the script can be given an index
+      # into.
+      #
+      # The loopback driver is loaded in the listener, and a midi device
+      # belongs to the process that owns its driver, so the port the listener
+      # publishes is not in another process's output list. Measured: the
+      # listener's process reported two outputs, the plugin's one. The script
+      # under test enumerates its own - shorter - list and can only hand the
+      # listener a name from it, and on this runner that name is the GS
+      # Wavetable entry, which has no hardware behind it and answers MMRESULT
+      # 1. So the index is measured here, in a process of the same shape as
+      # the plugin's, and the listener turns it into a name off its own list.
+      # The receiving half, started only once a port is known to exist. The
+      # port name is passed as a substring because winmm's own naming is a
+      # vendor string and the enumeration order is not guaranteed to match
+      # between two processes.
+      #
+      # The listener loads the driver itself and not from the step above,
+      # because a winmm driver lives in the process that loaded it. Loading it
+      # here means this process owns the loopback device, the plugin in its own
+      # process sees it as a normal port of the machine, and the message has
+      # genuinely crossed a process boundary when the bytes land here. What the
+      # listener saw before the plugin ran - the self test - is what makes the
+      # silence or the arrival mean something.
+      - name: listen on the plugin's port
+        # Only meaningful when a port was actually opened: no port name means
+        # the script never opened one, and there is nothing to listen against.
+        if: ${{ env.PORT_NAME != '' }}
+        shell: pwsh
+        run: |
+          $indexArgs = @()
+          if ($env:NVGT_PORT_INDEX) { $indexArgs = @('--index', $env:NVGT_PORT_INDEX) }
+          python scripts\windows\e2e_listen.py "$env:PORT_NAME" 90 --driver "$env:LOOPBACK_DLL" @indexArgs 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\logs_listen.txt"
+          Write-Host "listener exit code: $LASTEXITCODE"
+          "LISTEN_EXIT=$LASTEXITCODE" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          # Whether this process ended up with an input side is a fact about
+          # this run and not about the runner, so it is published here rather
+          # than assumed from a device list. The verdict steps read it to tell
+          # "the runner has no loopback" apart from "the plugin never sent".
+          $l = if (Test-Path "$env:GITHUB_WORKSPACE\logs_listen.txt") {
+            Get-Content "$env:GITHUB_WORKSPACE\logs_listen.txt" -Raw } else { '' }
+          $loaded = $l -match 'DRIVER_LOADED_PORTS'
+          "LISTENER_POSSIBLE=$($loaded.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          if (-not $loaded) {
+            Write-Host "::warning::the listener did not end up with a loopback input port, so nothing it says can be read as the plugin's silence. See the listener log above."
+          }
+
+      - name: count the midi outs in the plugin's process
+        shell: pwsh
+        run: |
+          $ports = python scripts\windows\winmm_ports.py
+          $ports | Write-Host
+          $json = python scripts\windows\winmm_ports.py --json
+          "NVGT_PORTS=$json" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: play the melody (script)
         shell: pwsh
         # The script path is built from GITHUB_WORKSPACE and not from %~dp0.
@@ -470,7 +527,7 @@ jobs:
           $src = Join-Path $env:GITHUB_WORKSPACE 'scripts\windows\e2e_winmm.nvgt'
           $log = Join-Path $env:GITHUB_WORKSPACE 'logs_e2e.txt'
           $p = Start-Process -FilePath $exe `
-            -ArgumentList @($src, '--', $env:SYNTH_HINT) `
+            -ArgumentList @($src, '--hint', $env:SYNTH_HINT) `
             -NoNewWindow -PassThru `
             -RedirectStandardOutput $log -RedirectStandardError "$log.err"
           $code = -1
@@ -498,6 +555,59 @@ jobs:
               Write-Host "logs_e2e.txt ends with:"
               Write-Host (($t -split "`n" | Select-Object -Last 3) -join "`n")
             }
+          }
+
+      - name: report the port index the script enumerated
+        shell: pwsh
+        run: |
+          # The half of the handshake the wait step below cannot do.
+          #
+          # The listener loads the driver, so the driver's port is in the
+          # listener's process. The script is a separate process and its own
+          # enumeration is the only one it can act on: measured, it reported
+          # E2E_OUTPUT_PORTS 1 - the phantom GS Wavetable entry at index 0 -
+          # while the listener's list had two entries. The index the script
+          # chose is therefore read out of its own log and handed to the
+          # listener, which translates it into a name it can open an input on.
+          #
+          # Read early and not after the process exits. Start-Process redirects
+          # to a file and the file grows as the script runs, so the lines are
+          # there while the melody is still being played, and waiting for the
+          # exit would make this step as slow as the melody and buy nothing.
+          $deadline = (Get-Date).AddSeconds(60)
+          $index = $null
+          $chosen = ''
+          while ((Get-Date) -lt $deadline) {
+            if (Test-Path logs_e2e.txt) {
+              $t = Get-Content logs_e2e.txt -Raw
+              if ($t -match 'E2E_CHOSEN\s+(.+)') { $chosen = $Matches[1].Trim() }
+              if ($t -match 'E2E_OUTPUT_PORT\s+(\d+)\s+(.+?)\s*$') {
+                # The last such line the script printed for the chosen name is
+                # the index it will address. Matched by name and not by number
+                # alone, because the script's own list and this file's reading
+                # of it have to be about the same device for the translation in
+                # the listener to mean anything.
+                foreach ($m in [regex]::Matches($t, 'E2E_OUTPUT_PORT\s+(\d+)\s+([^\r\n]+)')) {
+                  if ($chosen -ne '' -and $m.Groups[2].Value.Trim() -eq $chosen) {
+                    $index = $m.Groups[1].Value
+                  }
+                }
+              }
+              if ($index -ne $null) { break }
+              if ($t -match 'E2E_PORT\s') { break }
+            }
+            Start-Sleep -Milliseconds 250
+          }
+          if ($index -eq $null) {
+            # Not a failure here. A machine with no midi out ends the script
+            # before the list is printed, and the verdict steps decide whether
+            # that was the runner or the plugin. Without an index the listener
+            # falls back to matching the name, which is what every earlier run
+            # did and is still worth watching.
+            Write-Host '::warning::the script never published a port index; the listener will fall back to its own name list'
+          } else {
+            Write-Host "the script addresses index $index, which it names '$chosen'"
+            "NVGT_PORT_INDEX=$index" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           }
 
       - name: wait for the script to name its port
@@ -537,40 +647,6 @@ jobs:
           Get-Content logs_e2e.txt -Raw | Write-Host
           Write-Host "::warning::the script never named a port within 60s; reading it as the script not reaching that line rather than as a hang"
           exit 0
-
-      # The receiving half, started only once a port is known to exist. The
-      # port name is passed as a substring because winmm's own naming is a
-      # vendor string and the enumeration order is not guaranteed to match
-      # between two processes.
-      #
-      # The listener loads the driver itself and not from the step above,
-      # because a winmm driver lives in the process that loaded it. Loading it
-      # here means this process owns the loopback device, the plugin in its own
-      # process sees it as a normal port of the machine, and the message has
-      # genuinely crossed a process boundary when the bytes land here. What the
-      # listener saw before the plugin ran - the self test - is what makes the
-      # silence or the arrival mean something.
-      - name: listen on the plugin's port
-        # Only meaningful when a port was actually opened: no port name means
-        # the script never opened one, and there is nothing to listen against.
-        if: ${{ env.PORT_NAME != '' }}
-        shell: pwsh
-        run: |
-          python scripts\windows\e2e_listen.py "$env:PORT_NAME" 90 --driver "$env:LOOPBACK_DLL" 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\logs_listen.txt"
-          Write-Host "listener exit code: $LASTEXITCODE"
-          "LISTEN_EXIT=$LASTEXITCODE" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
-          # Whether this process ended up with an input side is a fact about
-          # this run and not about the runner, so it is published here rather
-          # than assumed from a device list. The verdict steps read it to tell
-          # "the runner has no loopback" apart from "the plugin never sent".
-          $l = if (Test-Path "$env:GITHUB_WORKSPACE\logs_listen.txt") {
-            Get-Content "$env:GITHUB_WORKSPACE\logs_listen.txt" -Raw } else { '' }
-          $loaded = $l -match 'DRIVER_LOADED_PORTS'
-          "LISTENER_POSSIBLE=$($loaded.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          if (-not $loaded) {
-            Write-Host "::warning::the listener did not end up with a loopback input port, so nothing it says can be read as the plugin's silence. See the listener log above."
-          }
 
       - name: read both logs
         shell: pwsh
