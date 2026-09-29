@@ -363,6 +363,16 @@ static DWORD WINAPI driver_message(DWORD dwDriverId, HDRVR hDriver,
 	DWORD dwMessage, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
 {
 	(void)hDriver;
+	// Written before anything is decided, and that placement is the point.
+	// Every failure this file has had arrived as one of two words - open-failed
+	// or a port count of one - and both of them are downstream of a decision
+	// made here. Whether winmm and midiOutOpen ever reach this function at all
+	// is a separate question, and it is the first one that has to be answered:
+	// a dispatcher that is never called cannot be debugged by rearranging its
+	// arms, and three changes were made to those arms before anyone checked.
+	// The trace is appended, so the file holds the whole call sequence in order
+	// rather than the last thing that happened.
+	trace_call(dwDriverId, dwMessage, dwParam1);
 	switch (dwMessage) {
 	case DRV_QUERYDEVICEINTERFACESIZE:
 	case DRV_QUERYDEVICEINTERFACE:
@@ -409,6 +419,29 @@ static void write_status(const char *status) {
 	FILE *f = fopen(path, "wb");
 	if (!f) return;
 	fputs(status, f);
+	fclose(f);
+}
+
+// Every call that reaches the entry point, one line each, with the two numbers
+// that say who is calling: the driver id winmm passes on every message, and
+// dwParam1. GetModuleFileName is asked for the path on each call rather than
+// cached, because this runs before anything else in the file and the one thing
+// it must not do is depend on state another thread can still be filling in.
+//
+// The file is opened for append and closed again. That is slow and it is the
+// right trade here: a trace that stays open would need a lock, a lock taken
+// inside a driver message is a deadlock waiting for a re-entrant call, and this
+// path is taken a handful of times per process, not per note.
+static void trace_call(DWORD id, DWORD msg, DWORD_PTR p1) {
+	char path[MAX_PATH + 32] = { 0 };
+	GetModuleFileNameA(g_self, path, MAX_PATH);
+	char *dot = strrchr(path, '.');
+	if (dot) *dot = 0;
+	strncat(path, ".trace.txt", sizeof(path) - strlen(path) - 1);
+	FILE *f = fopen(path, "ab");
+	if (!f) return;
+	fprintf(f, "CALL msg=0x%04lx id=0x%08lx p1=0x%08lx\n",
+		(unsigned long)msg, (unsigned long)id, (unsigned long)(DWORD_PTR)p1);
 	fclose(f);
 }
 

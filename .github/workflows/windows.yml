@@ -1076,6 +1076,29 @@ jobs:
             Write-Host "::warning::the script never reached E2E_END - it was cut short"
           }
 
+      - name: every call the driver received
+        shell: pwsh
+        # The one measurement nobody has taken. Three changes have been made to
+        # the driver's message dispatcher and each one was judged by the same
+        # two downstream words - open-failed, and a port count of one - which
+        # cannot tell a dispatcher that answers wrongly from a dispatcher that
+        # is never entered. If midiOutGetNumDevs built its list from the
+        # registry alone it must still have called the driver at least once, to
+        # ask each entry what it was; if the list holds our entry and the count
+        # is still one, then the ask happened and the answer was wrong, and the
+        # trace says which answer.
+        continue-on-error: true
+        run: |
+          Get-ChildItem $env:RUNNER_TEMP\nvmidi -Filter *.trace.txt -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "trace $($_.FullName):"
+            Get-Content $_.FullName | ForEach-Object { Write-Host "  $_" }
+          }
+          Get-ChildItem . -Recurse -Filter *.trace.txt -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "trace $($_.FullName):"
+            Get-Content $_.FullName | ForEach-Object { Write-Host "  $_" }
+          }
+          Write-Host "trace scan done"
+
       - name: keep both logs
         if: always()
         uses: actions/upload-artifact@v4
