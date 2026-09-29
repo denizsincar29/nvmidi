@@ -66,10 +66,19 @@ const string REPO = "denizsincar29/nvmidi";
 // engine's own dialog box, which speaks through whatever assistive technology
 // is running and is readable by a person either way. The caller's machine
 // decides how the text arrives, not the script.
+// With -c nobody has to dismiss the box, and a box per sentence is exactly the
+// wall of dialogs a console user is trying to avoid - so in console mode the
+// text goes to the terminal and no box is raised. Everywhere else the box is
+// the only thing a screen reader user can hear, so it is the whole answer.
+bool console_mode = false;
+
 void announce(const string&in text) {
-	// alert's second argument is the box's title; the one-argument form does
-	// not compile against this engine (measured).
-	alert(text, "nvmidi");
+	if (console_mode)
+		print("nvmidi: " + text);
+	else
+		// alert's second argument is the box's title; the one-argument form does
+		// not compile against this engine (measured).
+		alert(text, "nvmidi");
 }
 
 // A numbered note on the console, for pointing at a step.
@@ -142,18 +151,41 @@ void main() {
 	// engine: input_box's first argument is the prompt, the second is the
 	// box's title, and the third is the text the field starts with, so
 	// pressing enter accepts the default.
-	string target = "latest";
+	// nvgt has no notion of "was I started in a console", so the switch has to
+	// come from the person starting it. Measured, and it corrects an earlier
+	// guess in this file's history: -c is NOT a console flag, it is
+	// `--compile`, which builds the script and exits without running it. The
+	// engine's help says so, and it means a whole class of flag cannot be used
+	// for this - the engine eats it first.
+	//
+	// What is left is the convention the engine already documents:
+	//
+	//     nvgt [options] script [-- arg1 arg2 ...]
+	//
+	// Everything before -- belongs to the engine, everything after it belongs
+	// to COMMAND_LINE. So the presence of a version argument *is* the signal:
+	// a person who types one is already at a console, and a person who
+	// launches the script by activating it has no way to. No flag is invented
+	// on top of that, because any flag could collide with a future engine one
+	// the way -c does.
+	//
+	// console_mode is declared above announce(), which is where it is read;
+	// here it is only set.
 
 	// COMMAND_LINE holds the arguments and nothing else - the engine does strip
 	// the executable name, and it strips the script name too, so the very first
 	// word is already the requested version (measured, see the header).
+	string target = "latest";
 	const string[]@ words = COMMAND_LINE.split(" ");
 	for (uint i = 0; i < words.length(); i++) {
 		string word = words[i].trim_whitespace();
-		if (word.length() > 0) {
-			target = word;
-			break;
-		}
+		if (word.length() == 0)
+			continue;
+		// The first word the engine left for us is the release, and its being
+		// here at all means someone is at a terminal.
+		target = word;
+		console_mode = true;
+		break;
 	}
 
 	// The tag carries a leading v and the api will not find it without one:
@@ -170,13 +202,21 @@ void main() {
 			target = "v" + target;
 	}
 
-	if (target == "latest") {
+	if (target == "latest" && !console_mode) {
 		string asked = input_box("Which nvmidi release do you want? Leave it as latest for the newest one, or type a tag such as v0.7.1.", "nvmidi", "latest");
 		asked = asked.trim_whitespace();
 		// An empty field or a cancelled box both come back empty; the default
 		// is what was already chosen, so this cannot fail.
 		if (asked.length() > 0)
 			target = asked;
+		else
+			// Measured: input_box returns at once on a machine with no display,
+			// so a headless run never reaches a person and this branch is the
+			// only sign of it. Without it the script downloads "latest" and the
+			// person watching the console sees a download they never asked for -
+			// which is exactly the failure the box was added to prevent. Saying
+			// it costs one sentence; not saying it makes the box decorative.
+			announce("No release was given and there is no display to ask on, so no one answered the question. Installing the latest release.");
 	}
 
 	// The short address everyone expects -
@@ -210,6 +250,16 @@ void main() {
 
 	// The copy already in this folder is the one nvgt loads, so it decides
 	// whether we may replace anything at all.
+	//
+	// One trap worth naming, because it was walked into while testing this
+	// script: the destination is derived from the running engine, so a copy of
+	// the engine that keeps its own plugin in its own lib/ — a build tree, a
+	// test rig — gets that plugin replaced by a downloaded release. On a real
+	// install that is the point. Anywhere else it is a surprise, and the only
+	// honest thing to do is say which file is about to be overwritten before
+	// the network is touched, so it is never a silent replacement.
+	if (file_exists(destination) && file_get_size(destination) > 0)
+		announce("Found an existing " + ASSET + " (" + file_get_size(destination) + " bytes) in " + lib + ". This run will replace it.");
 	if (file_exists(destination)) {
 		// A loaded dll cannot be replaced, and file_copy leaves the source in
 		// place, so copying the old dll onto itself is our one available test
@@ -220,7 +270,25 @@ void main() {
 			announce("Cannot replace " + destination + ". It is locked, which means a running nvgt has this dll loaded. Close nvgt first, then run this again.");
 			return;
 		}
+	} else {
+		// Nothing to replace, so this run is an install rather than an update -
+		// and that is the case worth saying out loud. Without this the first
+		// run on a machine that has never had the plugin is indistinguishable
+		// from a run that replaced an old one, and the person is left to
+		// discover for themselves whether the library is there at all.
+		mark("1 installing into " + lib + ", nothing to replace yet");
 	}
+
+	// The whole point of this script is that the next `#pragma plugin nvmidi`
+	// finds a library. If the download below fails for any reason, the state
+	// this leaves behind is exactly the state it found - and the engine's word
+	// for that state is "failed to load plugin", which names neither the file
+	// nor the reason. Measured: it is printed with line 0 (0), no path, and no
+	// script code has run at that point, so a person sees a wall and has
+	// nothing to act on. Saying it here, in words, before the network is
+	// touched, is the difference between a bug report and an evening.
+	if (!file_exists(destination))
+		announce("No " + ASSET + " in " + lib + " yet. This run will install one. If it fails, nvgt will keep saying \"failed to load plugin\" until a library is placed there by hand.");
 
 	mark("2 before download");
 	announce("Downloading nvmidi " + target + " from " + REPO + ".");
@@ -291,14 +359,64 @@ void main() {
 		mark("5 request sent");
 		file part(temporary, "wb");
 		if (part.active) {
-			// h.wait() blocks until the request is done. The reference also
-			// offers a non-blocking loop (while (!h.complete) { wait(5); ... })
-			// for when you want to keep drawing a window or watching for a
-			// key - neither applies to us, so the simple blocking call is the
-			// right one. A 64 mb dll sent to a screen reader user is
-			// indistinguishable from a hang, so we say what we are doing.
-			announce("Download started, this can take a moment.");
-			client.wait();
+			// The blocking form (a bare client.wait()) is deliberately not used.
+			// A download a screen reader user cannot interrupt is
+			// indistinguishable from a hang, and there is no way to tell them
+			// apart from the outside - so the request is watched in the
+			// reference's non-blocking loop instead, which is written out in
+			// full in the engine's own http example and is the reason the http
+			// object exists at all ("one of the easiest ways to perform an http
+			// request in NVGT without blocking the rest of your code").
+			//
+			// Space reports the percentage, and the percentage is the engine's
+			// own h.progress - not a figure this script works out from headers.
+			// That is the whole of the difference: a number the engine measured
+			// against a number this script guessed. The script cannot see the
+			// body while the request runs, so it cannot count bytes, and a
+			// percentage computed from a Content-Length header would be a guess
+			// wearing a number's clothes.
+			//
+			// Nothing is spoken on its own: a percentage every few milliseconds
+			// would be unusable speech, so the script answers when asked and
+			// stays quiet otherwise.
+			announce("Download started, this can take a moment. Press space to hear how far along it is, or escape to stop.");
+			// The window is what the rest of the loop is for. A person who is
+			// not at a console has no way to know a long download is running
+			// unless something is on screen, and this is the engine's own
+			// primitive for that - not a dialog, so it never has to be
+			// dismissed, which is what "show window" in the request means.
+			if (!console_mode)
+				show_window("nvmidi download");
+			uint said = 0;
+			while (!client.complete) {
+				wait(5);
+				// Escape is offered as well because the loop is now the only
+				// part of this script that can run long enough to want out of.
+				// Destroying the http object cancels the request - the engine
+				// says so in the same example - so a half file is deleted and
+				// nothing is left behind.
+				if (key_pressed(KEY_ESCAPE)) {
+					part.close();
+					file_delete(temporary);
+					announce("Download cancelled. Nothing was installed.");
+					return; // Destruction of the http object will cancel any requests in progress.
+				}
+				if (key_pressed(KEY_SPACE)) {
+					// key_pressed is level triggered, not an event queue, so it
+					// stays true for as long as the key is held. The guard makes
+					// one press one answer.
+					if (said == 0) {
+						const int pct = int(round(client.progress * 100, 2));
+						announce(pct + " percent.");
+						said = ticks();
+					}
+				} else {
+					// Released, so the next press answers again. The tick stamp
+					// keeps a held key from repeating through a second call.
+					if (said != 0 && ticks() - said > 300)
+						said = 0;
+				}
+			}
 			mark("6 response back");
 			string body = client.response_body;
 			part.write(body);
