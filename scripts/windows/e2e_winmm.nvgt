@@ -77,23 +77,32 @@
 // what a console font draws for a byte it cannot print, so a backend name full
 // of them reads as a rendering problem; a dot is unmistakably this function
 // saying it has no mapping for that byte, and it is printable as itself.
+// Character literals are not numbers here. Measured: `b >= '0'` is
+// "No conversion from 'const string' to math type available" - in this engine
+// '0' is a one character string, not the code 48. Every bound below is
+// therefore the number itself, with the character it stands for in the comment,
+// so the comparison never asks the engine to do the conversion it refuses.
+//
+// '0' 48  '9' 57   |  'A' 65  'Z' 90  |  'a' 97  'z' 122
+// '/' 47  '.' 46  '_' 95  '-' 45  '+' 43  ' ' 32
 const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
+const string digits = "0123456789";
 string char_of(uint b) {
-	// 0..9 - measured: '6' is 54, so '0' is 48 and the digit is the offset.
-	if (b >= '0' && b <= '9') return "" + (b - '0');
-	// A..Z, 65..90. The letter is the offset into a table that starts at A.
-	if (b >= 'A' && b <= 'Z') return byte_letters.substr(b - 'A' + 10, 1);
-	// a..z, 97..122.
-	if (b >= 'a' && b <= 'z') return byte_letters.substr(b - 'a' + 36, 1);
-	// The punctuation a windows backend name actually contains: two are literal
-	// and the space needs no lookup at all.
-	if (b == '/') return "/";
-	if (b == '.') return ".";
-	if (b == '_') return "_";
-	if (b == '-') return "-";
-	if (b == '+') return "+";
-	if (b == ' ') return " ";
-	// Anything else, said as itself rather than as a rendering artefact.
+	// 48..57, the digits. Handed back by code, not by the table the engine
+	// cannot read out: a table built here could not be indexed safely either.
+	if (b >= 48 && b <= 57) return digits.substr(b - 48, 1);
+	// 65..90, A..Z.
+	if (b >= 65 && b <= 90) return byte_letters.substr(b - 65 + 10, 1);
+	// 97..122, a..z.
+	if (b >= 97 && b <= 122) return byte_letters.substr(b - 97 + 36, 1);
+	// The punctuation a windows backend name is made of, each one literal.
+	if (b == 47) return "/";
+	if (b == 46) return ".";
+	if (b == 95) return "_";
+	if (b == 45) return "-";
+	if (b == 43) return "+";
+	if (b == 32) return " ";
+	// Anything else, said as itself rather than as a console artefact.
 	return ".";
 }
 

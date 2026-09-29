@@ -10,16 +10,19 @@
 // not read the plugin, so a failure here is an engine fact and a pass here is
 // permission to believe the e2e script's rebuilt name.
 const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
+const string digits = "0123456789";
+// Character literals are not numbers here: `b >= '0'` is "No conversion from
+// 'const string' to math type available". Every bound is the number itself.
 string char_of(uint b) {
-	if (b >= '0' && b <= '9') return "" + (b - '0');
-	if (b >= 'A' && b <= 'Z') return byte_letters.substr(b - 'A' + 10, 1);
-	if (b >= 'a' && b <= 'z') return byte_letters.substr(b - 'a' + 36, 1);
-	if (b == '/') return "/";
-	if (b == '.') return ".";
-	if (b == '_') return "_";
-	if (b == '-') return "-";
-	if (b == '+') return "+";
-	if (b == ' ') return " ";
+	if (b >= 48 && b <= 57) return digits.substr(b - 48, 1);
+	if (b >= 65 && b <= 90) return byte_letters.substr(b - 65 + 10, 1);
+	if (b >= 97 && b <= 122) return byte_letters.substr(b - 97 + 36, 1);
+	if (b == 47) return "/";
+	if (b == 46) return ".";
+	if (b == 95) return "_";
+	if (b == 45) return "-";
+	if (b == 43) return "+";
+	if (b == 32) return " ";
 	return ".";
 }
 
