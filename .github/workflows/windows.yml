@@ -302,126 +302,49 @@ jobs:
             }
           }
 
-      # The dll the script will load. Built with the same make target the
-      # release uses, because the point of the job is to test what ships.
-      # A loopback midi driver, packed as this job's own download so nothing
-      # is fetched from a site that can disappear or start answering with a
-      # login page. tools/winmm_loopback/ is source plus a build script, and
-      # the release carrying the packed build is the source of the exe; the
-      # release step is what makes it fetchable at a stable url.
+      # The loopback device. Three attempts stood here before this one, and the
+      # two that failed are worth keeping, because neither reason is obvious:
       #
-      # What stood here before was two vendor installers, LoopBe1 and loopMIDI,
-      # and both were measured failing the same way: they download, they start,
-      # they are still running long after their own timeouts, and no device
-      # ever appears in the machine's list. An Inno setup put down by a service
-      # session with no interactive desktop is the reading that covers both,
-      # and it is why this step used to carry a three minute ceiling and a long
-      # apology.
-      #
-      # A user mode driver written by us and started by rundll32 is a different
-      # animal: nothing to install, so no installer to block, and no desktop
-      # needed because the exe is launched by the same session that owns it.
-      # The loopback driver, fetched, loaded and proved live in one step.
-      #
-      # One step and not two, because a LoadLibrary has to happen in the
-      # process that keeps it: a dll loaded into one step's PowerShell is gone
-      # when that process ends, and the next step is a new process. Measured
-      # here - the fetch used to be its own step and the device never appeared.
-      #
-      # The driver is its own installer: loading it starts a thread inside the
-      # same process that writes the Drivers32 entry, calls OpenDriver on it and
-      # opens the port. So "loaded and the port is in the machine's list" is the
-      # single fact this step establishes, and it is written to
-      # LOOPBACK_STATUS= in a status file beside the dll.
-      #
-      # What stood here before was two vendor installers, LoopBe1 and loopMIDI,
-      # and both were measured failing the same way: they download, they start,
-      # they are still running long after their own timeouts, and no device
-      # ever appears in the machine's list. An Inno setup put down by a service
+      # Two vendor installers, LoopBe1 and loopMIDI: they download, they start,
+      # they are still running long after their own timeouts, and no device ever
+      # appears in the machine's list. An Inno setup put down by a service
       # session with no interactive desktop is the reading that covers both.
-      - name: get and start a loopback midi driver
+      #
+      # A separate process loading our own driver dll and then waiting: this
+      # cannot work, and not for a fixable reason. A winmm driver is loaded *in
+      # process* by winmm, so the device it publishes is visible only to the
+      # process that loaded it - a second process enumerates the machine through
+      # its own winmm and sees the synth alone. That is why the fetching step
+      # that used to stand here is gone, and why the driver is staged here and
+      # loaded by the listener rather than by this step: the driver and the
+      # listener have to be one process.
+      #
+      # The file comes from the build job as an artifact and not from a release,
+      # which is also why nothing is fetched from a url that can disappear.
+      - name: stage the loopback driver
         shell: pwsh
-        timeout-minutes: 3
         run: |
-          $url = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/tags/loopback-driver"
-          $out = Join-Path $env:TEMP 'nvmidi-loopback.exe'
-          try {
-            $rel = Invoke-RestMethod -Uri $url -Headers @{ Authorization = "Bearer ${{ github.token }}" } -TimeoutSec 30
-          } catch {
-            # A 401 here is not a missing release and must not read like one:
-            # the driver is what makes the cross process half of this job
-            # possible, so a fetch that fails says so in the job summary rather
-            # than being inferred later from an e2e that could not listen.
-            Write-Host "::error::could not read the loopback-driver release, so the loopback driver will not be loaded: $_"
-            "LOOPBACK_AVAILABLE=$false" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $dir = Join-Path $env:RUNNER_TEMP 'nvmidi'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $out = Join-Path $dir 'nvmidi-loopback.exe'
+          $src = Join-Path $env:GITHUB_WORKSPACE 'tools\winmm_loopback\nvmidi-loopback.exe'
+          if (-not (Test-Path $src)) {
+            Write-Host "::error::the driver was not built, so there is nothing for the listener to load. Nothing below here can be concluded about midi."
+            # No LOOPBACK_DLL is exported either, and the listener step is
+            # gated on PORT_NAME, which this failure also prevents. The steps
+            # after it therefore never run to read an empty variable as a
+            # verdict.
             exit 1
           }
-          $asset = $rel.assets | Where-Object { $_.name -eq 'nvmidi-loopback.exe' } | Select-Object -First 1
-          if (-not $asset) {
-            Write-Host "::error::the loopback-driver release exists but carries no nvmidi-loopback.exe"
-            "LOOPBACK_AVAILABLE=$false" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            exit 1
-          }
-          Invoke-WebRequest -Uri $asset.url -Headers @{ Authorization = "Bearer ${{ github.token }}"; Accept = 'application/octet-stream' } -OutFile $out -UseBasicParsing -TimeoutSec 60
-          # The fetch is the same file the driver writes its status beside, so
-          # a stale status from an earlier run is impossible to read by mistake.
-          $status = Join-Path $env:TEMP 'nvmidi-loopback.status'
+          Copy-Item $src $out -Force
+          # The driver writes its status beside itself and not into the temp
+          # directory root, so a status left by an earlier run cannot be read by
+          # mistake.
+          $status = "$out.status"
           if (Test-Path $status) { Remove-Item $status -Force }
-          Write-Host "fetched $((Get-Item $out).Length) bytes to $out"
+          "LOOPBACK_DLL=$out" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "driver staged: $((Get-Item $out).Length) bytes at $out"
 
-          $src = @'
-          using System;
-          using System.Runtime.InteropServices;
-          public static class Loop {
-            [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-            public static extern IntPtr LoadLibraryW(string path);
-            [DllImport("kernel32.dll", SetLastError = true)]
-            public static extern uint GetLastError();
-          }
-          '@
-          Add-Type -TypeDefinition $src
-          # Loaded, not run. This process is the one that stays alive for the
-          # device; if it exits before the plugin runs, nothing else is running.
-          $h = [Loop]::LoadLibraryW($out)
-          if ($h -eq [IntPtr]::Zero) {
-            Write-Host "::error::LoadLibrary failed, error $([Loop]::GetLastError())"
-            "LOOPBACK_AVAILABLE=$false" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            exit 1
-          }
-          Write-Host "driver module loaded at $h"
-
-          # The dll reports what happened in a file rather than in its return
-          # value, because it is loaded rather than run and has no console.
-          $ok = $false
-          for ($i = 0; $i -lt 30; $i++) {
-            if (Test-Path $status) { $ok = $true; break }
-            Start-Sleep -Milliseconds 200
-          }
-          if ($ok) { Write-Host (Get-Content $status -Raw) }
-          else { Write-Host "::error::the driver never wrote $status, so it is not known whether it published a port" }
-
-          # The fact that matters, established by asking winmm the same question
-          # the plugin is about to ask it, in the same process the driver lives
-          # in. Before the driver this list is the synth only.
-          $src2 = @'
-          using System;
-          using System.Runtime.InteropServices;
-          public static class Midi {
-            [DllImport("winmm.dll")] public static extern uint midiOutGetNumDevs();
-            [DllImport("winmm.dll")] public static extern uint midiInGetNumDevs();
-          }
-          '@
-          Add-Type -TypeDefinition $src2
-          $outs = [Midi]::midiOutGetNumDevs()
-          $ins  = [Midi]::midiInGetNumDevs()
-          Write-Host "midi outs winmm reports now: $outs"
-          Write-Host "midi ins  winmm reports now: $ins"
-
-          $available = $ok -and ($outs -gt 1) -and ($ins -ge 1)
-          if (-not $available) {
-            Write-Host "::warning::the loopback driver did not add an input port on this runner ($outs outs, $ins ins). The send half of the e2e still runs against the synth; cross process delivery will not be verified in this run."
-          }
-          "LOOPBACK_AVAILABLE=$($available.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       # What the listener is going to be measuring against, learned before it
       # measures. The listener opens a midi *input* and asserts the bytes it
@@ -431,17 +354,13 @@ jobs:
       # runner has no receiving port" instead of reporting a plugin bug for a
       # missing driver.
       - name: can this runner receive midi at all
-
         shell: pwsh
         run: |
-          Write-Host "=== midi inputs winmm reports ==="
+          Write-Host "=== midi inputs windows reports ==="
           $ins = Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -match 'midi|loop' }
           if ($ins) { $ins | ForEach-Object { Write-Host "  $($_.Name)" } } else { Write-Host "  (none)" }
-          "LISTENER_POSSIBLE=$env:LOOPBACK_AVAILABLE".ToLower() | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          if (-not $ins) {
-            Write-Host "::warning::this runner has no midi input device, so the cross process half of the e2e cannot run here. The send half still does, against the synth windows ships with."
-          }
+          Write-Host "a hardware input is not required: the loopback driver the earlier step staged supplies one in the listener's own process. This list is printed so that a failure can be read against what the machine actually had."
 
       # The synthesiser every windows machine has. It is an output port owned by
       # the operating system rather than by a device, which makes it the one
@@ -563,17 +482,35 @@ jobs:
       # port name is passed as a substring because winmm's own naming is a
       # vendor string and the enumeration order is not guaranteed to match
       # between two processes.
+      #
+      # The listener loads the driver itself and not from the step above,
+      # because a winmm driver lives in the process that loaded it. Loading it
+      # here means this process owns the loopback device, the plugin in its own
+      # process sees it as a normal port of the machine, and the message has
+      # genuinely crossed a process boundary when the bytes land here. What the
+      # listener saw before the plugin ran - the self test - is what makes the
+      # silence or the arrival mean something.
       - name: listen on the plugin's port
-        # Only meaningful when this runner can receive midi at all. Both
-        # conditions are facts the earlier steps measured and published, not
-        # guesses: no input device means there is nothing to listen on, and no
-        # port name means the script never opened one.
-        if: ${{ env.LISTENER_POSSIBLE == 'true' && env.PORT_NAME != '' }}
+        # Only meaningful when a port was actually opened: no port name means
+        # the script never opened one, and there is nothing to listen against.
+        if: ${{ env.PORT_NAME != '' }}
         shell: pwsh
         run: |
-          python scripts\windows\e2e_listen.py "$env:PORT_NAME" 90 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\logs_listen.txt"
+          python scripts\windows\e2e_listen.py "$env:PORT_NAME" 90 --driver "$env:LOOPBACK_DLL" 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\logs_listen.txt"
           Write-Host "listener exit code: $LASTEXITCODE"
           "LISTEN_EXIT=$LASTEXITCODE" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          # Whether this process ended up with an input side is a fact about
+          # this run and not about the runner, so it is published here rather
+          # than assumed from a device list. The verdict steps read it to tell
+          # "the runner has no loopback" apart from "the plugin never sent".
+          $l = if (Test-Path "$env:GITHUB_WORKSPACE\logs_listen.txt") {
+            Get-Content "$env:GITHUB_WORKSPACE\logs_listen.txt" -Raw } else { '' }
+          $loaded = $l -match 'DRIVER_LOADED_PORTS'
+          "LISTENER_POSSIBLE=$($loaded.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          if (-not $loaded) {
+            Write-Host "::warning::the listener did not end up with a loopback input port, so nothing it says can be read as the plugin's silence. See the listener log above."
+          }
 
       - name: read both logs
         shell: pwsh
@@ -728,7 +665,7 @@ jobs:
           $canListen = $env:LISTENER_POSSIBLE -eq 'true'
           if (-not $canListen -or $env:PORT_NAME -eq '') {
             if ($t -match 'E2E_SENT sequence') {
-              Write-Host "::warning::no midi input device exists on this runner, so no second process could listen. Send half only: the plugin opened a real winmm port, wrote every message of the melody and the calls were accepted. Cross process delivery was NOT verified in this run - that needs a machine with a loopback driver."
+              Write-Host "::warning::the listener never got a loopback input port in its own process, so no second process could listen. Send half only: the plugin opened a real winmm port, wrote every message of the melody and the calls were accepted. Cross process delivery was NOT verified in this run."
               if ($t -match 'E2E_OUTPUT_PORTS (\d+)') {
                 Write-Host "::notice::ports present: $($Matches[1]); backend: $env:BACKEND_NAME"
               }
@@ -737,7 +674,7 @@ jobs:
             Write-Host "::error::nothing was heard and the script itself never claimed E2E_SENT, so the send half is not established either"
             exit 1
           }
-          Write-Host "::error::a midi input device exists on this runner and the listener was started against the plugin's own port, yet not one message arrived. The plugin opened a port and wrote into it, and nothing came out the other end."
+          Write-Host "::error::the listener held a loopback input port in its own process and the plugin opened a port and wrote into it, yet not one message arrived. The message did not survive the process boundary."
           exit 1
 
       # The comparison the whole job is for. The sender's log says which notes

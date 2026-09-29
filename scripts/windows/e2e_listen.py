@@ -16,24 +16,40 @@ The assertion is then a comparison between two logs - the notes the script
 says it played, and the notes this file saw - and neither log can be produced
 alone.
 
-Why the loopback route
-----------------------
+Why the loopback route, and why it is loaded here
+-------------------------------------------------
 
 Windows has no midi *input* port for a program to open and no way to publish
 one; the midi api is a list of devices the system owns, and a program can only
 attach to those. (`midiInOpen` takes a device id and nothing else - there is
 no `midiInCreateVirtual`, which is the same absence the plugin documents.)
 Two processes therefore meet through a loopback driver: one of them writes to
-a port with "loop" in its name, the driver copies every byte into the
-matching input port, and this file opens that. vb-audio's loopMIDI and
-nerds.de's LoopBe1 are the two that exist; the ci job installs one and fails
-before this file runs if neither is there, because this file cannot tell a
-missing driver from a wrong name.
+a port the driver owns, the driver copies every byte into the matching input
+port, and this file opens that.
+
+The driver is `tools/winmm_loopback/nvmidi_loopback.c`, built by the ci job and
+passed in with `--driver`. It is loaded *here*, in this process, because that
+is the only place it can be loaded at all: a winmm driver is a dll that winmm
+loads into whatever process opens the device, so a driver loaded in one
+process owns a port only for that process's lifetime and publishes nothing to
+anyone else. An earlier version of this test tried to install the driver in a
+separate step and have this file open it across processes; it could not have
+worked, and the reason is the model, not a bug in the attempt.
+
+Loading it here is what keeps the test honest. This process owns the device, so
+the device is real to it; the plugin is started as its own process by the job
+before this file runs, sees the port as an ordinary port of the machine, opens
+it and plays. What arrives here has therefore crossed a process boundary, and
+that is the one thing a stubbed backend cannot fake.
+
+If `--driver` is omitted, the file falls back to opening any input port whose
+name matches, which is how it runs on a machine that already has a loopback
+driver installed.
 
 Writing takes the same route in the other direction, for the self test: a
-message this process emits to the same loopback port comes back to it. That
-proves the route is live before the plugin is involved at all, so a failure
-later is the plugin's and not the runner's.
+message this process emits to the loopback driver's output comes back to it.
+That proves the route is live before the plugin is involved at all, so a
+failure later is the plugin's and not the runner's.
 
 What the exit code means
 ------------------------
@@ -48,6 +64,7 @@ winmm is part of windows.
 """
 
 import ctypes
+import os
 import sys
 import threading
 import time
@@ -188,6 +205,35 @@ def list_inputs():
     return names
 
 
+def load_driver(path, timeout=20.0):
+    """Load the loopback driver into this process and wait for it to publish.
+
+    Returns (ok, reason). The driver registers itself under a Drivers32 slot
+    and opens its own device from a thread it starts at load time, then writes
+    a status file next to the dll. Waiting for that file rather than sleeping a
+    fixed time is what makes the numbers below the driver's own account of what
+    it did, not this script's guess: a device that failed to open says so in
+    that file instead of looking like a port that simply never appeared.
+    """
+    status_path = path + ".status"
+    # A stale file from an earlier step would be read as this load's result.
+    if os.path.exists(status_path):
+        os.remove(status_path)
+    print("DRIVER_LOADING %s" % path)
+    ctypes.WinDLL(path)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if os.path.exists(status_path):
+            with open(status_path, "r", errors="replace") as f:
+                text = f.read()
+            print("DRIVER_STATUS %s" % text.strip().replace("\n", " | "))
+            if "LOOPBACK_STATUS=ok" in text:
+                return True, text
+            return False, "the driver loaded but did not open its device: %s" % text.strip()
+        time.sleep(0.25)
+    return False, "the driver loaded but wrote no status within %.0fs" % timeout
+
+
 def self_test(device_id):
     """Prove the loopback route carries midi, using only winmm."""
     winmm = ctypes.WinDLL("winmm")
@@ -212,22 +258,53 @@ def main(argv):
     # caller. Substring match, case insensitive, because winmm's names carry
     # vendor spelling and a runner's device order is not guaranteed.
     if len(argv) < 2:
-        print("usage: e2e_listen.py <port name substring> [deadline seconds]", file=sys.stderr)
+        print("usage: e2e_listen.py <port name substring> [deadline seconds]"
+              " [--driver <path to nvmidi-loopback.exe>]", file=sys.stderr)
         return 2
-    wanted = argv[1].lower()
-    deadline = float(argv[2]) if len(argv) > 2 else 60.0
+    # The driver flag is parsed out by hand rather than with argparse: this
+    # file is read by people debugging a red build, and the two positional
+    # arguments are easier to see than a usage block.
+    driver = ""
+    rest = []
+    i = 1
+    while i < len(argv):
+        if argv[i] == "--driver":
+            driver = argv[i + 1] if i + 1 < len(argv) else ""
+            i += 2
+        else:
+            rest.append(argv[i])
+            i += 1
+    if not rest:
+        print("usage: e2e_listen.py <port name substring> [deadline seconds]"
+              " [--driver <path>]", file=sys.stderr)
+        return 2
+    wanted = rest[0].lower()
+    deadline = float(rest[1]) if len(rest) > 1 else 60.0
+
+    if driver:
+        ok, why = load_driver(driver)
+        if not ok:
+            print("DRIVER_LOAD_FAILED %s" % why, file=sys.stderr)
+            print("the listener has no input port of the plugin's to open, so it cannot"
+                  " say anything about whether a message crossed a process boundary"
+                  " in this run.", file=sys.stderr)
+            return 1
+        print("DRIVER_LOADED")
 
     inputs = list_inputs()
     print("winmm lists %d midi input device(s):" % len(inputs))
     for i, name in inputs:
         print("  %d %s" % (i, name))
+    # With the driver loaded the name it publishes is the whole story, so the
+    # job passes the substring it chose; without one, any match will do.
     matches = [(i, n) for i, n in inputs if wanted in n.lower()]
     if not matches:
-        print("no midi input device matches %r" % argv[1], file=sys.stderr)
-        print("a loopback driver is what puts the plugin's port on the input side;", file=sys.stderr)
+        print("no midi input device matches %r" % rest[0], file=sys.stderr)
+        print("a loopback driver is what puts a port on the input side;", file=sys.stderr)
         print("without one there is nothing here to listen on.", file=sys.stderr)
         return 1
     device_id, device_name = matches[0]
+    print("DRIVER_LOADED_PORTS %d matches, using %d %s" % (len(matches), device_id, device_name))
     print("listening on %d %s" % (device_id, device_name))
 
     listener = Listener(device_id, wanted)
