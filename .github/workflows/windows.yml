@@ -242,19 +242,39 @@ jobs:
       # its port immediately. loopMIDI is the fallback because its installer
       # is known to leave the driver unloaded until a user launches the
       # application, which a runner has no one to do.
-      - name: probe the plugin api name
+      # Two engine facts, measured in the same run, before anything below
+      # depends on them.
+      #
+      # The api name probe is the control for the byte protocol: it reads the
+      # backend name and prints both the numbers and the text the script
+      # rebuilt from them. The char_at probe is the control for the text half
+      # of that, because the classification in e2e_winmm.nvgt needs the number
+      # of a character inside a literal and the obvious two ways of getting it
+      # do not work here.
+      #
+      # Neither line below is written into a file and read back later. Both
+      # scripts use print(), whose output is the redirected stdout, so what
+      # appears in this step's log is exactly what the engine emitted - there
+      # is no encoding step in between that could turn the answer into
+      # question marks and send the next hour after the wrong fault.
+      - name: probe the engine (api name and string find)
         shell: pwsh
         continue-on-error: true
         run: |
-          $src = Join-Path $env:GITHUB_WORKSPACE 'scripts/windows/probe_api_name.nvgt'
-          $out = Join-Path $env:GITHUB_WORKSPACE 'probe_api_name.txt'
           $exe = Join-Path $env:NVGT_DIR 'nvgt.exe'
-          $log = Join-Path $env:GITHUB_WORKSPACE 'probe_raw.txt'
-          $p = Start-Process -FilePath $exe -ArgumentList @($src) -Wait -PassThru -NoNewWindow -RedirectStandardOutput $log -RedirectStandardError "$log.err"
-          Write-Host "probe engine exited $($p.ExitCode)"
-          if (Test-Path $log) { Get-Content $log | Write-Host }
-          if (Test-Path "$log.err") { Write-Host '--- stderr ---'; Get-Content "$log.err" | Write-Host }
-          if (Test-Path $out) { Get-Content $out | Write-Host } else { Write-Host 'SILENT the probe wrote no output file' }
+          foreach ($name in @('probe_api_name', 'char_at_probe')) {
+            $src = Join-Path $env:GITHUB_WORKSPACE "scripts/windows/$name.nvgt"
+            $log = Join-Path $env:GITHUB_WORKSPACE "$name.out"
+            Write-Host "=== $name ==="
+            if (-not (Test-Path $src)) { Write-Host "SILENT $src does not exist"; continue }
+            $p = Start-Process -FilePath $exe -ArgumentList @($src) -Wait -PassThru -NoNewWindow -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+            Write-Host "engine exited $($p.ExitCode)"
+            if (Test-Path $log) { Get-Content $log | Write-Host }
+            if (Test-Path "$log.err") {
+              $err = Get-Content "$log.err" -Raw
+              if ($err.Trim().Length -gt 0) { Write-Host '--- stderr ---'; Write-Host $err }
+            }
+          }
 
       # The dll the script will load. Built with the same make target the
       # release uses, because the point of the job is to test what ships.

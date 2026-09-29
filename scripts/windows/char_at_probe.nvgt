@@ -1,0 +1,56 @@
+// char_at_probe.nvgt - what does the engine do with a string find()?
+//
+// The e2e script above this file needs the number of a character inside a
+// literal ("ndows", "ummy") to classify the backend by bytes. The obvious way
+// to get it did not work on the runner, and neither did the second way, and
+// this is the file that tells the two apart without spending a build on a
+// guess:
+//
+//   byte_letters.find(one)   was used to look one character up in the table
+//                            and returned 0 for every character, including
+//                            characters that are not in the table at all. A
+//                            find that answers 0 for a miss is not a lookup.
+//
+//   "xyz".find("y")          is the same call on a literal with no table and
+//                            no loop, so if it also answers 0 the fault is in
+//                            find itself and not in how the table was built.
+//
+// Every number printed below is a constant or the length of a literal. Nothing
+// here reads the plugin, so a failure here is an engine fact and never a
+// plugin one.
+void main() {
+	print("AT_BEGIN");
+
+	// find() on a literal: the plainest form of the question.
+	print("AT_LITERAL_FIND_Y " + "xyz".find("y"));
+	print("AT_LITERAL_FIND_X " + "xyz".find("x"));
+	print("AT_LITERAL_FIND_Z " + "xyz".find("z"));
+	// A character that is not in the literal at all. This is the one that
+	// matters: 0 here is indistinguishable from a match at position 0.
+	print("AT_LITERAL_FIND_MISS " + "xyz".find("Q"));
+	print("AT_LITERAL_FIND_EMPTY " + "xyz".find(""));
+
+	// The table from the e2e script, rebuilt here so this file has no
+	// dependency on it. The second character is a one.
+	const string tbl = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
+	print("AT_TBL_LEN " + tbl.length());
+	print("AT_TBL_FIND_1 " + tbl.find("1"));
+	print("AT_TBL_FIND_A " + tbl.find("A"));
+	print("AT_TBL_FIND_SLASH " + tbl.find("/"));
+	print("AT_TBL_FIND_MISS " + tbl.find("~"));
+
+	// The character the classification is stuck on. Two ways of naming it.
+	const string tail = "ndows";
+	const string n_from_literal = "n";
+	const string n_from_substr = tail.substr(0, 1);
+	print("AT_TAIL_LEN " + tail.length());
+	print("AT_N_LITERAL_LEN " + n_from_literal.length());
+	print("AT_N_SUBSTR_LEN " + n_from_substr.length());
+	print("AT_TBL_FIND_N_LITERAL " + tbl.find(n_from_literal));
+	print("AT_TBL_FIND_N_SUBSTR " + tbl.find(n_from_substr));
+	// And the comparison the classification actually makes, both spellings.
+	print("AT_EQ_LITERAL " + (n_from_literal == "n"));
+	print("AT_EQ_SUBSTR " + (n_from_substr == "n"));
+
+	print("AT_END");
+}
