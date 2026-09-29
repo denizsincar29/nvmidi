@@ -75,19 +75,20 @@ void note(const string&in what) {
 // length and the wrong shape, and this catches that without needing a
 // checksum.
 
-// Fixed size arrays, indexed by a plain integer literal. Written this way
-// because of a measured compilation failure, not by preference: with
-// `uint g_note[NOTES]` where NOTES is a `const uint`, the engine reported
+// Dynamic arrays filled from a literal, because of a measured compilation
+// failure rather than by preference. Two forms were tried and both were
+// rejected by the engine, each with the same two words at the declaration:
 //
-//     line: 79 (12)   ERROR: Expected '('    ERROR: Instead found '['
+//     uint g_note[NOTES] = {...};   with NOTES a `const uint`
+//     uint g_note[6]     = {...};   with a plain integer literal
 //
-// at the declaration. The size in a declaration has to be a literal here. The
-// constants below are still used for the loop and for the timing assertions,
-// so the length and the contents cannot drift apart without the count the
-// script prints changing with them.
-uint g_note[6] = {60, 64, 67, 48, 52, 55};
-uint g_vel[6] = {100, 90, 80, 70, 60, 50};
-const uint NOTES = 6;
+//     ERROR: Expected '('    ERROR: Instead found '['
+//
+// The linux script and the examples never declare a fixed size array at all -
+// they write `string[]@ x = {...}` and `array<T>@ x = array<T>()` - so those
+// are the two shapes known to compile, and this is the first of them.
+uint[]@ g_note = {60, 64, 67, 48, 52, 55};
+uint[]@ g_vel = {100, 90, 80, 70, 60, 50};
 // ms between the starts of consecutive events, and ms a note is held.
 // A hundred and fifty is long enough to survive a scheduler hiccup on a
 // shared runner and short enough that the whole run is under a second.
@@ -96,6 +97,18 @@ const uint HOLD_MS = 100;
 
 void main() {
 	print("E2E_BEGIN");
+
+	// The two lists have to describe the same run, and a mismatch would be
+	// read as a timing fault further down, so it is named here where it is.
+	// The count is taken from the melody rather than written beside it: a
+	// constant that drifted from the list it sizes would make the timing
+	// check below measure the wrong interval without ever saying so.
+	if (g_note.length() != g_vel.length()) {
+		fail("the melody has " + g_note.length() + " notes and " + g_vel.length() + " velocities, so the two lists do not describe the same run");
+		print("E2E_END failures=" + failures);
+		return;
+	}
+	const uint NOTES = g_note.length();
 	// Read by the listener, which is already looking for this line: the port
 	// name below is deterministic (winmm ports are), but the *number* the
 	// plugin addresses them by is not, and the listener needs the name.
@@ -258,7 +271,7 @@ void main() {
 	// this is the call every example in the repository uses.
 	if (port.open(chosen, "nvmidi e2e windows")) {
 		array<midi_note@>@ chord = array<midi_note@>();
-		uint chord_pitches[3] = {60, 64, 67}; // literal size, see above
+		uint[]@ chord_pitches = {60, 64, 67};
 		for (uint i = 0; i < 3; i++) {
 			midi_note@ n = nvmidi_note_create(chord_pitches[i]);
 			n.velocity = 100;
