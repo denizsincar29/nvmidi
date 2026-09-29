@@ -203,11 +203,13 @@ jobs:
           if (-not (Test-Path "$play\late_midi.status")) { Write-Host "  no late_midi.status in $play" }
           Show-File 'C:\probe_attach_marker.txt' 'probe_attach_marker.txt'
           Show-File 'C:\probe_load_failed.txt' 'probe_load_failed.txt'
+          Show-File 'C:\probe_entry.txt' 'probe_entry.txt'
 
           Write-Host "=== 4. same dll, executable that links winmm ==="
           Run-Probe "  probe_exe, winmm in the import table" "$probe\probe_exe.exe" $null
           Show-File 'C:\probe_attach_marker.txt' 'probe_attach_marker.txt'
           Show-File 'C:\probe_load_failed.txt' 'probe_load_failed.txt'
+          Show-File 'C:\probe_entry.txt' 'probe_entry.txt'
           Get-ChildItem $play -Filter late_midi.status -ErrorAction SilentlyContinue | ForEach-Object {
             Write-Host "  $($_.FullName):"; Get-Content $_.FullName | ForEach-Object { Write-Host "    $_" }
           }
