@@ -108,6 +108,15 @@ jobs:
         # the device list get built when a module in the process first attaches,
         # or when winmm itself loads?
         run: |
+          # build_probe.sh defaults CC to plain gcc and keeps set -e. If the
+          # image has no x86_64-w64-mingw32-gcc this step fails here, at the
+          # build, rather than the matrix step reporting four binaries missing
+          # as though the probes had run and written nothing. Whichever
+          # compiler is used it has to be the cross one: a probe built by the
+          # runner's native gcc would be an exe for a different platform and
+          # would not start at all.
+          echo "cross compiler: $(command -v x86_64-w64-mingw32-gcc || echo 'NOT ON PATH')"
+          export CC=x86_64-w64-mingw32-gcc
           bash tools/winmm_loopback/build_probe.sh late  "$RUNNER_TEMP/probe"
           bash tools/winmm_loopback/build_probe.sh exe   "$RUNNER_TEMP/probe"
           bash tools/winmm_loopback/build_probe.sh noexe "$RUNNER_TEMP/probe"
@@ -182,6 +191,11 @@ jobs:
           Write-Host "=== 5. a fresh winmm, slot already in the registry ==="
           Write-Host "(python has never run in this step until now, so its winmm is loaded here)"
           python -c "print('warm')" 2>&1 | ForEach-Object { Write-Host "  $_" }
+
+          Write-Host "--- which process each attach belonged to ---"
+          if (Test-Path 'C:\late_midi_host.txt') {
+            Get-Content 'C:\late_midi_host.txt' | ForEach-Object { Write-Host "  $_" }
+          } else { Write-Host "  no C:\late_midi_host.txt" }
 
           Write-Host "--- every status file this step produced ---"
           Get-ChildItem $env:RUNNER_TEMP -Recurse -Filter *.status -ErrorAction SilentlyContinue | ForEach-Object {

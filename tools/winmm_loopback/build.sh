@@ -34,7 +34,8 @@
 # Needs mingw-w64 (x86_64-w64-mingw32-gcc) on PATH. On the windows runner it is
 # already there.
 set -eu
-cd "$(dirname "$0")"
+here=$(cd -- "$(dirname -- "$0")" && pwd)
+cd "$here"
 
 OUT="nvmidi.dll"
 if [ "${1:-}" = "-o" ]; then

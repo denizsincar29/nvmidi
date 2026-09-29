@@ -75,6 +75,7 @@ static BOOL publish(WCHAR *slot, size_t slot_len) {
  * cooperation from any entry this file owns. */
 static void report(const char *where) {
 	char path[MAX_PATH + 32] = { 0 };
+	char host[MAX_PATH] = { 0 };
 	char line[512];
 	WCHAR slot[32] = { 0 };
 	HDRVR h;
@@ -86,6 +87,15 @@ static void report(const char *where) {
 
 	f = fopen(path, "ab");
 	if (!f) return;
+
+	/* Who is asking. On the attach run the process is python.exe, so the
+	 * directory is ...\Python313. On the OpenDriver run the process is this
+	 * file's own module and the directory is wherever the runner put it. Those
+	 * are two different directories on the runner, and only the log kept them
+	 * apart - the probe filename alone said the same thing twice. */
+	GetModuleFileNameA(NULL, host, MAX_PATH);
+	{ FILE *hf = fopen("C:\\late_midi_host.txt", "ab");
+	  if (hf) { fputs(host, hf); fputc('\n', hf); fclose(hf); } }
 
 	BOOL pub = publish(slot, 32);
 	UINT outs = midiOutGetNumDevs();
