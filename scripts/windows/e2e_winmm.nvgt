@@ -53,25 +53,33 @@
 // runner had spent four runs saying only "the rebuilt text is wrong". Both
 // halves of the old walk fail on this engine, each for its own reason:
 //
-//   byte_letters.substr(b, 1)   is not the character at b. Engines that store
-//                               the length in the first code unit answer out
-//                               of the string's own header: measured, index 0
-//                               hands back '6' (the second character) and
-//                               index 1 hands back '8' (the first), and every
-//                               index from the length onwards answers empty.
-//                               That is a one character shift up to 9 and
-//                               nothing at all from 10 to 68 - which is why
-//                               only the slash of "nvmidi/Windows MultiMedia"
-//                               survived, as an 'l'.
-//   byte_letters.length()       is the same header read as a length, and it
-//                               answers 68 for a 68 character literal: right
+//   byte_letters.substr(b, 1)   is not the character at b. Measured: index 32
+//                               answers 'W', index 65 answers '-', index 47
+//                               answers 'l', and substr(67, 1) is already empty
+//                               on a literal whose length() is 68 - so the reads
+//                               are wrong characters in range, nothing at all
+//                               above roughly the midpoint, and the last
+//                               character is out of reach.
+//   byte_letters.length()       answers 68 for a 68 character literal: right
 //                               here, and relied on below.
+//   byte_letters.find(one)      was used to look one character up instead, and
+//                               an earlier probe blamed it for answering 0 for
+//                               every character. That blame was wrong and the
+//                               same probe disproved it: find() answers 1 for
+//                               "1", 10 for "A", 62 for "/" and -1 for a miss.
+//
+// The offsets in that first line are not one constant - 32 to 'W' and 65 to '-'
+// are not the same shift - so the mechanism behind them is still unmeasured and
+// is deliberately not claimed here. What is claimed is what the branch below
+// does: it never walks the table, and the ranges it reads are the first ten and
+// the first twenty six characters of a literal, which this engine does read
+// correctly (measured: find("1") is 1 and find("A") is 10, and the rebuilt name
+// below came back off the runner as "nvmidi/Windows MultiMedia").
 //
 // So the table is walked by substr() nowhere, and the one case this file
 // actually needs - ascii letters, digits and the punctuation a backend name is
 // made of - is a spelled out branch. Uppercase, lowercase and digits are the
-// three ranges measured to convert, and they are read by comparing the byte
-// against character literals, which the engine does answer correctly.
+// three ranges measured to convert, and every bound is a number.
 //
 // The default is a '.' and not the '?' the old walk used. A question mark is
 // what a console font draws for a byte it cannot print, so a backend name full
