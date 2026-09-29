@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# Build the winmm loopback driver. Produces nvmidi-loopback.exe in this
-# directory.
+# Build the winmm loopback driver. Produces nvmidi-loopback.exe, here by
+# default and wherever -o says otherwise.
+#
+# -o exists because the ci build job runs in build/ and the e2e job looks for
+# the result at the repository path: an output location that only lived here
+# made the e2e report the driver as not built at all, which reads as a compile
+# failure and is not one.
 #
 # The extension is .exe and not .dll on purpose: it is a user mode winmm
 # driver, the same thing as the .drv files windows itself ships, and winmm is
@@ -14,9 +19,17 @@
 set -eu
 cd "$(dirname "$0")"
 
+OUT="nvmidi-loopback.exe"
+if [ "${1:-}" = "-o" ]; then
+	[ -n "${2:-}" ] || { echo "-o needs a path" >&2; exit 2; }
+	OUT="$2"
+fi
+
 CC="${CC:-x86_64-w64-mingw32-gcc}"
 command -v "$CC" >/dev/null || { echo "no $CC on PATH" >&2; exit 1; }
 
-"$CC" -O2 -shared -municode -o nvmidi-loopback.exe nvmidi_loopback.c \
+mkdir -p "$(dirname "$OUT")"
+"$CC" -O2 -shared -municode -o "$OUT" nvmidi_loopback.c \
 	-lwinmm -DUNICODE -D_UNICODE
-echo "built $(wc -c < nvmidi-loopback.exe) bytes"
+echo "built $(wc -c < "$OUT") bytes at $OUT"
+

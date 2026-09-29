@@ -32,12 +32,19 @@ jobs:
         run: mingw32-make
       - name: build the loopback driver
         shell: bash
-        run: bash tools/winmm_loopback/build.sh
+        # -o puts the dll where the artifact upload and the e2e's staged copy
+        # both expect it. Leaving it in a build/ subdirectory made the e2e
+        # report the driver as never built while it was sitting there compiled
+        # and correct, which is a worse failure than a compile error: it sends
+        # the reader after a build problem that does not exist.
+        run: bash tools/winmm_loopback/build.sh -o tools/winmm_loopback/nvmidi-loopback.exe
 
-      # The driver is built on every push and uploaded on every push, which
-      # keeps the compile honest. The url the e2e reads it from is a release
-      # tag, so a copy is published there once by hand - the file name has to
-      # match what the e2e step looks for, and the tag is 'loopback-driver'.
+      # The driver has to reach the e2e job, which runs on a different runner:
+      # nothing the build job leaves on disk is visible there. The artifact is
+      # that hand-off, and every job below that runs after this one downloads
+      # it into the workspace at the same path, so the file the e2e stages is
+      # the file this step built rather than a copy that has to be kept in step
+      # by hand.
       - name: keep the driver next to the dll
         uses: actions/upload-artifact@v4
         with:
@@ -54,17 +61,28 @@ jobs:
 
   e2e:
     runs-on: windows-latest
-    # Reading a release asset of this same repository is what fetches the
-    # loopback driver, and the token that can do that is the run's own. The
-    # default for a repository created before this line existed is read
-    # everywhere, but naming it means a future tightening of the repository
-    # default cannot silently turn the driver into a 404.
+    # Reading a release asset of the nvgt repository is what fetches the
+    # engine, and the token that can do that is the run's own. The default for
+    # a repository created before this line existed is read everywhere, but
+    # naming it means a future tightening of the repository default cannot
+    # silently turn the engine download into a 404.
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      # The driver is built on the other runner and no filesystem is shared
+      # between jobs, so the artifact is the only way it can arrive. It lands
+      # at the path the build job uploaded it from, which is the path the
+      # staging step below reads - one path, written down once, rather than a
+      # copy that has to be kept in step by hand.
+      - name: fetch the loopback driver
+        uses: actions/download-artifact@v4
+        with:
+          name: nvmidi-loopback
+          path: tools/winmm_loopback
 
       # nvgt itself, for the windows runner. scripts/nvgt_pin.sh cannot do
       # this - it fetches the .tar.gz asset and untars it, and the windows
