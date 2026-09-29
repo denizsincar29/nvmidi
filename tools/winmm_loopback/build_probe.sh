@@ -45,11 +45,17 @@ case "$mode" in
     "$CC" $FLAGS -o "$outdir/probe_exe.exe" "$here/probe_exe.c" $LIBS
     ;;
   noexe)
-    # No -lwinmm on the link line. The calls still resolve, because mmsystem
-    # is in the import library mingw ships with every executable by default;
-    # what changes is that no import table entry names winmm, so the loader
-    # does not pull it in until a call needs it.
-    "$CC" $FLAGS -o "$outdir/probe_noexe.exe" "$here/probe_exe.c" -luser32 -lgdi32 -Wl,--disable-auto-import-winmm
+    # No -lwinmm on the link line, so no import table entry names winmm and
+    # the loader does not pull it in until a call needs it - which is after
+    # our dll has attached, and that is the variable under test.
+    #
+    # This used to pass -Wl,--disable-auto-import-winmm, which was a guess
+    # about a per-dll form of the flag and does not exist: ld refused it with
+    # "unrecognized option" and the step died before building anything
+    # (measured, run 36585436551). The per-dll spelling does not exist; the
+    # only granular equivalent is __declspec(dllimport) on individual symbols,
+    # and none are needed here.
+    "$CC" $FLAGS -o "$outdir/probe_noexe.exe" "$here/probe_exe.c" -luser32 -lgdi32
     ;;
   *)
     echo "unknown mode: $mode" >&2; exit 2 ;;
