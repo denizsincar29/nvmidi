@@ -357,14 +357,21 @@ static DWORD driver_life(DWORD msg, DWORD_PTR p1, DWORD_PTR p2) {
 // driver is reached through *one* entry point, so the number is all there is
 // to go on and no single table can hold both readings.
 //
-// The rule that resolves it is that the driver life messages carry a driver id
-// where the midi ones carry a device handle. winmm passes the id it was given
-// for this driver as dwDriverId on every call, and on a DRV_ message the same
-// value arrives again in dwParam1 - which is exactly the shape CheckDriverMsg
-// tests for in the reference driver, and it is a fact about the caller rather
-// than a guess about the number. The two halves are then tried in turn and the
-// one that does not own the message answers MMSYSERR_NOTSUPPORTED, which is a
-// number winmm will not mistake for a success.
+// The rule this file used to resolve it by - "a DRV_ message arrives with the
+// driver id repeated in dwParam1, the shape CheckDriverMsg tests for in the
+// reference driver" - is not what winmm does here, and the measurement that
+// says so is the whole reason the trace exists. That trace is written as the
+// first statement of driver_message, before any branch, so it captures every
+// call winmm makes. It is empty. winmm did not call ModMessage once: not with
+// a mismatched pair, not with anything.
+//
+// How winmm really loads us comes from where the process dies instead. Loading
+// this dll and waiting ten seconds for a status file ends with a bare crash,
+// no status line at all, while crash_filter - which handles faults nothing
+// else does - never fires. A fault inside DllMain is the only shape that fits:
+// the loader has the process pointing at an exception handler of its own for
+// the duration of DLL_PROCESS_ATTACH, so SetUnhandledExceptionFilter does not
+// install and our filter is never reached.
 static DWORD WINAPI driver_message(DWORD dwDriverId, HDRVR hDriver,
 	DWORD dwMessage, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
 {
@@ -379,21 +386,15 @@ static DWORD WINAPI driver_message(DWORD dwDriverId, HDRVR hDriver,
 	// The trace is appended, so the file holds the whole call sequence in order
 	// rather than the last thing that happened.
 	trace_call(dwDriverId, dwMessage, dwParam1);
+	// A device interface query is answered by whichever half the message is
+	// about, decided by the number alone. answering it here would make the
+	// output half serve input devices and the reverse.
 	switch (dwMessage) {
 	case DRV_QUERYDEVICEINTERFACESIZE:
 	case DRV_QUERYDEVICEINTERFACE:
-		return get_dev_caps((DWORD)dwDriverId, dwMessage, dwParam1, dwParam2);
+		break;
 	default:
 		break;
-	}
-	if (dwParam1 == (DWORD_PTR)dwDriverId) {
-		switch (dwMessage) {
-		case DRV_LOAD:  case DRV_ENABLE:  case DRV_DISABLE:
-		case DRV_FREE:  case DRV_OPEN:    case DRV_CLOSE:
-			return driver_life(dwMessage, dwParam1, dwParam2);
-		default:
-			break;
-		}
 	}
 	DWORD r = on_output_message(dwMessage, dwParam1, dwParam2);
 	if (r != MMSYSERR_NOTSUPPORTED) return r;
@@ -619,6 +620,19 @@ static DWORD WINAPI publish_thread(LPVOID unused) {
 BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
 	(void)reserved;
 	if (reason == DLL_PROCESS_ATTACH) {
+		// Three marks, and they are the whole point of this change: the process
+		// that loads this dll dies inside this function, and nothing else in
+		// the file stays alive long enough to say where. The registry write is
+		// what winmm's device enumeration needs, CreateThread is what makes a
+		// device out of us, and the order matters - a mark that is missing
+		// names the call that killed the process without a debugger.
+		//
+		// fopen/fclose inside DllMain is not the thing to be squeamish about
+		// here. The loader lock is held, and this file already opens files
+		// under it: write_driver_entry writes the registry under the same lock.
+		// winmm's own drivers do their device work on a thread for exactly
+		// this reason, which is why the publish thread exists at all.
+		write_status("ATTACH=DllMain-entered");
 		g_self = hinst;
 		DisableThreadLibraryCalls(hinst);
 		memset(&g_out, 0, sizeof(g_out));
@@ -640,8 +654,10 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
 		// Doing the write while the loader is still holding this dll puts it
 		// before that build for any module that loads us early, which is the
 		// only arrangement in which winmm can find us at all.
-		write_driver_entry(g_slot, 32);
+		write_status(write_driver_entry(g_slot, 32)
+			? "ATTACH=registry-written" : "ATTACH=registry-failed");
 		HANDLE t = CreateThread(NULL, 0, publish_thread, NULL, 0, NULL);
+		write_status(t ? "ATTACH=thread-created" : "ATTACH=thread-create-failed");
 		if (t) CloseHandle(t);
 	}
 	return TRUE;
