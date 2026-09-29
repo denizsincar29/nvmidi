@@ -66,38 +66,29 @@ static void winmm_load(void) {
  * any of this code runs - and that is what carries the path instead. */
 static char g_path[MAX_PATH];
 
-/* Set by DllMain once it has run, read by main. Only a flag: the work it
- * describes is already done by the time it is set.
+/* Set by DllMain once it has run, and read by main only to be counted, never
+ * to be branched on. Nothing depends on its value, and that is deliberate.
  *
- * Measured on run 36594797122, both executables wrote
- *   ATTACH dllmain=0 done=0 env=ok dll=(unset)
- * The three readings are mutually consistent only if DllMain and main do not
- * share one copy of these statics: env=ok says GetEnvironmentVariableA was
- * called and succeeded; that call and the write to g_path are in the same
- * block under the same condition; and main still reads an empty g_path. A
- * single copy of the variable cannot both be written and read back empty.
+ * Measured on run 36597494924, the same run in both executables:
+ *   ATTACH       dllmain=0 done=0 env=ok dll=(unset)
+ *   PROBE_ENTRY  caller=main seen=38 path=(unset)
+ * seen=38 is GetEnvironmentVariableA answering "38 characters" to a call made
+ * from this file's entry point, and NVPROBE_DLL was set to the dll's full path
+ * by the step, so the variable is present and readable from main. The empty
+ * path is not this copy's static. The exception is thrown after that call, in
+ * code that never gets to print.
  *
- * The cause is NOT the link, which was the first guess and it is refuted:
- * probe_exe was rebuilt with -Wl,--out-implib added (commit 8631427, run
- * 36595721249) and the output was byte-identical - ATTACH dllmain=0 done=0
- * env=ok dll=(unset), the same six fields in the same order. An import library
- * changes who resolves what at link time; it does not give an image two copies
- * of its statics, and adding one changed nothing. The claim that it did, and
- * the -o-handling analogy it was built on, are withdrawn.
- *
- * What the marker does show, once the --out-implib branch is off the table, is
- * that a process whose main never ran did run this file's DllMain far enough to
- * call GetEnvironmentVariableA successfully - and the same process then wrote
- * dllmain=0, which is the flag value read from a variable that DllMain had
- * already set to 1 or 2 by the line above. Since run 36594797122 both
- * executables have agreed on those three readings, so the divergence is stable
- * rather than a race.
- *
- * The instrument is unaffected. late_midi.c crosses no image boundary at all:
- * one copy of it exists per process, and every LATE_PROBE line is written from
- * one function in one image. The negative readings it gave - the port
- * republishes, OpenDriver answers before any drive, midiOutGetNumDevs reports
- * 0 - were measured from the plugin's own path and stand. */
+ * A retraction, because it was committed as a finding and it was wrong.
+ * g_path is set by one unconditional statement in DllMain - the read and the
+ * write are the same call, so g_path is empty only if that call never ran, and
+ * three earlier comments reasoned from "never ran" from there. The old
+ * PROBE_ENTRY branch tested the fresh call's result and printed path=g_path,
+ * and on run 36597494924 it showed the two disagreeing inside one function:
+ * seen=38 beside path=(unset). This file's static is separate from whatever
+ * holds the environment the entry point reads. Every claim built on "the read
+ * never happened" is withdrawn with it, including the reading of
+ * ATTACH done=0 - which on the case-3 line is simply main's copy of the flag,
+ * written unconditionally on the line above it. */
 static volatile LONG g_attach_done = 0;
 
 /* Set in DllMain as soon as the environment read returns, before the value is
