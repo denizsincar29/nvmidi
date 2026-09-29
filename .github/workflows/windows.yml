@@ -945,8 +945,17 @@ jobs:
           # midi_input and midi_output are not types the engine knows, so this
           # is the line that says whether the real script hit that refusal or
           # something else.
+          # Both branches are assigned before Write-Host sees them. The first
+          # version of this line put the if expression inside the format
+          # argument, where PowerShell parses a command position: it read
+          # "if" as the name of a command, threw, and ended the step - on run
+          # 36618429968 that cost this whole dump block, so the four lines
+          # this edit exists to print were the ones it never reached. The
+          # line below it is the one that worked, and this is why.
           $realErr = Join-Path $env:GITHUB_WORKSPACE 'logs_e2e.txt.err'
-          Write-Host ("--- logs_e2e.txt.err: {0} bytes ---" -f (if (Test-Path $realErr) { (Get-Item $realErr).Length } else { -1 }))
+          $realErrBytes = -1
+          if (Test-Path $realErr) { $realErrBytes = (Get-Item $realErr).Length }
+          Write-Host ("--- logs_e2e.txt.err: {0} bytes ---" -f $realErrBytes)
           $realSrc = Join-Path $env:GITHUB_WORKSPACE 'scripts\windows\e2e_winmm.nvgt'
           if (Test-Path $realSrc) {
             $rs = Get-Content $realSrc -Raw
