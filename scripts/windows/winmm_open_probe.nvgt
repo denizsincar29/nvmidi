@@ -19,6 +19,14 @@
 // device, because MidiOutWinMM::getPortCount() is midiOutGetNumDevs(): if an
 // input open succeeds where the output open fails, the failure belongs to the
 // output direction rather than to this process being unable to talk to winmm.
+//
+// The pragma is not decoration. Without it this engine parses the whole script
+// before the plugin is registered, and every plugin-only name fails at once -
+// "Identifier 'midi_output' is not a data type", "No matching symbol
+// 'midi_last_error_byte_count'" - which reads like three defects and is one
+// missing line. Measured, run 36558867243.
+#pragma plugin nvmidi
+
 void main() {
 	print("W_BEGIN");
 	const uint OUTPUTS = midi_output_port_count();
