@@ -331,6 +331,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          # A shallow checkout is not what this job wants: the block that
+          # measures the script is meant to be able to tell a stale copy from
+          # this commit's copy, and a depth-1 tree is one more way for those to
+          # differ. It is also where the expected sha is taken from, and that
+          # has to be the commit's tree rather than anything reconstructed on
+          # the runner.
+          fetch-depth: 0
 
       # The driver is built on the other runner and no filesystem is shared
       # between jobs, so the artifact is the only way it can arrive. It lands
@@ -921,6 +928,18 @@ jobs:
             if ($out.Trim().Length -gt 0) { Write-Host "stdout:"; Write-Host $out }
             if ($err2.Trim().Length -gt 0) { Write-Host "stderr:"; Write-Host $err2 }
           }
+          # The expected sha is taken here, from git, and handed to the block
+          # below through the environment. It is deliberately not read out of
+          # the workspace: the question that block exists to answer is whether
+          # the file on the runner is this commit's file, and a value lifted
+          # from that same file cannot answer it. git rev-parse reads the
+          # commit object, which the checkout fetched from GitHub, so it is
+          # outside the thing being measured.
+          $wantSha = (git -C $env:GITHUB_WORKSPACE rev-parse "HEAD:scripts/windows/e2e_winmm.nvgt" 2>&1)
+          if ($LASTEXITCODE -ne 0) { $wantSha = '' }
+          Write-Host ("blob sha for the script at this commit: " + $wantSha)
+          "WANT_SHA=$wantSha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
           # The engine's own stdout, unfiltered, for the script that has
           # been dying at load. It is the only file whose first byte would
           # be the plugin's, and the probes above never touch it. It has to
@@ -956,20 +975,73 @@ jobs:
           $realErrBytes = -1
           if (Test-Path $realErr) { $realErrBytes = (Get-Item $realErr).Length }
           Write-Host ("--- logs_e2e.txt.err: {0} bytes ---" -f $realErrBytes)
-          # One source per fact. The first version of this line read the byte
-          # count from the file and the line count and sha from a string built
-          # by splitting the same file on "\n", and it printed 30039 bytes for
-          # a 29438 byte file: one of those two readings is not the file. They
-          # are taken from the same bytes here so that they cannot disagree,
-          # and the sha is over that same byte array, so a number that does not
-          # belong to this run's script has nowhere left to come from.
+          # One source per fact, and every branch named.
+          #
+          # Three runs printed 30039 bytes for a 29438 byte file. The blob in
+          # this commit is 29438: the API answers it, the local file hashes to
+          # the same, so the file the runner should have is not in doubt. That
+          # makes 30039 a value no reading of a 29438 byte file can produce,
+          # and the line was three format fields filled from one argument list,
+          # so a shortfall in that list shows up as a number rather than as an
+          # error. Guessing which field went wrong is what produced the wrong
+          # number twice; a line with no format string at all cannot fail that
+          # way. So there is no -f operator here, no comma argument list, and
+          # no shared expression: each reading is taken, named, and printed on
+          # its own line.
+          #
+          # The commit sha comes from the environment rather than from a file
+          # read, so it is the one number in this block that cannot have come
+          # from the filesystem, and the sha of the file is compared against it
+          # in the job summary line that follows.
           $realSrc = Join-Path $env:GITHUB_WORKSPACE 'scripts\windows\e2e_winmm.nvgt'
+          Write-Host ("commit under test: " + $env:GITHUB_SHA)
+          Write-Host ("looking for the script at: " + $realSrc)
           if (Test-Path $realSrc) {
-            [byte[]]$realBytes = [System.IO.File]::ReadAllBytes($realSrc)
-            $realSha = (Get-FileHash $realSrc -Algorithm SHA256).Hash.Substring(0,16)
-            $realLines = 1
-            foreach ($b in $realBytes) { if ($b -eq 10) { $realLines++ } }
-            Write-Host ("--- the real script: {0} bytes, {1} lines, sha {2} ---" -f $realBytes.Length, $realLines, $realSha)
+            $srcItem = Get-Item -LiteralPath $realSrc
+            $realFileLen = $srcItem.Length
+            $realSha = (Get-FileHash -LiteralPath $realSrc -Algorithm SHA256).Hash
+            $realBytes = $null
+            try { $realBytes = [System.IO.File]::ReadAllBytes($realSrc) } catch { Write-Host ("ReadAllBytes threw: " + $_.Exception.Message) }
+            $realArrLen = -1
+            if ($null -ne $realBytes) { $realArrLen = $realBytes.Length }
+            $realLines = -1
+            if ($null -ne $realBytes) {
+              $realLines = 1
+              foreach ($b in $realBytes) { if ($b -eq 10) { $realLines++ } }
+            }
+            # Get-Item, ReadAllBytes and the hash, each stated separately, so
+            # that a disagreement between them is three numbers that differ
+            # rather than one number that is wrong.
+            Write-Host ("script Get-Item length: " + $realFileLen)
+            Write-Host ("script ReadAllBytes length: " + $realArrLen)
+            Write-Host ("script line count from those bytes: " + $realLines)
+            Write-Host ("script sha256 full: " + $realSha)
+            # git answers a blob sha, which is a git object hash and not a
+            # sha256 of the bytes; comparing that number against the one above
+            # would print "no" for a file that is byte for byte correct. So the
+            # expected value is taken with the same tool that produced the
+            # measured one - git hash-object over the same bytes, once from the
+            # index Git checked out and once from the working tree file. Those
+            # two are comparable, and they are also the pair that answers the
+            # original question: is the file the engine compiles this commit's
+            # file, or a leftover.
+            $wantBlob = $env:WANT_SHA
+            if ($null -eq $wantBlob) { $wantBlob = '' }
+            if ($wantBlob -ne '') {
+              Write-Host ("blob sha for this commit: " + $wantBlob)
+              $realBlob = (git -C $env:GITHUB_WORKSPACE hash-object -- $realSrc)
+              Write-Host ("blob sha of the file on the runner: " + $realBlob)
+              if ($realBlob -eq $wantBlob) { Write-Host "SCRIPT_BLOB_MATCHES_COMMIT yes" }
+              else { Write-Host "SCRIPT_BLOB_MATCHES_COMMIT no" }
+              # And the same question asked of git's own object database, which
+              # is the authority on what this commit's bytes are.
+              $headBlob = (git -C $env:GITHUB_WORKSPACE rev-parse "HEAD:scripts/windows/e2e_winmm.nvgt")
+              Write-Host ("blob sha in git for HEAD: " + $headBlob)
+              if ($realBlob -eq $headBlob) { Write-Host "SCRIPT_BLOB_IS_HEADS_BLOB yes" }
+              else { Write-Host "SCRIPT_BLOB_IS_HEADS_BLOB no" }
+            } else {
+              Write-Host "no expected blob was handed to this step, so this run cannot compare"
+            }
             # The engine names files by path, so a run that compiled a stale
             # copy still reports a file. The sha above is what tells this run's
             # bytes apart from a leftover one, and it is taken on the runner for
