@@ -318,9 +318,14 @@ jobs:
           # The copy is renamed so the Drivers32 slot still points at
           # nvmidi.dll and winmm cannot be involved at all.
           if (Test-Path "$probe\drvload.exe") {
-            Copy-Item "$env:LOOPBACK_DLL" "$env:RUNNER_TEMP\probe\subject.dll" -Force
+            # Taken from where the build put it, not from LOOPBACK_DLL: that
+            # variable is exported by the staging step much further down, and
+            # this case runs above it. Measured on run 36646491736 - the
+            # variable was empty here and Copy-Item failed on the empty path.
+            $subject = "$env:GITHUB_WORKSPACE\tools\winmm_loopback\nvmidi.dll"
+            Copy-Item $subject "$env:RUNNER_TEMP\probe\subject.dll" -Force
             $dl = "$env:RUNNER_TEMP\probe\drvload.exe"
-            Write-Host "  loading $env:RUNNER_TEMP\probe\subject.dll"
+            Write-Host "  loading $env:RUNNER_TEMP\probe\subject.dll ($((Get-Item $subject).Length) bytes)"
             $out = & $dl "$env:RUNNER_TEMP\probe\subject.dll" 2>&1
             $code = $LASTEXITCODE
             if ($out) { $out | ForEach-Object { Write-Host "  $_" } }
