@@ -42,6 +42,31 @@ jobs:
         # compile problem that does not exist, which is worse than an error.
         run: bash tools/winmm_loopback/build.sh -o tools/winmm_loopback/nvmidi.dll
 
+      - name: every function the compiler emits is one the driver expects to be called
+        shell: bash
+        # The loopback dll dies during load with an execute fault (AV.Fault:
+        # Execute, ExceptionAddress = its own base + 0x15e6) and no status line,
+        # so the fault is inside DllMain - the loader points the process at its
+        # own exception handler for the duration of DLL_PROCESS_ATTACH, which is
+        # why crash_filter never fires for it. No width or argument-count
+        # mistake can fault like that: every store those mistakes make lands
+        # inside the frame of the function that makes it.
+        #
+        # -Wmissing-prototypes is what does. mmiscapi.h declares DRIVERMSGPROC
+        # as taking five arguments, and PDRVCALLBACK as taking six plus a
+        # DWORD_PTR. A definition in this file that disagrees with either one
+        # has no prototype, so the compiler hands the callee a frame built for
+        # its own (shorter) signature and the callee decodes the arguments from
+        # a frame that is not what it expects - an execute fault, exactly the
+        # shape measured. This gate is here because that class of mismatch is
+        # invisible by eye and was never checked.
+        run: |
+          echo "--- definitions with no prototype ---"
+          flags="-O2 -municode -DUNICODE -D_UNICODE -I/usr/x86_64-w64-mingw32/include"
+          x86_64-w64-mingw32-gcc -fsyntax-only -Wall -Wextra -Wmissing-prototypes \
+            $flags tools/winmm_loopback/nvmidi_loopback.c 2>&1 |
+            grep -E "warning:" || echo "(none)"
+
       - name: what api version was the plugin compiled against
         shell: pwsh
         # The e2e's script-side names are all refused and the plugin's stderr
