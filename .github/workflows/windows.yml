@@ -54,50 +54,81 @@ jobs:
       #   that works is /releases/tags/latest - the same one the pin script
       #   uses, which is why the linux job never hit this.
       #
-      #   the format. There is no .zip asset. The windows one is
-      #   nvgt_<version>_dev.exe, a self-extracting 7-Zip (SFX) archive: 7-Zip's
-      #   own module, not an installer, so it takes 7-Zip's switches and the
-      #   process exits as soon as the files are on disk. That is why -y is
-      #   passed - without it 7-Zip asks for confirmation on stdin, which on a
-      #   runner is nobody, and the step dies before saying why.
+      #   the format. There is no .zip asset. nvgt_<version>_dev.exe is an
+      #   Inno Setup installer, and this was measured rather than guessed
+      #   after getting it wrong once: "Inno Setup Setup Data (6.7.0)" sits at
+      #   offset 0xb530c and again at 0x8ee8143, followed by "Inno Setup
+      #   Messages (6.5.0)", and the stub imports only kernel32, comctl32,
+      #   user32, oleaut32 and advapi32. There is no 7z signature in the file
+      #   and no NSIS marker. So an earlier version of this step, which piped
+      #   the exe through 7-Zip, unpacked nothing useful: 7-Zip reported the
+      #   PE sections it could see and the files it listed were the stub's,
+      #   not nvgt's, which is why the search for nvgt.exe came up empty.
+      #
+      # An installer is run, not unpacked, and these are its switches. They
+      # are not guessed either - the installer carries its own command line
+      # help as UTF-16 text and it is still in the file that is downloaded
+      # here: "/SILENT, /VERYSILENT   Instructs Setup to be silent or very
+      # silent." (/SILENT at 0xa9a6c, /VERYSILENT at 0xa9a7e, /SUPPRESSMSGBOXES
+      # at 0xa9b3c, /NORESTART at 0xa9d84.) /NORESTART is passed because a
+      # reboot on a runner is not a reboot, it is a lost job.
+      #
+      # Where Inno puts the files is the installer's business, and this step
+      # does not assume it: it installs, then asks the disk where nvgt.exe is
+      # and reports the answer in the log. If upstream changes the layout, the
+      # log says so before the assertions do.
       #
       # Fetching through the release API rather than a hardcoded url means the
       # job follows whatever `latest` points at, the same as the pin script.
       - name: fetch nvgt
         shell: pwsh
         run: |
-          # 7-Zip is on every github windows runner; the path is asserted
-          # rather than assumed because everything below depends on it.
-          $sevenZip = 'C:\Program Files\7-Zip\7z.exe'
-          if (-not (Test-Path $sevenZip)) { throw "7-Zip is not at $sevenZip on this runner" }
-
           $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/samtupy/nvgt/releases/tags/latest' -Headers @{ 'User-Agent' = 'nvmidi-ci' }
           Write-Host "nvgt release: $($rel.tag_name) ($($rel.name))"
           Write-Host "assets: $(($rel.assets | ForEach-Object { $_.name }) -join ', ')"
           $asset = $rel.assets | Where-Object { $_.name -like '*.exe' } | Select-Object -First 1
           if (-not $asset) { throw "no .exe asset in release $($rel.tag_name)" }
           Write-Host "using $($asset.name) ($($asset.size) bytes)"
-          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile nvgt-sfx.exe -UseBasicParsing
-          # A truncated download unpacks into a directory of half written files
-          # and the failure surfaces later as a missing dll. Checked here.
-          $got = (Get-Item nvgt-sfx.exe).Length
-          Write-Host "downloaded $got bytes"
+          $setup = Join-Path $env:RUNNER_TEMP $asset.name
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $setup -UseBasicParsing
+          # A truncated download fails inside the installer with an error the
+          # runner cannot read. Checked against the release's own byte count.
+          $got = (Get-Item $setup).Length
+          Write-Host "downloaded $got bytes to $setup"
           if ($got -ne $asset.size) { throw "download is $got bytes, release says $($asset.size)" }
 
-          & $sevenZip x nvgt-sfx.exe -onvgt-dl -y | Out-Host
-          if ($LASTEXITCODE -ne 0) { throw "7-Zip could not unpack $($asset.name): exit $LASTEXITCODE" }
-          # The archive wraps everything in a directory named after the build.
-          # Flattening it means one path for the rest of the job whether upstream
-          # changes that name or not.
-          $exe = Get-ChildItem -Path nvgt-dl -Recurse -Filter 'nvgt.exe' | Select-Object -First 1
-          if (-not $exe) { throw "no nvgt.exe inside $($asset.name)" }
+          # The install itself. Start-Process with -Wait, because the installer
+          # returns as soon as it has spawned its own child otherwise, and the
+          # next line would look for nvgt.exe while it is still being written.
+          $p = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/NORESTART','/SUPPRESSMSGBOXES' -Wait -PassThru
+          Write-Host "installer exited $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { throw "nvgt installer failed with exit code $($p.ExitCode)" }
+
+          # Where it landed, asked of the disk rather than assumed. %LOCALAPPDATA%
+          # \Programs is Inno's default for a per-user install and is the first
+          # place looked, but the search is not limited to it - the answer goes
+          # into the log so a layout change is visible instead of implied.
+          $roots = @($env:LOCALAPPDATA, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:RUNNER_TEMP) |
+            Where-Object { $_ -and (Test-Path $_) }
+          Write-Host "searching for nvgt.exe under: $($roots -join ', ')"
+          $exe = $null
+          foreach ($r in $roots) {
+            $hit = Get-ChildItem -Path $r -Recurse -Filter 'nvgt.exe' -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+            if ($hit) { $exe = $hit; break }
+          }
+          if (-not $exe) { throw "the installer exited 0 but no nvgt.exe exists under any of: $($roots -join ', ')" }
           $dir = $exe.DirectoryName
-          Copy-Item "$dir\*" -Destination . -Recurse -Force
-          Write-Host "nvgt at $(Resolve-Path .\nvgt.exe)"
-          Write-Host "nvgt's own directory holds: $(($(Get-ChildItem $dir -Recurse | ForEach-Object { $_.Name }) -join ', '))"
+          Write-Host "nvgt installed at $($exe.FullName)"
+
+          # nvgt searches lib/ next to itself, so the dll has to go there and
+          # the working directory has to be the install root. Both are derived
+          # from where the engine actually is, which is what NVGT_DIR carries.
+          "NVGT_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "nvgt's own directory holds: $(($(Get-ChildItem $dir -Recurse -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) -join ', '))"
           # The evidence for everything that follows: if this is not the engine
           # the plugin was built against, every later failure is unreadable.
-          .\nvgt.exe -v
+          & $exe.FullName -v
 
       # The dll the script will load. Built with the same make target the
       # release uses, because the point of the job is to test what ships.
@@ -109,17 +140,22 @@ jobs:
       # named by #pragma plugin, so nvmidi.dll has to be there and not in the
       # working directory. Reported because a plugin that is not found and a
       # plugin that is found and refuses produce the same three words.
+      #
+      # "next to itself" is the install root the previous step found, not the
+      # checkout, so lib/ is created there.
       - name: install the plugin
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path lib | Out-Null
-          Copy-Item nvmidi.dll -Destination lib\nvmidi.dll -Force
-          Write-Host "lib\nvmidi.dll: $((Get-Item lib\nvmidi.dll).Length) bytes"
+          $lib = Join-Path $env:NVGT_DIR 'lib'
+          New-Item -ItemType Directory -Force -Path $lib | Out-Null
+          Copy-Item nvmidi.dll -Destination (Join-Path $lib 'nvmidi.dll') -Force
+          $dll = Join-Path $lib 'nvmidi.dll'
+          Write-Host "$dll: $((Get-Item $dll).Length) bytes"
           # A zero byte file here would make the whole job meaningless and
           # silent - the loader says "failed to load plugin" for an empty file
           # exactly as it does for a missing dependency.
-          if ((Get-Item lib\nvmidi.dll).Length -eq 0) { throw 'the built dll is empty' }
-          Get-ChildItem lib | Select-Object Name, Length
+          if ((Get-Item $dll).Length -eq 0) { throw 'the built dll is empty' }
+          Get-ChildItem $lib | Select-Object Name, Length
 
       # A loopback driver is what makes two windows processes meet over midi.
       # Neither of the two that exist ships with windows, so one is installed
@@ -184,7 +220,7 @@ jobs:
       - name: play the melody (script)
         shell: cmd
         run: |
-          start /b cmd /c "nvgt.exe scripts\windows\e2e_winmm.nvgt > logs_e2e.txt 2>&1"
+          start /b cmd /c ""%NVGT_DIR%\nvgt.exe" "%~dp0scripts\windows\e2e_winmm.nvgt" > "%GITHUB_WORKSPACE%\logs_e2e.txt" 2>&1"
 
       - name: wait for the script to name its port
         shell: pwsh
@@ -224,7 +260,7 @@ jobs:
       - name: listen on the plugin's port
         shell: pwsh
         run: |
-          python scripts\windows\e2e_listen.py "$env:PORT_NAME" 90 2>&1 | Tee-Object -FilePath logs_listen.txt
+          python scripts\windows\e2e_listen.py "$env:PORT_NAME" 90 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\logs_listen.txt"
           Write-Host "listener exit code: $LASTEXITCODE"
           "LISTEN_EXIT=$LASTEXITCODE" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
@@ -374,7 +410,7 @@ jobs:
         with:
           name: windows-e2e-logs
           path: |
-            logs_e2e.txt
-            logs_listen.txt
+            ${{ github.workspace }}/logs_e2e.txt
+            ${{ github.workspace }}/logs_listen.txt
           if-no-files-found: warn
           retention-days: 7
