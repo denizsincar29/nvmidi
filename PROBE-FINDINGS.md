@@ -98,6 +98,32 @@ log it was there to print. Corrected in 776770d.
 from that run. They exist to separate "the plugin type" from "a statement
 after a print" as the thing the parser refuses.
 
+
+## k_lit decides it
+
+Added in 776770d, measured on run 36615043830.
+
+`k_lit.nvgt` is `print("K1");` then `int k = 1;` then `print("K2");` — the
+same three statements in the same order as `c_handle`, with an `int` where
+the handle was. It exits **0** and prints `K1K2`, 4 bytes. `m_str` does the
+same with a `string` declaration between two prints and also exits 0 with
+`M1M2`.
+
+So a declaration between two prints is not what the parser refuses, and the
+name is not it either. The fault is the plugin's type: `midi_output@`, the
+handle the plugin registers, cannot appear in a declaration the engine
+accepts.
+
+`l_int` declares an `int` in a script that requests the plugin and exits 0,
+which rules out the request itself as the cause.
+
+The remaining question is what the plugin did wrong when it registered that
+type. The engine says `Expected ';'` and `Instead found '@'`, which is what a
+parser says when the token before the `@` is not a type it knows: the
+registration that should have made `midi_output` a type name did not take
+effect in this script, while the calls that need no such name
+(`midi_api_name_byte_count()`, exit 0, `api_bytes=25`) still resolve.
+
 ## Retracted
 
 - **A "60.4 s hang" of the real script.** There was no hang. The step above
