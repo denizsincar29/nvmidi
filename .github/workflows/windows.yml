@@ -58,7 +58,7 @@ jobs:
           $dll = "tools\winmm_loopback\nvmidi-loopback.dll"
           $status = [IO.Path]::ChangeExtension($dll, ".status")
           Remove-Item $status -ErrorAction SilentlyContinue
-          $p = Start-Process -FilePath "rundll32.exe" -ArgumentList @($dll, Dummy) -PassThru -NoNewWindow
+          $p = Start-Process -FilePath "rundll32.exe" -ArgumentList @($dll, "Dummy") -PassThru -NoNewWindow
           $p | Wait-Process -Timeout 15 -ErrorAction SilentlyContinue
           if (!$p.HasExited) { $p | Stop-Process -Force }
           Write-Host "driver process exit: $($p.ExitCode)"
