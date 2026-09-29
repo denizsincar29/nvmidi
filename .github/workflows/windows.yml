@@ -405,7 +405,19 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "=== the sender's own account ==="
-          if (Test-Path logs_e2e.txt) { Get-Content logs_e2e.txt } else { Write-Host "(no sender log)" }
+          if (Test-Path logs_e2e.txt) {
+            Get-Content logs_e2e.txt
+          } else {
+            # Not a missing file to shrug at. The script is launched with its
+            # own stdout redirected into this very path, so an absent file
+            # means the engine never opened it - the engine did not run.
+            # Worth its own word, because a compile error is written to the
+            # *step's* stdout and not into the redirect, so it is easy to
+            # read a green-looking log and miss that the script never
+            # compiled at all.
+            Write-Host "::error::there is no sender log at all: the engine never opened the redirect, so it never ran the script"
+            Write-Host "(no sender log)"
+          }
 
           # The lines that say which port was played into and how much went out
           # are already in the file above, but they are buried in stdout that
@@ -571,6 +583,31 @@ jobs:
             $i++
           }
           Write-Host "::notice::all $($sent.Count) notes of the melody arrived, in order, with the velocities they were sent with"
+
+      # A script that does not compile prints no E2E_ marker at all: the only
+      # output is "Compilation error: file: ... line: N", which goes to the
+      # step's own stdout and not into the redirect the script was launched
+      # with. Every symptom downstream is therefore "nvgt silently died", and
+      # that class of bug cost several runs before it was found at the tail of
+      # another step's output. It gets a step of its own so it is an error
+      # annotation at the top of the job, not a line to scroll for.
+      - name: did the script compile at all
+        if: always()
+        shell: pwsh
+        run: |
+          $logs = @()
+          if (Test-Path logs_e2e.txt) { $logs += 'logs_e2e.txt' }
+          if (Test-Path logs_listen.txt) { $logs += 'logs_listen.txt' }
+          $bad = $false
+          foreach ($l in $logs) {
+            $hits = Select-String -Path $l -Pattern 'Compilation error' -SimpleMatch
+            foreach ($h in $hits) {
+              Write-Host "::error file=$l,line=$($h.LineNumber)::$($h.Line.Trim())"
+              $bad = $true
+            }
+          }
+          if ($bad) { throw "the nvgt script did not compile, so nothing it claims below was ever going to happen" }
+          Write-Host "no compilation errors in $($logs -join ', ')"
 
       - name: the script's own verdict
         if: always()

@@ -75,9 +75,19 @@ void note(const string&in what) {
 // length and the wrong shape, and this catches that without needing a
 // checksum.
 
+// Fixed size arrays, indexed by a plain integer literal. Written this way
+// because of a measured compilation failure, not by preference: with
+// `uint g_note[NOTES]` where NOTES is a `const uint`, the engine reported
+//
+//     line: 79 (12)   ERROR: Expected '('    ERROR: Instead found '['
+//
+// at the declaration. The size in a declaration has to be a literal here. The
+// constants below are still used for the loop and for the timing assertions,
+// so the length and the contents cannot drift apart without the count the
+// script prints changing with them.
+uint g_note[6] = {60, 64, 67, 48, 52, 55};
+uint g_vel[6] = {100, 90, 80, 70, 60, 50};
 const uint NOTES = 6;
-uint g_note[NOTES] = {60, 64, 67, 48, 52, 55};
-uint g_vel[NOTES] = {100, 90, 80, 70, 60, 50};
 // ms between the starts of consecutive events, and ms a note is held.
 // A hundred and fifty is long enough to survive a scheduler hiccup on a
 // shared runner and short enough that the whole run is under a second.
@@ -96,8 +106,19 @@ void main() {
 	// there is the synth windows ships with, and the job passes its name in
 	// rather than this file hard coding a vendor string that differs between
 	// windows versions and locales.
+	// The hint arrives as a word after `--`, so it is in COMMAND_LINE and not
+	// in an `args` array. The linux script reads it the same way, and that
+	// script compiles on every push - `args` has never been confirmed to exist
+	// in this engine at all, and an unconfirmed identifier in the first lines
+	// of main is a compilation error that runs nothing and prints no marker.
 	string hint = "";
-	if (args.length() > 0) hint = args[0].to_lowercase();
+	const string[]@ words = COMMAND_LINE.split(" ");
+	for (uint i = 0; i < words.length(); i++) {
+		const string word = words[i].trim_whitespace();
+		if (word.length() == 0) continue;
+		hint = word.to_lowercase();
+		break;
+	}
 	if (hint != "") print("E2E_HINT " + hint);
 
 	string api = midi_api_name();
@@ -237,7 +258,7 @@ void main() {
 	// this is the call every example in the repository uses.
 	if (port.open(chosen, "nvmidi e2e windows")) {
 		array<midi_note@>@ chord = array<midi_note@>();
-		uint chord_pitches[3] = {60, 64, 67};
+		uint chord_pitches[3] = {60, 64, 67}; // literal size, see above
 		for (uint i = 0; i < 3; i++) {
 			midi_note@ n = nvmidi_note_create(chord_pitches[i]);
 			n.velocity = 100;

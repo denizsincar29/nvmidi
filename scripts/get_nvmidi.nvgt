@@ -38,8 +38,17 @@
 // into a binary datastream, so no encoding step can damage them.
 //
 // Usage:
-//   nvgt get_nvmidi.nvgt          install the newest release
-//   nvgt get_nvmidi.nvgt v0.7.0   install a named release
+//   nvgt get_nvmidi.nvgt                  install the newest release into
+//                                         <nvgt dir>/lib
+//   nvgt get_nvmidi.nvgt v0.7.0           install a named release
+//   nvgt get_nvmidi.nvgt -d ./lib         download into ./lib instead
+//   nvgt get_nvmidi.nvgt -d ./lib v0.7.0  both
+//
+// This is a console program. Everything it has to say goes to the terminal,
+// and nothing on this path opens a dialog box: no alert, no input box, no
+// window. Without a version argument it installs the newest release rather
+// than asking, because a console program's answer to "which one" is the
+// default and its answer to "it went wrong" is a line of text.
 
 const string REPO = "denizsincar29/nvmidi";
 // Which library the running engine actually asks the operating system for.
@@ -70,14 +79,30 @@ const string REPO = "denizsincar29/nvmidi";
 // wall of dialogs a console user is trying to avoid - so in console mode the
 // text goes to the terminal and no box is raised. Everywhere else the box is
 // the only thing a screen reader user can hear, so it is the whole answer.
-bool console_mode = false;
+//
+// The default is true and there is no longer a way to turn it off. That is a
+// deliberate retreat from the version above, not a regression: a script whose
+// whole job is to put a file in a folder is a console program, and the dialog
+// route was tried and cost more than it gave. The window it opened had to be
+// answered for on every run, `input_box` returns immediately on a machine with
+// no display so a headless run could not tell "nobody answered" from "no one
+// was there", and the box a screen reader user does hear is one they then have
+// to dismiss before the download they asked for can start. Terminal text is
+// readable by both the person and the log, and it is the thing that can be
+// pasted into a bug report.
+//
+// So: print only. `console_mode` stays as a name because the sentences below
+// still read naturally against it, and a future flag can set it again.
+bool console_mode = true;
 
 void announce(const string&in text) {
 	if (console_mode)
 		print("nvmidi: " + text);
 	else
-		// alert's second argument is the box's title; the one-argument form does
-		// not compile against this engine (measured).
+		// Kept reachable rather than deleted, so the failure mode of a box is
+		// one assignment away if a caller ever wants it back. alert's second
+		// argument is the box's title; the one-argument form does not compile
+		// against this engine (measured).
 		alert(text, "nvmidi");
 }
 
@@ -136,7 +161,12 @@ void main() {
 	int cut_win = here.find_last_of("\\");
 	if (cut_win > cut) cut = cut_win;
 	if (cut >= 0) here = here.substr(0, cut);
-	string lib = here + "/lib";
+	string derived_lib = here + "/lib";
+	// -d replaces the derivation rather than adding to it. A relative folder
+	// is resolved against the working directory, which is what a person typing
+	// `-d ./lib` means, and it is left alone otherwise so that an absolute
+	// path is not rewritten into something unrecognisable.
+	string lib = asked_folder.length() > 0 ? asked_folder : derived_lib;
 	// Which library this engine wants, decided from the engine we are
 	// running under. See asset_for at the top.
 	const string ASSET = asset_for(exe);
@@ -176,16 +206,57 @@ void main() {
 	// the executable name, and it strips the script name too, so the very first
 	// word is already the requested version (measured, see the header).
 	string target = "latest";
+	// Where to download to. Empty means "work it out from the engine", which is
+	// what every version of this script did before there was a way to say
+	// otherwise; a -d argument replaces that derivation outright.
+	string asked_folder = "";
 	const string[]@ words = COMMAND_LINE.split(" ");
 	for (uint i = 0; i < words.length(); i++) {
 		string word = words[i].trim_whitespace();
 		if (word.length() == 0)
 			continue;
-		// The first word the engine left for us is the release, and its being
-		// here at all means someone is at a terminal.
+		// -d, with its folder either attached or in the next word. Both are
+		// accepted because the shell does not care which way it was typed and a
+		// person copying a command out of a readme should not have to match a
+		// style they cannot see.
+		//
+		//     nvgt get_nvmidi.nvgt -d ./lib
+		//     nvgt get_nvmidi.nvgt -d./lib
+		if (word == "-d" || word == "--dir" || word.find("-d") == 0 || word.find("--dir=") == 0) {
+			string folder = "";
+			if (word == "-d" || word == "--dir") {
+				// The folder is the next word, and only a word that is not
+				// itself a switch counts - so `-d -d` reports the mistake
+				// instead of taking "-d" for a directory name.
+				for (uint j = i + 1; j < words.length(); j++) {
+					string next = words[j].trim_whitespace();
+					if (next.length() == 0) continue;
+					if (next.find("-") == 0) break;
+					folder = next;
+					i = j;
+					break;
+				}
+			} else {
+				int eq = word.find("=");
+				if (eq >= 0) folder = word.substr(eq + 1);
+				else folder = word.substr(2);
+			}
+			folder = folder.trim_whitespace();
+			// Quotes are stripped rather than passed through: a path with a
+			// space in it arrives quoted, and the quotes are the shell's, not
+			// part of the folder's name.
+			if (folder.length() >= 2 && folder.substr(0, 1) == "\"" && folder.substr(folder.length() - 1, 1) == "\"")
+				folder = folder.substr(1, folder.length() - 2);
+			if (folder.length() == 0) {
+				print("nvmidi: -d needs a folder after it, for example: -d ./lib");
+				return;
+			}
+			asked_folder = folder;
+			continue;
+		}
+		// Anything else is the release to ask github for. The last one wins, so
+		// `-d ./lib v0.7.0` and `v0.7.0 -d ./lib` both mean the same thing.
 		target = word;
-		console_mode = true;
-		break;
 	}
 
 	// The tag carries a leading v and the api will not find it without one:
@@ -202,22 +273,6 @@ void main() {
 			target = "v" + target;
 	}
 
-	if (target == "latest" && !console_mode) {
-		string asked = input_box("Which nvmidi release do you want? Leave it as latest for the newest one, or type a tag such as v0.7.1.", "nvmidi", "latest");
-		asked = asked.trim_whitespace();
-		// An empty field or a cancelled box both come back empty; the default
-		// is what was already chosen, so this cannot fail.
-		if (asked.length() > 0)
-			target = asked;
-		else
-			// Measured: input_box returns at once on a machine with no display,
-			// so a headless run never reaches a person and this branch is the
-			// only sign of it. Without it the script downloads "latest" and the
-			// person watching the console sees a download they never asked for -
-			// which is exactly the failure the box was added to prevent. Saying
-			// it costs one sentence; not saying it makes the box decorative.
-			announce("No release was given and there is no display to ask on, so no one answered the question. Installing the latest release.");
-	}
 
 	// The short address everyone expects -
 	// github.com/<owner>/<repo>/releases/latest/download/<file> - works while
@@ -385,8 +440,6 @@ void main() {
 			// unless something is on screen, and this is the engine's own
 			// primitive for that - not a dialog, so it never has to be
 			// dismissed, which is what "show window" in the request means.
-			if (!console_mode)
-				show_window("nvmidi download");
 			uint said = 0;
 			while (!client.complete) {
 				wait(5);
