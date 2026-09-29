@@ -674,6 +674,15 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
 		HANDLE t = CreateThread(NULL, 0, publish_thread, NULL, 0, NULL);
 		write_status(t ? "ATTACH=thread-created" : "ATTACH=thread-create-failed");
 		if (t) CloseHandle(t);
+		// Written after the wait, so it means something. The file keeps only
+		// its last write, which is the whole difficulty here: a mark is worth
+		// what follows it. If this survives, DllMain ran to its end and the
+		// thread had 250ms to do its first step in; if the file still ends at
+		// thread-created, the process was gone before DllMain returned and the
+		// thread never ran at all. Those two need opposite fixes, and no
+		// status line can tell them apart from inside the thread itself.
+		Sleep(250);
+		write_status("ATTACH=returning");
 	}
 	return TRUE;
 }
