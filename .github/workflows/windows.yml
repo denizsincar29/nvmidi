@@ -526,18 +526,53 @@ jobs:
         shell: pwsh
         run: |
           $t = if (Test-Path logs_e2e.txt) { Get-Content logs_e2e.txt -Raw } else { '' }
+          # The backend name is decoded here, from the numbers the script
+          # printed, rather than read out of the text it rebuilt.
+          #
+          # This is not belt and braces. The text has been wrong on this runner
+          # twice - once as the decimal digits of every byte, once as 25
+          # question marks - and the numbers underneath it were right both
+          # times. A verdict taken from the rebuilt text therefore reads a
+          # translation fault as a plugin fault, which is what it did: two runs
+          # were spent on a plugin that was working, reporting it as the wrong
+          # backend. Decoding here puts the engine, alwaysscript's string
+          # constructors and every helper in this repository out of the path
+          # between the bytes and the decision.
+          $m = [regex]::Match($t, 'E2E_API_NUMBERS ([0-9,]+)')
+          if (-not $m.Success) {
+            Write-Host "::error::the script printed no E2E_API_NUMBERS line, so the backend name was never measured. Nothing below this step can conclude anything about the build."
+            exit 1
+          }
+          $api = -join ($m.Groups[1].Value.Split(',') | ForEach-Object { [char][int]$_ })
+          Write-Host "backend, decoded from the bytes: '$api'"
+
+          # A translation fault is named as a translation fault. When the text
+          # the script rebuilt disagrees with the numbers, that is a fact about
+          # this repository's string handling that somebody has to fix before
+          # any verdict about the plugin is worth taking.
+          $text = [regex]::Match($t, 'E2E_API_TEXT (.+)')
+          if ($text.Success) {
+            $asText = $text.Groups[1].Value.Trim()
+            if ($asText -ne $api) {
+              Write-Host "::error::the script rebuilt '$asText' from bytes that decode to '$api'. The byte protocol is intact and the local rebuilding is broken - fix that before reading this run as a plugin verdict."
+              exit 1
+            }
+          }
+
           # The released artefact is built with the dummy backend on linux, and
           # a dummy build passes every structural check in this job while
           # opening no port and delivering no byte. That is the failure this
           # job exists to catch, so it is fatal and not a warning.
-          if ($t -match 'the backend is Dummy') {
+          if ($api -match 'Dummy') {
             Write-Host "::error::the plugin was built with the dummy backend: it opens no port and sends nothing"
             exit 1
           }
-          if ($t -match 'E2E_OK BACKEND') {
-            $m = [regex]::Match($t, 'E2E_OK BACKEND (.+)')
-            Write-Host "::notice::backend: $($m.Groups[1].Value.Trim())"
+          if ($api -notmatch 'Windows') {
+            Write-Host "::error::the backend is '$api' and this job only makes sense against winmm: it exercises the windows midi api and its port list"
+            exit 1
           }
+          Write-Host "::notice::backend: $api"
+          "BACKEND_NAME=$api" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: did a note actually leave the process
         if: always()
@@ -579,7 +614,7 @@ jobs:
             if ($t -match 'E2E_SENT sequence') {
               Write-Host "::warning::no midi input device exists on this runner, so no second process could listen. Send half only: the plugin opened a real winmm port, wrote every message of the melody and the calls were accepted. Cross process delivery was NOT verified in this run - that needs a machine with a loopback driver."
               if ($t -match 'E2E_OUTPUT_PORTS (\d+)') {
-                Write-Host "::notice::ports present: $($Matches[1]); backend: $(([regex]::Match($t,'E2E_OK BACKEND (.+)')).Groups[1].Value.Trim())"
+                Write-Host "::notice::ports present: $($Matches[1]); backend: $env:BACKEND_NAME"
               }
               exit 0
             }

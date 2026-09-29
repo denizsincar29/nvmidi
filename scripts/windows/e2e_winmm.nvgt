@@ -224,29 +224,41 @@ void main() {
 	}
 	if (hint != "") print("E2E_HINT " + hint);
 
-	string api = "";
-	for (int i = 0; i < midi_api_name_byte_count(); i++) api += char_of(midi_api_name_byte(i));
-	if (api == "") {
+	// The backend name, and the exact numbers it arrived as.
+	//
+	// Two shapes deliberately, and the second one is the point. Rebuilding the
+	// text is what the rest of this file does, and it is what a person wants to
+	// read - but it is also the half that was measured wrong on this runner
+	// twice, once as the decimal digits of every byte and once as 25 question
+	// marks, while the numbers underneath were right both times. A count and a
+	// list of numbers cannot be bent by a local shadowing a constructor, by a
+	// substring, or by a table: the job decodes them on its own side, where the
+	// engine is not in the way at all. So the translation stops being evidence
+	// and becomes prose, and the verdict is taken from the numbers.
+	const int API_BYTES = midi_api_name_byte_count();
+	print("E2E_API_BYTES " + API_BYTES);
+	string api_numbers = "";
+	for (int i = 0; i < API_BYTES; i++) {
+		if (i > 0) api_numbers += ",";
+		api_numbers += midi_api_name_byte(i);
+	}
+	print("E2E_API_NUMBERS " + api_numbers);
+	if (API_BYTES == 0) {
 		fail("midi_api_name returned nothing, so the plugin is not registered");
 		print("E2E_END failures=" + failures);
 		return;
 	}
+
+	string api = "";
+	for (int i = 0; i < API_BYTES; i++) api += char_of(midi_api_name_byte(i));
 	ok("LOADED " + api);
 
-	// The dummy backend compiles, loads, registers, opens nothing and prints
-	// every line below this one. That is the failure mode this whole job
-	// exists to catch, so it is a failure here, not a note.
-	if (api.find("Dummy") >= 0) {
-		fail("the backend is Dummy: it will open no port and deliver no note, so nothing this script claims would be true");
-		print("E2E_END failures=" + failures);
-		return;
-	}
-	if (api.find("Windows") < 0 && api.find("MM") < 0) {
-		fail("expected a windows midi backend, got " + api + ": this script and its listener only make sense against winmm");
-		print("E2E_END failures=" + failures);
-		return;
-	}
-	ok("BACKEND " + api);
+	// What the bytes were read as here. The job compares this against what it
+	// decoded itself from E2E_API_NUMBERS: when the two disagree the fault is
+	// in this side's rebuilding and not in the boundary, and when they agree
+	// the verdict can be taken with confidence. Printed either way, because the
+	// line that would have given this away was the one missing for two runs.
+	print("E2E_API_TEXT " + api);
 
 	// --- what this machine offers ------------------------------------------
 	//
