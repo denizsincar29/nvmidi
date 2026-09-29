@@ -32,3 +32,21 @@ settled) is falsified. What remains is the return path itself: a C++
 I am instrumenting the plugin to print, from inside `midi_output_port_name`,
 whether RtMidi even got called and what it returned. Until that lands, the
 cause is a hypothesis, not a finding.
+
+## Second measurement — run 36544610694 (commit 4a11831)
+
+    NVSTR plugin_angelscript=2.39.0 WIP (23900)
+    NVSTR GetStringFactory ret=67108876  (-2 = asINVALID_ARG)  typeModifiers=0  factory=0x16c79b147c0
+
+The engine was asked for its string type and factory and returned
+asINVALID_ARG. NVGT's engine does not publish a string factory: its `string`
+is a built-in reference type with its own layout, not an asIStringFactory
+string.
+
+So a plugin function returning `std::string`, registered as `string f()`
+with asCALL_CDECL, hands back bytes in the wrong layout. Literals written in
+the script are built by the engine and are fine; every value that crosses out
+of the plugin is not. That is the observed split, exactly.
+
+The fix is not in nvmidi.cpp's functions - they return correct values. It is
+in how a std::string is converted into the engine's string type on return.

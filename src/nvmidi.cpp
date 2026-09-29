@@ -1356,6 +1356,49 @@ std::string midi_input_port_name(unsigned int port) {
 	}
 }
 
+// The same value as midi_output_port_name, offered to the engine a second way.
+//
+// Why this exists, measured on the runner rather than reasoned about: the
+// engine was asked for its string type and answered
+//
+//     NVSTR GetStringFactory ret=67108876 typeModifiers=0
+//
+// 67108876 is -2, asINVALID_ARG - there is no string factory. nvgt's `string`
+// is a built-in reference type with a layout of the engine's own, and this
+// plugin hands back a C++ std::string through a return slot the engine reads
+// with that other layout. Both sides believe they are correct, so nothing
+// reports an error, and every string this plugin returns arrives as bytes.
+//
+// A `const char*` return has no layout to disagree about: the engine receives
+// a pointer to bytes and builds its own string from them. This is registered
+// beside the original, under its own name, so one run shows both in the same
+// engine at the same moment - if this one reads correctly and the other does
+// not, the return type is the fault and every string function in this file is
+// to be converted the same way.
+//
+// TEMPORARY. Fold this back into midi_output_port_name once it is confirmed.
+const char* midi_output_port_name_cstr(unsigned int port) {
+	// The buffer has to outlive the call, because the engine may copy from the
+	// pointer after this function has returned. One per port, so two ports in
+	// a row do not overwrite each other's text.
+	//
+	// Static and never freed: this is a debugging path with a fixed number of
+	// callers, and returning a dangling pointer would corrupt the very result
+	// it is here to measure.
+	static std::vector<std::string> buffers;
+	try {
+		const std::string name = with_port<RtMidiOut>([port](RtMidiOut& out) -> std::string {
+			if (port >= out.getPortCount()) return "";
+			return out.getPortName(port);
+		});
+		if (port >= buffers.size()) buffers.resize(port + 1);
+		buffers[port] = name;
+		return buffers[port].c_str();
+	} catch (RtMidiError&) {
+		return "";
+	}
+}
+
 std::string midi_output_port_name(unsigned int port) {
 	try {
 		return with_port<RtMidiOut>([port](RtMidiOut& out) -> std::string {
@@ -1843,6 +1886,8 @@ void register_midi_globals(asIScriptEngine* engine, registration* reg) {
 		          << " typeModifiers=" << mods
 		          << " factory=" << (void*)factory << std::endl;
 	}
+	// The same value, returned the other way. See the definition above.
+	reg->check( engine->RegisterGlobalFunction("string midi_output_port_name_cstr(uint port)", asFUNCTION(midi_output_port_name_cstr), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_input@ midi_input_create()", asFUNCTION(midi_input_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_output@ midi_output_create()", asFUNCTION(midi_output_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 }

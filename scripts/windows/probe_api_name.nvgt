@@ -96,6 +96,13 @@ void main() {
 	print("PROBE_OTHER_BEGIN");
 	print(midi_output_port_name(0));
 	print("PROBE_OTHER_END");
+	// The same value, from the same plugin, from the same port, in the same
+	// run - the only difference is the return type the plugin is registered
+	// with. Whatever this prints, the pair of lines above and below it is the
+	// measurement.
+	print("PROBE_CSTR_BEGIN");
+	print(midi_output_port_name_cstr(0));
+	print("PROBE_CSTR_END");
 
 	string api = midi_api_name();
 	print(api);
