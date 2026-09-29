@@ -64,7 +64,6 @@
 #include <windows.h>
 #include <mmsystem.h>
 #include <mmddk.h>
-#include <dbghelp.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -411,49 +410,50 @@ static BOOL write_driver_entry(WCHAR *slot, size_t slot_len) {
 // touches the registry or loads another module waits until this thread has it
 // free.
 
+// Says where the thread is when it stops. The last three runs printed a module
+// base and then nothing - not registry-failed, not open-failed, not the report
+// - which leaves two readings that need different fixes: the thread never runs,
+// or it runs and the fault is later in it. A one line mark before anything that
+// can fail separates them, and a fault handler turns a dead process into a line
+// in a file.
+//
+// The handler is SetUnhandledExceptionFilter and not __try/__except: mingw-w64
+// has no SEH keywords, and a compiler that does not know __try reports it as an
+// undeclared identifier and goes on to mangle the rest of the function. This
+// filter is plain C, it fires on the exception the process cannot handle, and
+// it does not need the frame the fault happened in - which a mingw 64 bit image
+// does not carry anyway, since it links unwind info instead of the frame
+// pointer chain a walker would follow.
+static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep) {
 	char path[MAX_PATH];
-	char line[256];
+	char line[MAX_PATH];
 	FILE *f;
+	if (!g_self) return EXCEPTION_EXECUTE_HANDLER;
 	GetModuleFileNameA(g_self, path, MAX_PATH);
+	// The address is the module base plus the offset of the faulting
+	// instruction, and the base is already in the listener's log from this same
+	// run - so the two subtract, and what is left indexes a disassembly without
+	// further arithmetic. Measured on the runner: this fires before the process
+	// goes away, so both lines reach the file.
 	strcpy(strrchr(path, '.'), ".crash.txt");
 	f = fopen(path, "wb");
-	if (!f) return;
-	// The offset is the point of this file. mingw links 64 bit images with SEH
-	// unwind info rather than the older frame pointer chain, so a walker that
-	// only follows saved frame pointers gives one frame and lies about having
-	// finished; asking dbghelp for the exception's own frame and unwinding from
-	// there is what reaches the caller. The value is the module base plus the
-	// offset of the faulting instruction, so it subtracts against a disassembly
-	// without further arithmetic - and the base is already in the listener log
-	// this run wrote, which is what makes that subtraction possible afterwards.
-	{
-		ExceptionPointers *ep = GetExceptionInformation();
-		if (ep && ep->ExceptionRecord) {
-			void *where = ep->ExceptionRecord->ExceptionAddress;
-			strcpy(strrchr(path, '.'), ".exe");
-			{
-				FILE *m = fopen(path, "wb");
-				if (m) {
-					fprintf(m, "%p\n", where);
-					fclose(m);
-				}
-			}
-		}
+	if (!f) return EXCEPTION_EXECUTE_HANDLER;
+	if (ep && ep->ExceptionRecord) {
+		snprintf(line, sizeof(line),
+			"LOOPBACK_CRASH=0x%08lx at %p (base %p, code +0x%llx)\n",
+			(unsigned long)ep->ExceptionRecord->ExceptionCode,
+			ep->ExceptionRecord->ExceptionAddress,
+			(void *)g_self,
+			(unsigned long long)ep->ExceptionRecord->ExceptionAddress
+				- (unsigned long long)g_self);
+	} else {
+		snprintf(line, sizeof(line), "LOOPBACK_CRASH=no exception record\n");
 	}
-	snprintf(line, sizeof(line), "LOOPBACK_CRASH=0x%08lx\n", code);
-	fwrite(line, 1, strlen(line), f);
+	fputs(line, f);
 	fclose(f);
+	return EXCEPTION_EXECUTE_HANDLER;
 }
 
-static DWORD WINAPI guarded_publish(LPVOID unused) {
-	__try {
-		return publish_thread(unused);
-	} __except (crash_trace(GetExceptionCode()), EXCEPTION_EXECUTE_HANDLER) {
-		return 0;
-	}
-}
-
-static DWORD WINAPI publish_thread(LPVOID unused);
 
 // Started from DllMain. The loader lock is held there, so everything that
 // touches the registry or loads another module waits until this thread has it
@@ -519,14 +519,11 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
 		memset(&g_in, 0, sizeof(g_in));
 		ring_init(&g_out);
 		ring_init(&g_in);
-		// Filtered, not bare. An access violation on this thread would take the
-		// whole process down with it, and if that process is the listener then
-		// the run reports a dead python and says nothing about why - the state
-		// the last three runs were left in. __try needs a function of its own
-		// because a filter may not be a lexical parent of the guarded call
-		// while the code being guarded is also the callback body; this wrapper
-		// is that function and contains nothing else.
-		HANDLE t = CreateThread(NULL, 0, guarded_publish, NULL, 0, NULL);
+		// The filter goes on before the thread starts, because the thread is
+		// where a fault is now expected to show up and a handler installed
+		// afterwards would miss it.
+		SetUnhandledExceptionFilter(crash_filter);
+		HANDLE t = CreateThread(NULL, 0, publish_thread, NULL, 0, NULL);
 		if (t) CloseHandle(t);
 	}
 	return TRUE;
