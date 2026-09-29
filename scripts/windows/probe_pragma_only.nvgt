@@ -1,0 +1,24 @@
+// probe: pragma_only
+//
+// The control that everything above was missing.
+//
+// Every probe in this directory carries the same line - #pragma plugin nvmidi
+// - and none of them ever tested it. c_handle.nvgt differs from k_lit.nvgt by
+// exactly one line: c declares midi_output@ out = null, k declares int k = 1.
+// Both carry the pragma. k passed with exit 0 and no output; c failed at its
+// own declaration line. So the pragma is not the fault and the plugin loads.
+//
+// What that leaves is the reading the whole session was one step away from:
+// the engine refuses the '@' spelling only when the base name is not a type it
+// knows. midi_note@ and midi_config@ are accepted two lines above midi_input@
+// in n_type.nvgt under the same spelling, so '@' cannot be both legal and
+// illegal in one translation unit. The spelling is not the defect; the missing
+// registration is.
+//
+// This file asks that question with nothing else in it. It does not declare a
+// port and it does not declare a note - if the plugin's registration were
+// intact, the pragma alone would still be a legal script.
+void main() {
+	print("PRAGMASTART");
+	print("PRAGMAEND");
+}
