@@ -97,6 +97,76 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "the driver probe exited $LASTEXITCODE" }
           if (Test-Path $crash) { Write-Host "crash: $(Get-Content $crash -Raw)" }
 
+      - name: build the ordering probes
+        shell: bash
+        # Four binaries from two files. late_midi is the driver's publication
+        # code as a dll that runs when whoever loads it decides, and as that
+        # dll placed where python's winmm would be; probe_exe and probe_noexe
+        # are one source built twice, differing only in whether winmm is in
+        # their import table. Nothing here touches the plugin - these exist to
+        # answer one question with winmm rather than with a reading of it: does
+        # the device list get built when a module in the process first attaches,
+        # or when winmm itself loads?
+        run: |
+          bash tools/winmm_loopback/build_probe.sh late  "$RUNNER_TEMP/probe"
+          bash tools/winmm_loopback/build_probe.sh exe   "$RUNNER_TEMP/probe"
+          bash tools/winmm_loopback/build_probe.sh noexe "$RUNNER_TEMP/probe"
+
+      - name: does the device list depend on who attaches first
+        shell: pwsh
+        # The matrix, run in one place so the four answers can be read against
+        # each other. Every line ends in the same two numbers - how many output
+        # devices winmm reports and whether the mapper opens - and the directory
+        # each probe writes its own file into is printed as it is produced
+        # rather than searched for afterwards.
+        continue-on-error: true
+        run: |
+          $env:PYTHONNOUSERSITE = '1'
+          $py = Split-Path (Get-Command python).Source -Parent
+          $dlls = Join-Path $py 'DLLs'
+          $probe = "$env:RUNNER_TEMP\probe"
+          $play = "$env:RUNNER_TEMP\play"
+          New-Item -ItemType Directory -Force -Path $play | Out-Null
+          Copy-Item "$probe\late_midi.dll" "$dlls\winmm.dll" -Force
+
+          Write-Host "=== 1. winmm replaced by the probe, then python runs ==="
+          Write-Host "(the list is built the moment winmm is first pulled in, so"
+          Write-Host " the slot this file publishes at attach is as late as it gets)"
+          python -c "print('python ok')" 2>&1 | ForEach-Object { Write-Host "  $_" }
+          Get-ChildItem $dlls -Filter late_midi.status -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "  $($_.FullName):"; Get-Content $_.FullName | ForEach-Object { Write-Host "    $_" }
+          }
+          Get-ChildItem $py -Filter late_midi.status -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "  $($_.FullName):"; Get-Content $_.FullName | ForEach-Object { Write-Host "    $_" }
+          }
+
+          Write-Host "=== 2. winmm back to normal, the slot stays published ==="
+          Copy-Item "$env:SystemRoot\System32\winmm.dll" "$dlls\winmm.dll" -Force
+          python -c "print('python ok')" 2>&1 | ForEach-Object { Write-Host "  $_" }
+
+          Write-Host "=== 3. our dll loaded before winmm is touched, no winmm import ==="
+          $env:NVPROBE_DLL = "$probe\late_midi_as_exe.dll"
+          & "$probe\probe_noexe.exe" 2>&1 | ForEach-Object { Write-Host "  $_" }
+          Get-ChildItem $play -Filter late_midi.status -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "  $($_.FullName):"; Get-Content $_.FullName | ForEach-Object { Write-Host "    $_" }
+          }
+
+          Write-Host "=== 4. same dll, executable that links winmm ==="
+          & "$probe\probe_exe.exe" 2>&1 | ForEach-Object { Write-Host "  $_" }
+          Get-ChildItem $play -Filter late_midi.status -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "  $($_.FullName):"; Get-Content $_.FullName | ForEach-Object { Write-Host "    $_" }
+          }
+
+          Write-Host "=== 5. a fresh winmm, slot already in the registry ==="
+          Write-Host "(python has never run in this step until now, so its winmm is loaded here)"
+          python -c "print('warm')" 2>&1 | ForEach-Object { Write-Host "  $_" }
+
+          Write-Host "--- every status file this step produced ---"
+          Get-ChildItem $env:RUNNER_TEMP -Recurse -Filter *.status -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "$($_.FullName):"; Get-Content $_.FullName | ForEach-Object { Write-Host "  $_" }
+          }
+          Write-Host "probe matrix done"
+
       - name: where windows keeps its midi drivers
         shell: pwsh
         # The previous dump answered half the question and raised the other
