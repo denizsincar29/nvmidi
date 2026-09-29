@@ -100,26 +100,47 @@ jobs:
           # The install itself. Start-Process with -Wait, because the installer
           # returns as soon as it has spawned its own child otherwise, and the
           # next line would look for nvgt.exe while it is still being written.
-          $p = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/NORESTART','/SUPPRESSMSGBOXES' -Wait -PassThru
+          #
+          # /DIR is passed rather than left to the installer's default. Twice
+          # now this step has guessed where the files land and been wrong: once
+          # by treating the asset as an archive, once by searching four roots
+          # and finding nothing. Where Inno would choose is its own business and
+          # is not documented anywhere in the asset, so it is not asked - the
+          # job says where to install and then the only open question is whether
+          # the installer obeyed.
+          $dir = Join-Path $env:RUNNER_TEMP 'nvgt'
+          $log = Join-Path $env:RUNNER_TEMP 'nvgt-install.log'
+          $p = Start-Process -FilePath $setup `
+            -ArgumentList '/VERYSILENT','/NORESTART','/SUPPRESSMSGBOXES',"/DIR=$dir","/LOG=$log" `
+            -Wait -PassThru
           Write-Host "installer exited $($p.ExitCode)"
+          if (Test-Path $log) {
+            Write-Host "=== installer log, the lines that say what it wrote ==="
+            Get-Content $log | Where-Object { $_ -match 'Dest|-- File|Creating|Directory|Error' } | Write-Host
+          } else {
+            Write-Host "/LOG produced no file at $log"
+          }
           if ($p.ExitCode -ne 0) { throw "nvgt installer failed with exit code $($p.ExitCode)" }
 
-          # Where it landed, asked of the disk rather than assumed. %LOCALAPPDATA%
-          # \Programs is Inno's default for a per-user install and is the first
-          # place looked, but the search is not limited to it - the answer goes
-          # into the log so a layout change is visible instead of implied.
-          $roots = @($env:LOCALAPPDATA, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:RUNNER_TEMP) |
-            Where-Object { $_ -and (Test-Path $_) }
-          Write-Host "searching for nvgt.exe under: $($roots -join ', ')"
-          $exe = $null
-          foreach ($r in $roots) {
-            $hit = Get-ChildItem -Path $r -Recurse -Filter 'nvgt.exe' -ErrorAction SilentlyContinue |
-              Select-Object -First 1
-            if ($hit) { $exe = $hit; break }
+          # The installer was told where to go; this checks whether it went
+          # there, and falls back to a search only to make a *surprise* visible
+          # in the log rather than to guess silently.
+          $exe = Join-Path $dir 'nvgt.exe'
+          if (-not (Test-Path $exe)) {
+            Write-Host "not at the requested /DIR, so it went somewhere else. looking:"
+            $roots = @($env:LOCALAPPDATA, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData, $env:RUNNER_TEMP) |
+              Where-Object { $_ -and (Test-Path $_) }
+            $hit = $null
+            foreach ($r in $roots) {
+              $c = Get-ChildItem -Path $r -Recurse -Filter 'nvgt.exe' -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+              if ($c) { $hit = $c; break }
+            }
+            if (-not $hit) { throw "the installer exited 0, ignored /DIR=$dir, and no nvgt.exe exists under: $($roots -join ', ')" }
+            $exe = $hit.FullName
           }
-          if (-not $exe) { throw "the installer exited 0 but no nvgt.exe exists under any of: $($roots -join ', ')" }
-          $dir = $exe.DirectoryName
-          Write-Host "nvgt installed at $($exe.FullName)"
+          $dir = Split-Path -Parent $exe
+          Write-Host "nvgt installed at $exe"
 
           # nvgt searches lib/ next to itself, so the dll has to go there and
           # the working directory has to be the install root. Both are derived
@@ -128,7 +149,7 @@ jobs:
           Write-Host "nvgt's own directory holds: $(($(Get-ChildItem $dir -Recurse -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) -join ', '))"
           # The evidence for everything that follows: if this is not the engine
           # the plugin was built against, every later failure is unreadable.
-          & $exe.FullName -v
+          & $exe -v
 
       # The dll the script will load. Built with the same make target the
       # release uses, because the point of the job is to test what ships.
