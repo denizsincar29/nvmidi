@@ -53,27 +53,24 @@ jobs:
         # lost, or the version matched and the loop was reached. This prints
         # the number itself, before the engine is asked anything.
         #
-        # The blob handed over is a locally defined struct prefix whose first
-        # field is the version and the rest zeroes. prepare_plugin is entered
-        # before the engine pointer is dereferenced, so a probe that fails the
-        # handshake stops there and never reads the rest; if it returns true
-        # then the version was accepted and the zero engine is what made it
-        # stop, which is the same reading by a different route.
+        # The source is a file in the repo and not a here-string built in this
+        # step. The first version built it as a powershell string literal, and
+        # the quotes inside its own printf calls closed the literal early: the
+        # step failed to parse its own script text, four steps after anything
+        # to do with the plugin. See scripts/windows/plug_api.c.
         continue-on-error: true
         run: |
           $dir = Join-Path $env:GITHUB_WORKSPACE 'pluginapi'
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           Copy-Item nvmidi.dll (Join-Path $dir 'nvmidi.dll') -Force
-          $body = Get-Content 'scripts\windows\plug_blob.h' -Raw
-          $c = "$body`nint main(int argc, char** argv){`n  static unsigned char b[256]; unsigned int v = (unsigned int)strtoul(argv[1], 0, 10);`n  b[0]=(unsigned char)(v&0xFF); b[1]=(unsigned char)((v>>8)&0xFF); b[2]=(unsigned char)((v>>16)&0xFF); b[3]=(unsigned char)((v>>24)&0xFF);`n  HMODULE h = LoadLibraryA("nvmidi.dll");`n  if(!h){ printf("LoadLibrary failed %lu\n", GetLastError()); return 3; }`n  pfn pm = (pfn)GetProcAddress(h, "plugin_main");`n  printf("plugin_main=%p\n", (void*)pm);`n  if(!pm){ printf("no plugin_main export\n"); return 4; }`n  int r = pm(b);`n  printf("plugin_main returned %d (0=refused version, 1=accepted)\n", r);`n  return 0;`n}`n"
-          Set-Content -Path (Join-Path $dir 'plug_api.c') -Value $c -Encoding ASCII
-          Copy-Item 'scripts\windows\plug_blob.h' (Join-Path $dir 'plug_blob.h') -Force
-          Push-Location $dir
+          Copy-Item 'scripts\windows\plug_api.c'   (Join-Path $dir 'plug_api.c')   -Force
+          Copy-Item 'scripts\windows\plug_blob.h'  (Join-Path $dir 'plug_blob.h')  -Force
           $cc = (Get-Command gcc -ErrorAction SilentlyContinue).Source
-          if (-not $cc) { Write-Host 'no gcc on this runner, so the version cannot be read'; Pop-Location; exit 0 }
+          if (-not $cc) { Write-Host 'no gcc on this runner, so the version cannot be read'; exit 0 }
+          Push-Location $dir
           & $cc -o plug_api.exe plug_api.c -O0
           if ($LASTEXITCODE -ne 0) { Write-Host 'the probe did not compile'; Pop-Location; exit 0 }
-          foreach ($v in 1,2,3,4,5,6,7,8,100,300,400,401) {
+          foreach ($v in 0,1,2,3,4,5,6,7,8,64,100,256,300,400,401,500) {
             Write-Host ("--- claimed api version " + $v + " ---")
             & .\plug_api.exe $v 2>&1 | ForEach-Object { Write-Host ("  " + $_) }
           }

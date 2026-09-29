@@ -25,4 +25,11 @@ typedef struct plug_blob {
     unsigned char rest[252];   // zeroed; only the version is given a value
 } plug_blob;
 
+// One definition in the repo, shared by the probe's own translation unit. The
+// first version of this had the powershell step build the source as a string
+// literal, and the embedded quotes in the printf calls ended the literal early
+// - the step died on a parse error inside its own script text rather than on
+// anything about the plugin. A source file is a source file.
+static plug_blob blob;
+
 #endif
