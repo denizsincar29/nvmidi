@@ -228,7 +228,7 @@ This engine publishes no string factory, so a string returned by a plugin is
 written into memory the engine is not holding a string in. It does not fail
 loudly — it corrupts the process and shows up later as a stack overrun.
 Measured on a windows runner, one process, one second, the same value read both
-ways: the byte path gave `nvmidi/Windows MM`, the string path gave `0u??z`.
+ways: the byte path gave `nvmidi/Windows MultiMedia`, the string path gave `0u??z`.
 
 So every string surface is a pair: a count and an indexed byte.
 
@@ -240,10 +240,23 @@ a name may contain one — so the end of the text stays distinguishable from a
 byte inside it.
 
 ```angelscript
-string s = "";
-for (int i = 0; i < midi_api_name_byte_count(); i++) {
-	s += string(midi_api_name_byte(i));
+// See readme.md - never walk a table with substr() on this engine. In short:
+const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
+const string digits = "0123456789";
+string char_of(uint b) {
+	if (b >= 48 && b <= 57) return digits.substr(b - 48, 1);
+	if (b >= 65 && b <= 90) return byte_letters.substr(b - 65 + 10, 1);
+	if (b >= 97 && b <= 122) return byte_letters.substr(b - 97 + 36, 1);
+	if (b == 47) return "/";
+	if (b == 46) return ".";
+	if (b == 95) return "_";
+	if (b == 45) return "-";
+	if (b == 43) return "+";
+	if (b == 32) return " ";
+	return ".";
 }
+string s = "";
+for (int i = 0; i < midi_api_name_byte_count(); i++) s += char_of(midi_api_name_byte(i));
 ```
 
 Object methods follow the same shape: `get_port_name_byte_count()` /

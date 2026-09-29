@@ -282,7 +282,7 @@ holding a string in. It does not fail loudly; it corrupts the process, and
 surfaces later as a stack overrun. Measured on a windows runner in one process,
 in the same second, reading the same value both ways:
 
-    byte path    nvmidi/Windows MM   (25 bytes, exact)
+    byte path    nvmidi/Windows MultiMedia  (25 bytes, exact)
     string path  0u??z               (garbage)
 
 So the rule for this plugin: **integers cross the boundary, strings do not.**
@@ -299,16 +299,39 @@ be distinguishable from a byte inside it.
 Read it back into a script string like this:
 
 ```angelscript
+// A whole byte back as one character. Read only the two ranges this engine
+// reads correctly - measured, find("1") is 1 and find("A") is 10 - and name the
+// punctuation a backend name is made of one byte at a time. Never walk a table
+// with substr(): measured, index 32 answers 'W', index 65 answers '-', and
+// substr(67, 1) is already empty on a literal whose length() is 68. Bounds are
+// numbers, not character literals - `b >= '0'` does not compile here.
+const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
+const string digits = "0123456789";
+string char_of(uint b) {
+	if (b >= 48 && b <= 57) return digits.substr(b - 48, 1);
+	if (b >= 65 && b <= 90) return byte_letters.substr(b - 65 + 10, 1);
+	if (b >= 97 && b <= 122) return byte_letters.substr(b - 97 + 36, 1);
+	if (b == 47) return "/";
+	if (b == 46) return ".";
+	if (b == 95) return "_";
+	if (b == 45) return "-";
+	if (b == 43) return "+";
+	if (b == 32) return " ";
+	return ".";
+}
+
 string bytes_of_api_name() {
 	string s = "";
 	for (int i = 0; i < midi_api_name_byte_count(); i++) {
-		s += string(midi_api_name_byte(i));
+		s += char_of(midi_api_name_byte(i));
 	}
 	return s;
 }
 
 screen_reader_speak("MIDI backend: " + bytes_of_api_name());
 ```
+
+Every `examples/*.nvgt` file carries this helper; copy the one you need.
 
 The shape is the same everywhere. Where a global has a pair, `midi_api_name`
 above does; where an object method does, it is spelled `get_port_name_byte_count()`

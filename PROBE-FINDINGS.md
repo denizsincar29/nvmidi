@@ -47,7 +47,7 @@ This is the decisive one, and the reason this file is short. One process read
 the api name through both paths:
 
     byte path    110118109105100105478710511010011111911532771171081161057710110010597
-                 → nvmidi/Windows MM      (25 bytes, exact)
+                 → nvmidi/Windows MultiMedia  (25 bytes, exact)
 
     string path  PROBE_API_STR 0u??z     (garbage)
 
@@ -73,3 +73,55 @@ must be re-measured rather than trusted either way.
 
 See the readme section "Strings arrive as bytes" for the four-line script-side
 helper that reassembles the text, where the engine's own strings are intact.
+
+## substr() on a literal, and what the byte path cost to find (measured 2026-09-29)
+
+The byte protocol was never the fault. The backend name the plugin hands over
+is right, and the runner now rebuilds it exactly:
+
+    E2E_API_TEXT nvmidi/Windows MultiMedia
+    E2E_API_FIND_WINDOWS 7
+
+What was wrong was the test harness rebuilding a string out of those bytes, in
+three successive ways, each measured rather than argued:
+
+    string(byte)                gives the decimal digits: a 25 byte name came
+                                back as "110118109105100105...".
+    byte_letters.substr(b, 1)   is not the character at b. Measured on a 68
+                                character literal: index 32 answers 'W', index
+                                65 answers '-', index 47 answers 'l', and
+                                substr(67, 1) is empty although length() is 68.
+                                So in-range reads give wrong characters, above
+                                roughly the midpoint they give nothing, and the
+                                last character is unreachable. The offsets are
+                                not a constant (32→'W' and 65→'-' are different
+                                shifts), so the mechanism is still UNMEASURED
+                                and is not claimed anywhere in the code.
+    byte_letters.find(one)      was blamed for answering 0 for every character.
+                                That blame was wrong. Measured: find() answers 1
+                                for "1", 10 for "A", 62 for "/", and -1 for a
+                                miss. It was never the fault.
+
+The fix that works is not a lookup at all: a branch over the byte, reading only
+the first ten and first twenty six characters of a literal (the two ranges this
+engine does read correctly, find("1")=1 and find("A")=10), and returning the
+punctuation a backend name is made of one byte at a time.
+
+### Engine facts learned on the way
+
+    `b >= '0'`                  "No conversion from 'const string' to math type
+                                available" - a character literal is a one
+                                character string, not a code. Every bound in the
+                                conversion is the number.
+    int x[25] = {...}           "Expected '('" / "Instead found identifier" - a
+                                sized array with an initialiser list on one line
+                                is rejected. Fill it one element at a time.
+    find()                      index for a hit, -1 for a miss, 0 for the empty
+                                needle: sound.
+    probe stdout                lands in the JOB LOG, not in the uploaded
+                                artifact. Engine prints carry no trailing
+                                newline, so a probe's output has to be split on
+                                its own markers, not on lines.
+    PowerShell                  Get-Content -Raw on an empty file answers $null
+                                and a method call on $null kills the step:
+                                guard with `.Trim().Length -gt 0`.

@@ -5,7 +5,7 @@
 // answered a larger question than it asked: one process read the api name both
 // ways, in the same second, and got
 //
-//     byte path    nvmidi/Windows MM   (25 bytes, exact)
+//     byte path    nvmidi/Windows MultiMedia  (25 bytes, exact)
 //     string path  0u??z               (garbage)
 //
 // so the fault is not in RtMidi and not in this plugin's own string building.
