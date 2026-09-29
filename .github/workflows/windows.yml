@@ -30,22 +30,6 @@ jobs:
       - name: build
         shell: cmd
         run: mingw32-make
-      # The driver is uploaded before the dll on purpose, and the order is the
-      # whole reason this build step sits here rather than at the end.
-      #
-      # The e2e job needs the upload step to have already *run*, and a step
-      # that has not been reached is not on the artifact api at all: the
-      # download there does not wait for it, it asks, is told no, and fails.
-      # Two jobs start together, so an upload scheduled after a seven minute
-      # nvgt download loses that race every time - which is how this test
-      # reported "artifact not found" for an artifact that was uploaded, valid
-      # and unexpired the entire time.
-      #
-      # So the driver is built and shipped first, ahead of everything that can
-      # take minutes, and the e2e downloads it at the top of its own job. The
-      # upload now happens about eight seconds into the run, which the e2e
-      # cannot beat because fetching nvgt and building the plugin precede it
-      # on its side.
       - name: build the loopback driver
         shell: bash
         # -o puts the dll where the artifact upload and the e2e's staged copy
@@ -80,6 +64,15 @@ jobs:
 
   e2e:
     runs-on: windows-latest
+    # needs, and not runs-on alone: the driver arrives as an artifact of *this*
+    # run's build job, and a download started before that job has reached its
+    # upload step is answered "artifact not found" rather than made to wait.
+    # Jobs queued by one push start together, so without this the e2e asked for
+    # the driver 54 seconds before the build uploaded it - three runs in a row,
+    # each reporting as missing an artifact that was valid and unexpired the
+    # whole time. The build job is about a minute; serialising on it costs that
+    # minute and buys a hand-off that cannot race.
+    needs: build
     # Reading a release asset of the nvgt repository is what fetches the
     # engine, and the token that can do that is the run's own. The default for
     # a repository created before this line existed is read everywhere, but
@@ -97,6 +90,11 @@ jobs:
       # at the path the build job uploaded it from, which is the path the
       # staging step below reads - one path, written down once, rather than a
       # copy that has to be kept in step by hand.
+      #
+      # This is the first step of a job that waits for the build job, so the
+      # artifact is on the api by construction and not by timing. That is the
+      # point of the wait: the failure this replaced was a download that ran
+      # first and read a real artifact's absence.
       - name: fetch the loopback driver
         uses: actions/download-artifact@v4
         with:
