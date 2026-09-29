@@ -85,7 +85,7 @@ void main() {
 	print("PROBE_API_BYTES " + an);
 	string api = "";
 	for (int i = 0; i < an && i < 128; i++) {
-		api += char_of(midi_api_name_byte(i));
+		int b = midi_api_name_byte(i); api += char_of(b);
 	}
 	print("PROBE_API_TEXT " + api);
 	print("PROBE_END");

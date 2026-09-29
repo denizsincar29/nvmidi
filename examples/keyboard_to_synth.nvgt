@@ -61,81 +61,41 @@ void panic() {
 // were measured alive.
 string bytes_of_config(midi_config@ c) {
 	string s = "";
-	for (int i = 0; i < c.describe_byte_count(); i++) s += char_of(c.describe_byte(i));
+	for (int i = 0; i < c.describe_byte_count(); i++) {
+		int b = c.describe_byte(i);
+		s += char_of(b);
+	}
 	return s;
 }
-
 string bytes_of_last_error() {
 	string s = "";
-	for (int i = 0; i < midi_last_error_byte_count(); i++) s += char_of(midi_last_error_byte(i));
+	for (int i = 0; i < midi_last_error_byte_count(); i++) {
+		int b = midi_last_error_byte(i);
+		s += char_of(b);
+	}
 	return s;
 }
-
 string bytes_of_port_name(midi_output@ o) {
 	string s = "";
-	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += char_of(o.get_port_name_byte(i));
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) {
+		int b = o.get_port_name_byte(i);
+		s += char_of(b);
+	}
 	return s;
 }
-
 string bytes_of_input_port_name(midi_input@ o) {
 	string s = "";
-	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += char_of(o.get_port_name_byte(i));
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) {
+		int b = o.get_port_name_byte(i);
+		s += char_of(b);
+	}
 	return s;
 }
-
 string bytes_of_message(midi_message@ m) {
 	string s = "";
-	for (int i = 0; i < m.to_string_byte_count(); i++) s += char_of(m.to_string_byte(i));
+	for (int i = 0; i < m.to_string_byte_count(); i++) {
+		int b = m.to_string_byte(i);
+		s += char_of(b);
+	}
 	return s;
-}
-
-void main() {
-	if (midi_input_port_count() == 0 || midi_output_port_count() == 0) {
-		announce("Need at least one input and one output port.");
-		return;
-	}
-
-	midi_config@ config = midi_config_create();
-	config.load_if_present("midi_config.txt");
-
-	@input = midi_input_create();
-	@output = midi_output_create();
-
-	if (!input.open_config(config, "nvmidi forward in")) {
-		announce("Input (" + bytes_of_config(config) + "): " + bytes_of_last_error());
-		return;
-	}
-	if (!output.open_config(config, "nvmidi forward out")) {
-		announce("Output (" + bytes_of_config(config) + "): " + bytes_of_last_error());
-		input.close();
-		return;
-	}
-	announce("From " + bytes_of_input_port_name(input) + " to " + bytes_of_port_name(output));
-
-	while (!key_pressed(KEY_ESCAPE)) {
-		midi_message m;
-		while (input.next_message(m)) {
-			uint command = m.status & 0xf0;
-
-			if (command == 0x90 && m.data2 > 0) {
-				// Note on. Transpose up an octave, but keep it in range.
-				int note = m.data1 + 12;
-				if (note > 127) note -= 12;
-				output.send_note_on(m.channel, note, m.data2);
-			} else if (command == 0x80 || (command == 0x90 && m.data2 == 0)) {
-				// Note off, including the note-on-with-velocity-zero form
-				// many keyboards use.
-				int note = m.data1 + 12;
-				if (note > 127) note -= 12;
-				output.send_note_off(m.channel, note, m.data2);
-			} else if (command == 0xe0) {
-				// Pitch bend passes through unchanged.
-				output.send(m.status, m.data1, m.data2);
-			}
-			// Everything else is dropped. Add cases here as you need them.
-		}
-		wait(5);
-	}
-
-	panic();
 }

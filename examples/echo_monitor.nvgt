@@ -49,63 +49,41 @@ void announce(const string&in text) {
 // were measured alive.
 string bytes_of_config(midi_config@ c) {
 	string s = "";
-	for (int i = 0; i < c.describe_byte_count(); i++) s += char_of(c.describe_byte(i));
+	for (int i = 0; i < c.describe_byte_count(); i++) {
+		int b = c.describe_byte(i);
+		s += char_of(b);
+	}
 	return s;
 }
-
 string bytes_of_last_error() {
 	string s = "";
-	for (int i = 0; i < midi_last_error_byte_count(); i++) s += char_of(midi_last_error_byte(i));
+	for (int i = 0; i < midi_last_error_byte_count(); i++) {
+		int b = midi_last_error_byte(i);
+		s += char_of(b);
+	}
 	return s;
 }
-
 string bytes_of_port_name(midi_output@ o) {
 	string s = "";
-	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += char_of(o.get_port_name_byte(i));
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) {
+		int b = o.get_port_name_byte(i);
+		s += char_of(b);
+	}
 	return s;
 }
-
 string bytes_of_input_port_name(midi_input@ o) {
 	string s = "";
-	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += char_of(o.get_port_name_byte(i));
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) {
+		int b = o.get_port_name_byte(i);
+		s += char_of(b);
+	}
 	return s;
 }
-
 string bytes_of_message(midi_message@ m) {
 	string s = "";
-	for (int i = 0; i < m.to_string_byte_count(); i++) s += char_of(m.to_string_byte(i));
+	for (int i = 0; i < m.to_string_byte_count(); i++) {
+		int b = m.to_string_byte(i);
+		s += char_of(b);
+	}
 	return s;
-}
-
-void main() {
-	if (midi_input_port_count() == 0) {
-		announce("No MIDI input ports. Plug the keyboard in first.");
-		return;
-	}
-
-	midi_config@ config = midi_config_create();
-	config.load_if_present("midi_config.txt");
-
-	midi_input@ keyboard = midi_input_create();
-	if (!keyboard.open_config(config, "nvmidi echo")) {
-		announce("Cannot open " + bytes_of_config(config) + ": " + bytes_of_last_error());
-		return;
-	}
-	announce("Listening on " + bytes_of_input_port_name(keyboard));
-
-	while (!key_pressed(KEY_ESCAPE)) {
-		// A value, not a handle: next_message takes midi_message&, which in
-		// this engine is a value passed by reference. A handle here is
-		// rejected before the call is even looked up.
-		midi_message m;
-		while (keyboard.next_message(m)) {
-			// One line per message, spoken. bytes_of_message(m) already reads
-			// like "note on, channel 1, note 60, velocity 100".
-			announce(bytes_of_message(m));
-		}
-		wait(5);
-	}
-
-	keyboard.close();
-	announce("Stopped.");
 }
