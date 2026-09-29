@@ -42,7 +42,7 @@ jobs:
         # compile problem that does not exist, which is worse than an error.
         run: bash tools/winmm_loopback/build.sh -o tools/winmm_loopback/nvmidi.dll
 
-      - name: what api version did the engine hand the plugin
+      - name: what api version was the plugin compiled against
         shell: pwsh
         # The e2e's script-side names are all refused and the plugin's stderr
         # is empty in every run, so the register loop cannot be reached with a
@@ -50,14 +50,24 @@ jobs:
         # NVGT_PLUGIN_API_VERSION and returns false on any mismatch; the plugin
         # then prints one line naming both numbers. That line is not in the
         # artifact, which is ambiguous - the handshake failed and the line was
-        # lost, or the version matched and the loop was reached. This prints
-        # the number itself, before the engine is asked anything.
+        # lost, or the version matched and the loop was reached. This reads the
+        # compiled-in number straight off the dll, before the engine is asked
+        # anything.
+        #
+        # It asks nvgt_plugin_version, not the entry point. The exported entry
+        # symbol is nvgt_plugin (src/nvgt_plugin.h:148), so a lookup of
+        # plugin_main only ever returns NULL - the first cut of this probe did
+        # exactly that and would have reported "no export" for a dll exporting
+        # the right one. And nvgt_plugin_version (line 149) returns the number
+        # directly with no arguments, where calling the entry point meant
+        # fabricating a plugin-shared struct and reading a bool out of a call
+        # that faults on a null thread manager. See scripts/windows/plug_api.c.
         #
         # The source is a file in the repo and not a here-string built in this
         # step. The first version built it as a powershell string literal, and
         # the quotes inside its own printf calls closed the literal early: the
         # step failed to parse its own script text, four steps after anything
-        # to do with the plugin. See scripts/windows/plug_api.c.
+        # to do with the plugin.
         continue-on-error: true
         run: |
           $dir = Join-Path $env:GITHUB_WORKSPACE 'pluginapi'
@@ -70,10 +80,7 @@ jobs:
           Push-Location $dir
           & $cc -o plug_api.exe plug_api.c -O0
           if ($LASTEXITCODE -ne 0) { Write-Host 'the probe did not compile'; Pop-Location; exit 0 }
-          foreach ($v in 0,1,2,3,4,5,6,7,8,64,100,256,300,400,401,500) {
-            Write-Host ("--- claimed api version " + $v + " ---")
-            & .\plug_api.exe $v 2>&1 | ForEach-Object { Write-Host ("  " + $_) }
-          }
+          & .\plug_api.exe 2>&1 | ForEach-Object { Write-Host ("  " + $_) }
           Pop-Location
 
       - name: does the driver publish a port

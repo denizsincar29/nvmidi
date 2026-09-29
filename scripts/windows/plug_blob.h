@@ -1,18 +1,21 @@
-// A stand-in for whatever the engine hands plugin_main, used only to ask the
-// plugin one question: which api version does it accept?
+// A stand-in for whatever the engine hands a plugin's entry point.
 //
-// This is not a declaration of nvgt's real plugin-shared struct and does not
-// pretend to be. It is a locally defined prefix: the version field, which
-// prepare_plugin reads first, and enough zeroed space behind it that the lane
-// the engine really uses is not narrower than what the plugin was built
-// against. If prepare_plugin accepts the version it proceeds to the engine
-// pointer, which is zero here, and stops - and that stop is itself the answer,
-// because it could only be reached by a version the plugin agreed with.
+// Nothing includes this any more. It was written for a probe that called the
+// entry point once per candidate version with this struct in hand, and that
+// probe no longer calls the entry point at all: src/nvgt_plugin.h exports
+// nvgt_plugin_version(), which returns the compiled-in api version directly,
+// so the question is answered by a zero-argument call rather than by handing
+// the plugin a fabricated struct and reading the bool that comes back.
 //
-// The size is deliberately larger than the engine's own struct. The call is
-// made by this probe, so nothing the plugin writes here can reach a caller:
-// the danger with a too-small stand-in is a plugin that writes past the end of
-// it, and there is no reason to accept that risk to ask a one-word question.
+// It stays in the tree only because removing it and the line that copies it
+// into the probe directory is part of the same cleanup as removing the probe
+// itself. Do not build anything on it.
+//
+// Two things it got wrong, recorded so the next reader does not repeat them:
+// the plugin's exported symbol is nvgt_plugin, not plugin_main; and a version
+// the plugin accepts does not stop at the script_engine pointer, because
+// prepare_plugin calls asPrepareMultithread(shared->script_thread_manager)
+// before it returns.
 #ifndef NVMIDI_PLUG_BLOB_H
 #define NVMIDI_PLUG_BLOB_H
 
