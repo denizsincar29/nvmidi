@@ -62,14 +62,27 @@ string hex_of(const string&in s) {
 
 void main() {
 	print("PROBE_BEGIN");
+	// Nothing between this line and PROBE_END may read the string's length,
+	// walk its characters, or copy it into another string.
+	//
+	// Measured, on the runner, twice. A probe that did all three died with
+	// exit code -1073740791 (0xC0000409, STATUS_STACK_BUFFER_OVERRUN) before
+	// its second print, and the e2e script - which concatenates the same
+	// value into "E2E_OK LOADED " + api and then stops - survived that one
+	// concatenation and produced garbage on both sides of it. A value whose
+	// length is not a length explains both: heap reads run off the end of the
+	// buffer and the copy writes as much as it was told.
+	//
+	// So the value is printed raw and alone. print() of a single string does
+	// not consult the length in this engine - the e2e script prints "E2E_BEGIN"
+	// and other bare literals with no arithmetic anywhere - and if that is
+	// wrong too, the crash moves up one line and says so.
 	string api = midi_api_name();
-	print("PROBE_MARKER " + api);
-	print("PROBE_RAW |" + api + "|");
-	print("PROBE_HEX " + hex_of(api));
-	print("PROBE_LEN " + api.length());
-	// nvgt_plugin_version() was called here and is not a symbol this engine
-	// has - "ERROR: No matching symbol 'nvgt_plugin_version'" on the runner,
-	// which cost the probe a third run. The engine's export list is its own;
-	// the api name is what this file was written to read.
+	print(api);
+	// `api` is deliberately never mentioned again below this point.
 	print("PROBE_END");
+	// nvgt_plugin_version() was tried here and is not a symbol this engine has
+	// - "ERROR: No matching symbol 'nvgt_plugin_version'", measured on the
+	// runner, which cost the probe a third run. The engine's export list is
+	// its own, and the api name is what this file was written to read.
 }
