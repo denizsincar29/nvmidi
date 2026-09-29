@@ -877,7 +877,7 @@ jobs:
           # so a compile failure shows up here as a line the job log has been
           # carrying all along and nothing has read.
           $probeSrc = Join-Path $env:GITHUB_WORKSPACE 'scripts\windows'
-          foreach ($case in @('c_handle', 'i_var', 'j_pragma', 'e2e_min', 'e2e_types', 'a_bare', 'b_decl', 'd_call', 'e_call', 'f_open', 'g_float')) {
+          foreach ($case in @('c_handle', 'e2e_min', 'i_var', 'j_pragma', 'e2e_types', 'a_bare', 'b_decl', 'd_call', 'e_call', 'f_open', 'g_float')) {
             $p2src  = Join-Path $probeSrc "$case.nvgt"
             $p2log  = Join-Path $env:GITHUB_WORKSPACE "$case.log"
             $p2err  = "$p2log.err"
@@ -900,6 +900,15 @@ jobs:
             if (Test-Path $p2err) { $err2 = (Get-Content $p2err -Raw); if ($null -eq $err2) { $err2 = '' } }
             Write-Host "--- $case ---"
             Write-Host ("exit {0} (0x{1:X8}) after {2:N1}s, stdout {3} bytes, stderr {4} bytes" -f $c2, ($c2 -band 0xFFFFFFFF), $sec2, $out.Length, $err2.Length)
+            # A script that threw out of the engine and a script that returned
+            # cleanly are allowed to look identical here: the runner reports
+            # the exit code and the job reads 0 as a pass. winmm_open_probe has
+            # not been seen in the log since the probe loop was reordered, and
+            # the two candidates - silenced before its first call, or exited on
+            # an exception nobody caught - are not distinguishable from the
+            # exit code alone. What the engine printed is the difference, so it
+            # is stated rather than left to be inferred from a buffer size.
+            if ($c2 -eq 0 -and $out.Length -eq 0) { Write-Host "::warning::$case exited 0 and printed nothing at all, so this run cannot say whether it ran or was cut short" }
             # Printed verbatim and unfiltered on purpose. This is the one place
             # in the job where the engine speaks for itself, and the whole step
             # exists because that speech was being paraphrased by greps.

@@ -350,14 +350,17 @@ void main() {
 	// the text is read at all.
 	// Printed before the bytes are read, not after.
 	//
-	// The line below the old order read the name one byte per call through
-	// char_of(), and char_of() is midi_api_name_byte in the plugin: it crosses
-	// the engine's own call boundary. Measured on the runner, that boundary is
-	// what takes the process down - a six line script whose only fault is a
-	// string literal ahead of a handle declaration dies on its first call with
-	// no output buffered, while the identical script without the call runs. So
-	// the marker is a separate print, first in this block, and every reading
-	// after it is a line the job can lose rather than a block it never sees.
+	// The first report this script ever made came after a loop that reads the
+	// backend name one byte per call through char_of(), which is
+	// midi_api_name_byte in the plugin - a call across the engine's own
+	// boundary. Every probe in this repository that has ever produced zero
+	// bytes of output made a call at load; everything that printed a line or
+	// exited without one had printed before its first call, or made none.
+	//
+	// So the marker goes first, and it is one line, so that what follows is a
+	// reading that can be lost instead of a block that is never seen: the
+	// whole of the script's output so far has been nothing at all, from 28KB
+	// of script, with the boundary between them unattributed.
 	print("E2E_LOADED_MARKER");
 	string api = "";
 	for (int i = 0; i < API_BYTES; i++) api += char_of(midi_api_name_byte(i));
