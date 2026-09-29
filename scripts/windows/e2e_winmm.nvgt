@@ -292,12 +292,20 @@ void main() {
 	//
 	//   "ndows"[k]                a compile error - indexing a string does not
 	//                             give a number
-	//   byte_letters.find(one)    answers 0 for every character, match or not
-	//                             (probed: find("Q") on a literal with no Q in
-	//                             it answers -1, so the call itself is sound
-	//                             and it was the one-character string handed
-	//                             to it that was not)
-	//   char_of(c).find(one)      same, for the same reason
+	//   byte_letters.find(one)    was blamed for answering 0 for every
+	//                             character, and that blame was wrong: probed
+	//                             on the runner, find("Q") on a literal with no
+	//                             Q in it answers -1, tbl.find("~") answers -1
+	//                             and tail.substr(0,1) has length 1 and equals
+	//                             "n". find() was never the fault.
+	//   char_of(c).find(one)      same call, same non-fault
+	//
+	// What the same probe did leave standing is char_of() itself: the control
+	// beside this block renders its text and answers find("87") with 0, while
+	// the string built from the plugin's bytes is wrong character for
+	// character. The conversion is the fault, so the next run asks about the
+	// conversion directly (scripts/windows/char_of_probe.nvgt) instead of
+	// asking about the search.
 	//
 	// What is left is the form that was never in doubt: find() on an argument
 	// long enough to be a real substring. It answers with an index or -1,

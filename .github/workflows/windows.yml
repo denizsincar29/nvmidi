@@ -262,7 +262,7 @@ jobs:
         continue-on-error: true
         run: |
           $exe = Join-Path $env:NVGT_DIR 'nvgt.exe'
-          foreach ($name in @('probe_api_name', 'char_at_probe')) {
+          foreach ($name in @('probe_api_name', 'char_at_probe', 'char_of_probe')) {
             $src = Join-Path $env:GITHUB_WORKSPACE "scripts/windows/$name.nvgt"
             $log = Join-Path $env:GITHUB_WORKSPACE "$name.out"
             Write-Host "=== $name ==="

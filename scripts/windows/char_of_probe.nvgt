@@ -1,0 +1,59 @@
+// char_of_probe.nvgt - what does the table lookup actually hand back?
+//
+// Three runs have now put the whole fault in one place. The plugin's 25 bytes
+// arrive correct (the job decodes them itself), the loop that walks them is
+// correct (a control built from literals in the same loop prints perfectly and
+// its find() answers 0), and the text built from the bytes is wrong character
+// for character. So the only step left unwatched is char_of() itself: the
+// conversion from the number 110 to the letter n.
+//
+// This file watches that one step and nothing else. It does not read the
+// plugin, so every number below is an engine fact and never a plugin one.
+//
+// The question is not "does substr work" - it is "what does this engine do
+// when the index is in range and when it is not", because the table is 68
+// characters long and the bytes run from 32 to 119.
+const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
+string char_of(uint b) {
+	if (b < byte_letters.length()) return byte_letters.substr(b, 1);
+	return "?";
+}
+
+void main() {
+	print("CO_BEGIN");
+	print("CO_TABLE_LEN " + byte_letters.length());
+
+	// The same function, copied from the e2e script, on the bytes that spell
+	// the backend name. Each line is one number, the character it should be,
+	// and the character this engine hands back.
+	print("CO_110 " + char_of(110));
+	print("CO_118 " + char_of(118));
+	print("CO_47 " + char_of(47));
+	print("CO_87 " + char_of(87));
+	print("CO_119 " + char_of(119));
+	print("CO_32 " + char_of(32));
+	print("CO_65 " + char_of(65));
+	print("CO_97 " + char_of(97));
+
+	// The same number asked three ways, so a fault in the lookup, in the
+	// guard, or in the printing can be told apart. If these three disagree,
+	// the guard is the one that is wrong.
+	print("CO_110_LEN " + char_of(110).length());
+	print("CO_110_EQ_N " + (char_of(110) == "n"));
+	print("CO_110_FROM_TABLE " + byte_letters.substr(110, 1));
+	print("CO_110_FROM_LITERAL n");
+
+	// The boundary. 67 is the last index in the table; 68 is the first one
+	// past it, and it is where the guard starts answering "?".
+	print("CO_TBL_67 " + byte_letters.substr(67, 1));
+	print("CO_TBL_68 " + byte_letters.substr(68, 1));
+	print("CO_TBL_68_LEN " + byte_letters.substr(68, 1).length());
+	print("CO_BOUNDARY_67 " + char_of(67));
+	print("CO_BOUNDARY_68 " + char_of(68));
+
+	// And the last form the e2e script used to classify the backend, on the
+	// number 110 - the first letter of the name. Measured, not reasoned.
+	print("CO_FIND " + byte_letters.find(char_of(110)));
+
+	print("CO_END");
+}
