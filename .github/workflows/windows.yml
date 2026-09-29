@@ -601,15 +601,6 @@ jobs:
               $err = Get-Content "$log.err" -Raw
               if ($err -and $err.Trim().Length -gt 0) { Write-Host '--- stderr ---'; Write-Host $err }
           }
-          # The engine's own stdout, unfiltered, for the script that has
-          # been dying at load. It is the only file whose first byte would
-          # be the plugin's, and the probes above never touch it.
-          $realDump = Join-Path $env:GITHUB_WORKSPACE 'logs_e2e.txt'
-          if (Test-Path $realDump) {
-            $rd = Get-Content $realDump -Raw
-            if ($null -eq $rd) { $rd = '' }
-            Write-Host ("--- logs_e2e.txt: {0} bytes ---" -f (Get-Item $realDump).Length)
-            if ($rd.Length -gt 0) { Write-Host $rd }
             }
           }
 
@@ -920,6 +911,20 @@ jobs:
             }
             if ($out.Trim().Length -gt 0) { Write-Host "stdout:"; Write-Host $out }
             if ($err2.Trim().Length -gt 0) { Write-Host "stderr:"; Write-Host $err2 }
+          }
+          # The engine's own stdout, unfiltered, for the script that has
+          # been dying at load. It is the only file whose first byte would
+          # be the plugin's, and the probes above never touch it. It has to
+          # stand inside the step's own block: written one level out it
+          # still parses and still runs, but the step ends early and the
+          # output is discarded - which is how this block printed nothing
+          # on the run it was added for, while every probe around it spoke.
+          $realDump = Join-Path $env:GITHUB_WORKSPACE 'logs_e2e.txt'
+          if (Test-Path $realDump) {
+            $rd = Get-Content $realDump -Raw
+            if ($null -eq $rd) { $rd = '' }
+            Write-Host ("--- logs_e2e.txt: {0} bytes ---" -f (Get-Item $realDump).Length)
+            if ($rd.Length -gt 0) { Write-Host $rd }
           }
 
       - name: report the port index the script enumerated
