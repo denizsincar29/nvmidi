@@ -509,7 +509,9 @@ void main() {
 	// value variable being asked for, and there is no value form to give it.
 	// The handle spelling is the one that carries a reference, so it is the
 	// one written here.
+	print("E2E_BEFORE_CREATE");
 	midi_output@ port = midi_output_create();
+	print("E2E_AFTER_CREATE");
 	if (!port.open(chosen, "nvmidi e2e windows")) {
 		// The numbers first, then the text, because the text is the half that
 		// has been measured wrong twice on this runner - once as the decimal
