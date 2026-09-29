@@ -600,6 +600,16 @@ jobs:
             if (Test-Path "$log.err") {
               $err = Get-Content "$log.err" -Raw
               if ($err -and $err.Trim().Length -gt 0) { Write-Host '--- stderr ---'; Write-Host $err }
+          }
+          # The engine's own stdout, unfiltered, for the script that has
+          # been dying at load. It is the only file whose first byte would
+          # be the plugin's, and the probes above never touch it.
+          $realDump = Join-Path $env:GITHUB_WORKSPACE 'logs_e2e.txt'
+          if (Test-Path $realDump) {
+            $rd = Get-Content $realDump -Raw
+            if ($null -eq $rd) { $rd = '' }
+            Write-Host ("--- logs_e2e.txt: {0} bytes ---" -f (Get-Item $realDump).Length)
+            if ($rd.Length -gt 0) { Write-Host $rd }
             }
           }
 
