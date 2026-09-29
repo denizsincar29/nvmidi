@@ -497,7 +497,19 @@ void main() {
 	ok("CHOSEN " + chosen_name);
 
 	// --- open it ------------------------------------------------------------
-	midi_output port = midi_output_create();
+	// The declaration is written as a handle and the call is written nowhere:
+	// the factory's result goes straight into the initialiser as a temporary
+	// handle, and never stands on its own as an expression of its own type.
+	//
+	// Why, in this run's own words. Run 36641660906 reached this line and the
+	// engine said "Data type can't be 'midi_output'". That is not the parse
+	// error the port declarations produced - this is a type, and the refusal
+	// is about the *declaration*, not the spelling. asOBJ_NOCOUNT gives the
+	// type no refcount and no constructor, so an initialised declaration is a
+	// value variable being asked for, and there is no value form to give it.
+	// The handle spelling is the one that carries a reference, so it is the
+	// one written here.
+	midi_output@ port = midi_output_create();
 	if (!port.open(chosen, "nvmidi e2e windows")) {
 		// The numbers first, then the text, because the text is the half that
 		// has been measured wrong twice on this runner - once as the decimal
