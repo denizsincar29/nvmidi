@@ -30,6 +30,22 @@ jobs:
       - name: build
         shell: cmd
         run: mingw32-make
+      # The driver is uploaded before the dll on purpose, and the order is the
+      # whole reason this build step sits here rather than at the end.
+      #
+      # The e2e job needs the upload step to have already *run*, and a step
+      # that has not been reached is not on the artifact api at all: the
+      # download there does not wait for it, it asks, is told no, and fails.
+      # Two jobs start together, so an upload scheduled after a seven minute
+      # nvgt download loses that race every time - which is how this test
+      # reported "artifact not found" for an artifact that was uploaded, valid
+      # and unexpired the entire time.
+      #
+      # So the driver is built and shipped first, ahead of everything that can
+      # take minutes, and the e2e downloads it at the top of its own job. The
+      # upload now happens about eight seconds into the run, which the e2e
+      # cannot beat because fetching nvgt and building the plugin precede it
+      # on its side.
       - name: build the loopback driver
         shell: bash
         # -o puts the dll where the artifact upload and the e2e's staged copy
@@ -42,12 +58,6 @@ jobs:
         # compile problem that does not exist, which is worse than an error.
         run: bash tools/winmm_loopback/build.sh -o tools/winmm_loopback/nvmidi-loopback.exe
 
-      # The driver has to reach the e2e job, which runs on a different runner:
-      # nothing the build job leaves on disk is visible there. The artifact is
-      # that hand-off, and every job below that runs after this one downloads
-      # it into the workspace at the same path, so the file the e2e stages is
-      # the file this step built rather than a copy that has to be kept in step
-      # by hand.
       - name: keep the driver next to the dll
         uses: actions/upload-artifact@v4
         with:
@@ -55,6 +65,12 @@ jobs:
           path: tools/winmm_loopback/nvmidi-loopback.exe
           if-no-files-found: error
 
+      # The driver has to reach the e2e job, which runs on a different runner:
+      # nothing the build job leaves on disk is visible there. The artifact is
+      # that hand-off, and every job below that runs after this one downloads
+      # it into the workspace at the same path, so the file the e2e stages is
+      # the file this step built rather than a copy that has to be kept in step
+      # by hand.
       - name: keep the dll
         uses: actions/upload-artifact@v4
         with:
