@@ -571,11 +571,26 @@ static DWORD WINAPI publish_thread(LPVOID unused) {
 		return 0;
 	}
 	wcsncpy(slot, g_slot, 31);
+	// Which slot, before it is opened. g_slot is filled under the loader lock
+	// and read here, so a slot name that never made it across is a separate
+	// finding from an OpenDriver that was refused; the line that reports the
+	// open names the slot too, but only if the thread survives that far.
+	{
+		char got[64] = { 0 };
+		WideCharToMultiByte(CP_ACP, 0, slot, -1, got, sizeof(got) - 1, NULL, NULL);
+		char line[128];
+		snprintf(line, sizeof(line), "LOOPBACK_STATUS=slot=%s inputs_before=%u", got,
+			(unsigned int)midiInGetNumDevs());
+		write_status(line);
+	}
 	// winmm loads the dll fresh from the registry - a second image of this same
 	// file, in this same process. OpenDriver is what starts it. The name goes
 	// over as UTF-16, which is what the declaration asks for by its LPCWSTR.
-	g_inputs_before = midiInGetNumDevs();
+	// g_inputs_before was read with the slot line above; the count cannot move
+	// between two statements in the same thread.
+	write_status("LOOPBACK_STATUS=calling-opendriver");
 	HDRVR h = OpenDriver(slot, NULL, 0);
+	write_status("LOOPBACK_STATUS=opendriver-returned");
 	// -1 is not a failure here. winmm answers a driver that is already open
 	// with a handle of -1 rather than opening a second one, and the previous
 	// image in this same process still holds the device: the earlier load is
