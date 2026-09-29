@@ -1823,12 +1823,15 @@ void register_midi_message(asIScriptEngine* engine, registration* reg) {
 }
 
 void register_midi_input(asIScriptEngine* engine, registration* reg) {
-	// A handle type. The script names the type only to declare a handle to it
-	// (midi_input@ in = midi_input_create()) and never constructs one, so the
-	// class needs to be known to the compiler but does not need to name any
-	// size to it. The flag is asOBJ_REF; there is no factory, so the type
-	// cannot be instantiated from a script, and it is not meant to be.
-	reg->check( engine->RegisterObjectType("midi_input", sizeof(midi_input), asOBJ_REF), "RegisterObjectType", __LINE__);
+	// A handle type. asOBJ_REF alone is not enough and run 36640089846 said so
+	// in the engine's own words: "Type 'midi_input' is missing behaviours ...
+	// A reference type must have the addref and release behaviours". Every
+	// type in this plugin had asOBJ_NOCOUNT dropped in that run and every one
+	// of the four came back with that error, so the flag is not a candidate -
+	// it is required, and the four registrations below carry it for that
+	// reason. Size 0, and not sizeof: the two types measured to declare
+	// cleanly in run 36638827355 were the two registered at 0.
+	reg->check( engine->RegisterObjectType("midi_input", 0, asOBJ_REF | asOBJ_NOCOUNT), "RegisterObjectType", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool open(uint port, const string&in name = \"nvmidi\")", asMETHOD(midi_input, open), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool open_by_name(const string&in substring, const string&in name = \"nvmidi\")", asMETHOD(midi_input, open_by_name), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool open_config(midi_config@ config, const string&in name = \"nvmidi\")", asMETHOD(midi_input, open_config), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
@@ -1859,12 +1862,12 @@ void register_midi_input(asIScriptEngine* engine, registration* reg) {
 }
 
 void register_midi_output(asIScriptEngine* engine, registration* reg) {
-	// A handle type, like midi_input. asOBJ_REF and nothing else: the script
-	// holds a reference to an object made by midi_output_create() and never
-	// allocates the class itself, which is exactly what a ref type with no
-	// factory declares. sizeof() is passed anyway - it costs nothing and AngelScript
-	// uses it for the debugger's view of the handle's target.
-	reg->check( engine->RegisterObjectType("midi_output", sizeof(midi_output), asOBJ_REF), "RegisterObjectType", __LINE__);
+	// A handle type, and registered exactly as midi_input is, for the reason
+	// written there: asOBJ_NOCOUNT is required, not optional, and 0 is the
+	// size the clean pair carried. The type held a real sizeof until run
+	// 36640089846; nothing measured ever singled the size out, and the one run
+	// that changed it changed three other things with it.
+	reg->check( engine->RegisterObjectType("midi_output", 0, asOBJ_REF | asOBJ_NOCOUNT), "RegisterObjectType", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool open(uint port, const string&in name = \"nvmidi\")", asMETHOD(midi_output, open), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool open_by_name(const string&in substring, const string&in name = \"nvmidi\")", asMETHOD(midi_output, open_by_name), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool open_config(midi_config@ config, const string&in name = \"nvmidi\")", asMETHOD(midi_output, open_config), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
@@ -1935,7 +1938,7 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	// A handle type: a script writes note@ n = midi_note_create(60, 100); and the
 	// handle points at the object rather than copying it, which is what makes
 	// changing n.velocity later actually change the note that is played.
-	reg->check( engine->RegisterObjectType("midi_note", 0, asOBJ_REF), "RegisterObjectType", __LINE__);
+	reg->check( engine->RegisterObjectType("midi_note", 0, asOBJ_REF | asOBJ_NOCOUNT), "RegisterObjectType", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_note", "int pitch", asOFFSET(midi_note, pitch)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_note", "int velocity", asOFFSET(midi_note, velocity)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_note", "int channel", asOFFSET(midi_note, channel)), "RegisterObjectProperty", __LINE__);
@@ -1987,7 +1990,7 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 
 void register_midi_config(asIScriptEngine* engine, registration* reg) {
 	// A handle type, like the rest: midi_config@ c = midi_config_create().
-	reg->check( engine->RegisterObjectType("midi_config", sizeof(midi_config), asOBJ_REF), "RegisterObjectType", __LINE__);
+	reg->check( engine->RegisterObjectType("midi_config", 0, asOBJ_REF | asOBJ_NOCOUNT), "RegisterObjectType", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_config", "string match", asOFFSET(midi_config, match)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_config", "int port", asOFFSET(midi_config, port)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_config", "bool load(const string&in path)", asMETHOD(midi_config, load), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
