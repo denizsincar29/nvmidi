@@ -260,6 +260,60 @@ void main() {
 	// line that would have given this away was the one missing for two runs.
 	print("E2E_API_TEXT " + api);
 
+	// Every stop below is decided on the numbers, never on the rebuilt text.
+	//
+	// Not a stylistic choice: `api` is a script string, and a script string in
+	// this engine has already been measured twice reporting something other
+	// than the bytes it was built from. A verdict that ends the script on
+	// `api.find(...)` inherits exactly the fault this file just stopped
+	// trusting, and the run it kills is a run that never prints the port list
+	// the job needs. So the classification is done here, on integers, and only
+	// the human-readable line uses the text.
+	bool is_dummy = false;
+	bool is_winmm = false;
+	for (int i = 0; i < API_BYTES; i++) {
+		const int b = midi_api_name_byte(i);
+		// "Windows" or "WINDOWS" starts at i only if all seven bytes match.
+		if (b != 87 && b != 119) continue;
+		const string tail = "ndows";
+		bool tail_ok = true;
+		for (uint k = 0; k < tail.length(); k++) {
+			if (i + int(k) + 1 >= API_BYTES) { tail_ok = false; break; }
+			const int c = midi_api_name_byte(i + int(k) + 1);
+			// Folded by hand for the same reason the port matching below is:
+			// this engine has no to_lowercase, measured.
+			const int want = tail.substr(k, 1)[0];
+			if (c != want && c != want - 32) { tail_ok = false; break; }
+		}
+		if (tail_ok) is_winmm = true;
+		// "Dummy" starts here.
+		if (b != 68 && b != 100) continue;
+		const string rest = "ummy";
+		bool rest_ok = true;
+		for (uint k = 0; k < rest.length(); k++) {
+			if (i + int(k) + 1 >= API_BYTES) { rest_ok = false; break; }
+			const int c = midi_api_name_byte(i + int(k) + 1);
+			const int want = rest.substr(k, 1)[0];
+			if (c != want && c != want - 32) { rest_ok = false; break; }
+		}
+		if (rest_ok) is_dummy = true;
+	}
+
+	// The dummy backend compiles, loads, registers, opens nothing and prints
+	// every line below this one. That is the failure mode this whole job
+	// exists to catch, so it is a failure here, not a note.
+	if (is_dummy) {
+		fail("the backend is Dummy: it will open no port and deliver no note, so nothing this script claims would be true");
+		print("E2E_END failures=" + failures);
+		return;
+	}
+	if (!is_winmm) {
+		fail("expected a windows midi backend, got " + api + ": this script and its listener only make sense against winmm");
+		print("E2E_END failures=" + failures);
+		return;
+	}
+	ok("BACKEND " + api);
+
 	// --- what this machine offers ------------------------------------------
 	//
 	// Enumerated before anything is opened, and printed in full, because the
