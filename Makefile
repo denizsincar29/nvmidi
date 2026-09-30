@@ -31,7 +31,32 @@ SOURCES   = src/nvmidi.cpp third_party/rtmidi/RtMidi.cpp \
 TARGET      ?= nvmidi.dll
 
 ifeq ($(OS),Windows_NT)
-    TARGET    = nvmidi.dll
+    # ?= and not =, and the difference is not stylistic. A plain assignment in
+    # the makefile overrides the environment: make's own rule is that the
+    # makefile wins unless it is invoked with -e or the variable is written
+    # ?=. This line said `TARGET = nvmidi.dll` with a comment claiming the
+    # reverse, and the consequence was measured rather than argued - run
+    # 36754275196, where the control build ran
+    #
+    #   $(CXX) ... -DNVGT_SKIP_ARRAY_ADDON ... -o nvmidi-noarr.dll ...
+    #
+    # and the file it wrote was 2994751 bytes with the same bytes as the
+    # ordinary dll at the same offsets, because the *ordinary* build's link
+    # line carried the same flag. The ordinary `make` target had been asked
+    # for TARGET=nvmidi-noarr.dll in an earlier run and this line had turned it
+    # back into nvmidi.dll, so `mingw32-make nvmidi-noarr.dll` re-linked
+    # nvmidi.dll - from the nvmidi.o the earlier make had left, which was
+    # itself compiled with the flag. The first windows build of every run was
+    # therefore the control, and the ordinary artifact uploaded under the name
+    # "nvmidi-with-addon" was a control wearing the wrong label.
+    #
+    # What it cost to find: the control carried the plugin's own returned-call
+    # literal (the bytes say so - 'NVGT_PLUGIN_STATIC' is a header macro and no
+    # build is static; the two 2994751-byte files differ by 72 bytes of path
+    # string and nothing else), and three readings were spent on the workflow
+    # before the build was suspected. A test that asserts what a file contains
+    # cannot see that the file is the wrong build.
+    TARGET    ?= nvmidi.dll
     CXXFLAGS += -D__WINDOWS_MM__
     # -static, and the plugin dies without it.
     #
