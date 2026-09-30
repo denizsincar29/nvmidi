@@ -21,3 +21,5 @@ __pycache__/
 # through dlopen rather than a link-time dependency. Not shipped, and not
 # something the repository should carry until it is.
 scratch/
+scripts/test_nvmidi.py
+scripts/octave_echo.py
