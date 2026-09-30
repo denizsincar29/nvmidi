@@ -825,13 +825,19 @@ jobs:
               New-Item -ItemType Directory -Force -Path $run | Out-Null
               Get-ChildItem -Path $run -File | Remove-Item -Force
               Copy-Item (Join-Path $dir 'nvmidi.dll') -Destination (Join-Path $run 'nvmidi.dll') -Force
-              Copy-Item $script -Destination $run -Force
               Copy-Item $probe2name -Destination $run -Force
               $log = Join-Path $env:RUNNER_TEMP "$($c.name).$($v.name).out"
               $loaded = Join-Path $run 'nvmidi.dll'
               Write-Host "  running from $run with $((Get-Item $loaded).Length) bytes of nvmidi.dll in it"
               Push-Location $run
-              $p = Start-Process -FilePath $exe -ArgumentList @($script) -Wait -PassThru -NoNewWindow `
+              # The script the run executes. It used to be $script, the loc
+              # probe, while the q_engine script was written into $dir and
+              # never copied anywhere - so the runner read LOC_OK from every
+              # row and the probe it was added for was never run once. The
+              # q_engine script carries LOC_OK too, so this is the same
+              # location reading plus the engine's answer, in one process.
+              Push-Location $run
+              $p = Start-Process -FilePath $exe -ArgumentList @($probe2name) -Wait -PassThru -NoNewWindow `
                    -RedirectStandardOutput $log -RedirectStandardError "$log.err"
               Pop-Location
               $text = if (Test-Path $log) { (Get-Content $log -Raw) } else { '' }
