@@ -71,6 +71,7 @@ string char_of(uint b) {
 
 void main() {
 	print("PROBE_BEGIN");
+	fflush();
 	// Every line from here down is a number or a literal. No value that came
 	// out of the plugin is ever concatenated, measured, or indexed, because
 	// that is what killed the two earlier probes at -1073740791
