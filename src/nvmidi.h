@@ -485,3 +485,4 @@ int midi_note_number(const std::string& name);
 void midi_input_callback(double delta, std::vector<unsigned char>* message, void* user_data);
 
 void register_nvmidi(asIScriptEngine* engine);
+

@@ -1861,6 +1861,53 @@ struct registration {
 		fflush(stdout);
 		unexpected += 1;
 	}
+	// Whether the engine already has a type, asked so that a wrong answer
+	// cannot hurt.
+	//
+	// asITypeInfo is a pure interface the engine owns and the caller only
+	// reads through. A probe that constructed or destructed one - by asking
+	// for a declaration, say - would need the engine's own allocator and
+	// could corrupt it; this one holds the pointer as an opaque asITypeInfo*
+	// and never dereferences it, so the worst case is that the engine
+	// answers null and this returns false.
+	bool type_is_known(const char* name) {
+		asITypeInfo* t = engine->GetTypeInfoByName(name);
+		if (!t) return false;
+		t->Release();
+		return true;
+	}
+	//
+	// True when this engine already has an array<T>, and therefore when the
+	// add-on must not be called.
+	//
+	// Four names, all of them known spellings from the vendored header and
+	// none of them a guess about this plugin's own types. The template name
+	// is asked first: a yes settles it, and a no is followed by three
+	// concrete instantiations whose *refusal* is the second signal, since
+	// "Invalid template subtype" is only sayable by a template that exists.
+	//
+	// The rule this method is for - never register the add-on over an engine
+	// that has it - is enforced here rather than at the call site so that a
+	// build which skips the call cannot reach this code with a wrong answer.
+	bool engine_knows_arrays() {
+#ifdef NVGT_SKIP_ARRAY_ADDON
+		return true;
+#endif
+		if (type_is_known("array")) {
+			fprintf(stderr, "nvmidi: GetTypeInfoByName(\"array\") answered yes\n");
+			fflush(stderr);
+			return true;
+		}
+		int worst = 0;
+		const char* probes[] = { "array<int>", "array<uint>", "array<double>" };
+		for (int i = 0; i < 3; ++i) {
+			int r = engine->RegisterObjectType(probes[i], 0, asOBJ_REF);
+			fprintf(stderr, "nvmidi: blind probe %s answered %d\n", probes[i], r);
+			fflush(stderr);
+			if (r < 0 && r != asALREADY_REGISTERED) worst = r;
+		}
+		return worst != 0;
+	}
 };
 
 
@@ -2246,6 +2293,37 @@ void register_nvmidi(asIScriptEngine* engine) {
 	fprintf(stderr, "nvmidi: NVGT_SKIP_ARRAY_ADDON is set, the array add-on is not registered\n");
 	fflush(stderr);
 #endif
+
+	// Does this engine already know array<T>?
+	//
+	// The add-on call above kills the process when the engine has the type
+	// already, and it cannot be made speculatively, so the plugin has to ask
+	// without calling the add-on. Four blind calls through the engine's own
+	// pointer, each a string or a null handle - no object is constructed and
+	// the answers are discarded, so a refusal costs one line of stderr and a
+	// release.
+	//
+	// The first asks the template by name. If the engine has any array<T>
+	// at all it has the template, and nvgt's own loader installs one - that
+	// is what makes this plugin's call a second registration and fatal.
+	//
+	// The other three are the second signal: they ask for concrete
+	// instantiations, and a refusal is itself the evidence - the code says
+	// the shape was wrong, which it can only say about a template it holds.
+	//
+	// Nothing here distinguishes "the engine has arrays" from "this build is
+	// told to behave as if it did"; both answer the same way, and both take
+	// the same branch, which is what the branch is for.
+	if (reg.engine_knows_arrays()) {
+		fprintf(stderr, "nvmidi: the engine already has array<T>, the array add-on is not called\n");
+		fflush(stderr);
+	} else {
+		fprintf(stderr, "nvmidi: the engine does not know array<T>, calling RegisterScriptArray\n");
+		fflush(stderr);
+		RegisterScriptArray(engine, false);
+		fprintf(stderr, "nvmidi: RegisterScriptArray returned\n");
+		fflush(stderr);
+	}
 
 	register_midi_message(engine, &reg);
 	// Every type a later declaration names has to exist first. The port
