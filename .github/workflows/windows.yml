@@ -496,11 +496,21 @@ jobs:
       # is the only place it can run: `move` is a cmd built-in, and make on this
       # runner cannot start cmd built-ins at all (runs 36702218450, `del`;
       # 36703826070, `copy`).
+      #
+      # `move /n /y`: /Y answers the overwrite prompt, and /N is the one that
+      # actually does the work here. Without it, renaming nvmidi.dll to a name
+      # this job's checkout already holds from an earlier step leaves the old
+      # file in place, silently, with a non-zero exit - measured, run
+      # 36705417971: both artifacts came out at the same byte length with
+      # different sha256, and the one labelled no-addon carried the add-on's
+      # strings (`calling RegisterScriptArray` present, `NVGT_SKIP_ARRAY_ADDON
+      # is set` absent), so the probe's second row was the first library again
+      # with a different name on it.
       - name: build the library without the array add-on
         shell: cmd
         run: |
           if not exist nvmidi.dll exit /b 1
-          move /Y nvmidi.dll nvmidi-noarr.dll
+          move /n /y nvmidi.dll nvmidi-noarr.dll
           if not exist nvmidi-noarr.dll exit /b 1
           mingw32-make nvmidi.dll
           if not exist nvmidi.dll exit /b 1
@@ -924,18 +934,20 @@ jobs:
           # The two builds are indistinguishable from inside the engine: the
           # probe's one real line asks for a library called nvmidi either way,
           # so a copied nvmidi-noarr.dll is a file the engine never opens while
-          # the nvmidi.dll sitting next to it answers. Every "no-array-addon"
-          # reading before this one was therefore the ordinary build, run a
-          # second time under a different label - exit 70, `calling
-          # RegisterScriptArray`, the same three stderr lines as its twin, in
-          # all four locations, on run 36704808356. The measurement was two
-          # copies of the control and it read as a clean pair of results.
+          # the nvmidi.dll sitting next to it answers.
           #
-          # So the second build goes in under the name the pragma resolves to
-          # and the ordinary build stays out of that directory entirely: one
-          # library per folder, no file the engine can open but shouldn't.
-          # Copy, not move - $ws has to keep both, because the install step and
-          # the rest of the job run from the ordinary build.
+          # So one library per directory, and the trap this loop has to close is
+          # that the two rows measured the same file three times before anyone
+          # noticed. Run 36704808356: both variants printed the add-on's three
+          # stderr lines, because a nvmidi.dll was already in each $dir. Run
+          # 36705417971: the stray copy was gone and both rows died at load with
+          # exit 65, because by then nvmidi-noarr.dll was itself a file renamed
+          # by a `move` that had quietly refused to overwrite - the same
+          # original library, under a name the engine does ask for.
+          #
+          # The check below is therefore about the *contents*, not the name: a
+          # build is the control only if the add-on's call is not in it, and no
+          # arrangement of filenames can fake that.
           $variants = @(
             @{ name = 'with-array-addon'; dll = 'nvmidi-noarr.dll';   pragma = 'nvmidi' },
             @{ name = 'no-array-addon';   dll = 'nvmidi-noarr.dll';   pragma = 'nvmidi' }
@@ -963,6 +975,23 @@ jobs:
                           Where-Object { $_.Name -ne $v.dll })
               if ($strays.Count -gt 0) {
                 Write-Host "  >>> $($c.name) / $($v.name): $dir also holds $(($strays | ForEach-Object Name) -join ', '), so this reading would be of the wrong library"
+                continue
+              }
+
+              # And the file has to be the build its label claims. Two rows
+              # that differ only in a name measured one library three times in
+              # a row across two runs, each time looking like a clean result.
+              # The add-on's call is a literal in the binary, so its presence
+              # is not a matter of opinion: it is either in the file the engine
+              # is about to load or it is not.
+              $bytes = [System.IO.File]::ReadAllBytes((Join-Path $dir $v.dll))
+              $ascii = [System.Text.Encoding]::ASCII.GetString($bytes)
+              $hasCall = $ascii.Contains('calling RegisterScriptArray')
+              $hasSkip = $ascii.Contains('NVGT_SKIP_ARRAY_ADDON is set')
+              $wantCall = ($v.name -eq 'with-array-addon')
+              Write-Host "  $($v.dll) carries calling=$hasCall skipmessage=$hasSkip (this row wants calling=$wantCall)"
+              if ($hasCall -ne $wantCall) {
+                Write-Host "  >>> $($c.name) / $($v.name): the library is the other build, so this row would answer for the wrong library"
                 continue
               }
 
