@@ -1523,6 +1523,17 @@ int midi_message_name_byte(const midi_message& m, unsigned int index) {
 	return (int)(unsigned char)name[index];
 }
 
+// What the engine says it is, asked through the pointer the plugin was
+// handed - not through asGetLibraryVersion, which is a free function the
+// engine exports and answers about the library it was linked from.
+//
+// The two agree only if the plugin's engine object and the engine's own are
+// one build of Angelscript. A plugin compiled against a different engine
+// build would answer a different GetVersion here, or die answering at all.
+//
+// Only the control build reaches this line: the ordinary build dies above it.
+int midi_engine_version() { return g_engine ? g_engine->GetVersion() : -1; }
+
 int midi_last_error_byte_count() { return (int)midi_last_error().size(); }
 int midi_last_error_byte(unsigned int index) {
 	const std::string e = midi_last_error();
@@ -2103,6 +2114,7 @@ void register_midi_globals(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterGlobalFunction("int midi_first_error_byte(uint index)", asFUNCTION(midi_first_error_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_input@ midi_input_create()", asFUNCTION(midi_input_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_output@ midi_output_create()", asFUNCTION(midi_output_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_engine_version()", asFUNCTION(midi_engine_version), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 }
 
 void register_nvmidi(asIScriptEngine* engine) {
@@ -2117,6 +2129,7 @@ void register_nvmidi(asIScriptEngine* engine) {
 	// that nothing in this window ever reached a log.
 	fprintf(stderr, "nvmidi: entering register_nvmidi\n");
 	fflush(stderr);
+	g_engine = engine;
 	registration reg(engine);
 
 	// The array add-on, before any type that names array<> in a signature.

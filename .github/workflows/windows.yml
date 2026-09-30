@@ -670,7 +670,16 @@ jobs:
             @{ name = 'with-array-addon'; src = 'builds\nvmidi-with-addon\nvmidi.dll'; pragma = 'nvmidi' },
             @{ name = 'no-array-addon';   src = 'builds\nvmidi-no-addon\nvmidi.dll';   pragma = 'nvmidi' }
           )
+          # A second probe, for the builds that get past the add-on call.
+          #
+          # loc_probe asks only whether a location resolves. This one asks the
+          # engine itself what it is, through the pointer the plugin holds -
+          # which is the question the ordinary build cannot answer, because it
+          # dies before its own registration finishes but after it has been
+          # handed the engine. So the two probes run their own scripts and a
+          # reading belongs to the build whose script produced it.
           $probe = Get-Content (Join-Path $ws 'scripts\windows\loc_probe.nvgt') -Raw
+          $probe2 = Get-Content (Join-Path $ws 'scripts\windows\q_engine.nvgt') -Raw
 
           foreach ($c in $cases) {
             $dir = $c.dir
@@ -779,6 +788,21 @@ jobs:
               ($probe -replace '#pragma plugin \S+', "#pragma plugin $($v.pragma)") |
                 Set-Content -Path $script -Encoding ASCII
 
+              # Which probe this row runs. The add-on's call is a literal in
+              # the binary, so the build that carries it is the build that
+              # dies in it; the control is the only one that can answer a
+              # question asked through the engine pointer, and a question put
+              # to the wrong build would come back as the death and be read
+              # as a failed answer.
+              #
+              # Measured on the previous reading of this step: both variants
+              # ran the same loc_probe, so the ordinary build's death was
+              # recorded against the location rather than against the call,
+              # and the control's LOC_OK said nothing about either.
+              $probe2name = Join-Path $dir "q_engine_$($v.name).nvgt"
+              ($probe2 -replace '#pragma plugin \S+', "#pragma plugin $($v.pragma)") |
+                Set-Content -Path $probe2name -Encoding ASCII
+
               # Run from a directory that holds the probe and this one library
               # and nothing else.
               #
@@ -802,6 +826,7 @@ jobs:
               Get-ChildItem -Path $run -File | Remove-Item -Force
               Copy-Item (Join-Path $dir 'nvmidi.dll') -Destination (Join-Path $run 'nvmidi.dll') -Force
               Copy-Item $script -Destination $run -Force
+              Copy-Item $probe2name -Destination $run -Force
               $log = Join-Path $env:RUNNER_TEMP "$($c.name).$($v.name).out"
               $loaded = Join-Path $run 'nvmidi.dll'
               Write-Host "  running from $run with $((Get-Item $loaded).Length) bytes of nvmidi.dll in it"
@@ -854,6 +879,16 @@ jobs:
               }
               Write-Host "  addon_call_entered=$called  addon_call_returned=$back  addon_skipped=$skipped"
               Write-Host "  >>> $($c.name) / $($v.name): bisection=$(if ($proved) { 'PASSES THIS LOCATION' } else { 'no' })"
+
+              # The engine's own answer, asked through the plugin's pointer.
+              # Only the control gets far enough to print it; the ordinary
+              # build's script dies first and prints nothing, which is the
+              # same reading as a wrong answer and has to be said apart from
+              # it - hence the two markers.
+              $qv = if ($text -match 'QE_VERSION=(-?\d+)') { $Matches[1] } else { 'none' }
+              $qp = if ($text -match 'QE_PORTS=(-?\d+)') { $Matches[1] } else { 'none' }
+              Write-Host "  q_engine: version=$qv ports=$qp prints_ok=$([bool]($text -match 'QE_OK'))"
+              Write-Host "  >>> $($c.name) / $($v.name): engine_reached=$(if ($text -match 'QE_OK') { 'yes' } else { 'no' })"
             }
           }
 
