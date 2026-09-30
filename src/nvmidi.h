@@ -43,6 +43,20 @@ struct midi_message {
 	unsigned char data2;
 	int channel; // 1..16
 	double timestamp; // seconds since the input port was opened
+	// std::string, and the type says asOBJ_POD anyway. That pair is a lie and
+	// it is what has been killing the engine: a std::string has a destructor,
+	// so this type is NOT plain old data, and the engine trusts asOBJ_POD
+	// enough to skip the destructor it would otherwise have called. AngelScript
+	// only asks a subtype for a default constructor when the flags say
+	// asOBJ_VALUE and not asOBJ_POD (scriptarray.cpp:142) - so the moment
+	// `array<midi_message>` appears, the engine tries to build one by copying
+	// bytes and never runs the constructor this string never got.
+	//
+	// It also explains the errors that looked like they were about the
+	// declaration: "Expected ';'" and "Expected expression value" after
+	// `midi_message m;`, on whichever line the next statement happened to sit.
+	// The engine cannot promise a default constructor it was told does not
+	// exist, so the declaration itself is refused.
 	// Returns a pointer into a per-object buffer rather than a std::string -
 	// not a design choice, just the shape this one had before the string
 	// question came up, and it is not registered either way.
