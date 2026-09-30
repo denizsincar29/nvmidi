@@ -326,16 +326,27 @@ jobs:
             Copy-Item $subject "$env:RUNNER_TEMP\probe\subject.dll" -Force
             $dl = "$env:RUNNER_TEMP\probe\drvload.exe"
             Write-Host "  loading $env:RUNNER_TEMP\probe\subject.dll ($((Get-Item $subject).Length) bytes)"
-            $out = & $dl "$env:RUNNER_TEMP\probe\subject.dll" 2>&1
+            # The log is named after this binary, so it is readable only now:
+            # the harness is copied to a name with no "drvload" in it before it
+            # runs, and the log lands at <that name>-drvload.exe. Otherwise the
+            # line below would read back the exe itself, which the previous run
+            # did - 62337 bytes of image, printed as the harness's own log.
+            $dl2 = "$env:RUNNER_TEMP\probe\callsubject.exe"
+            Copy-Item $dl $dl2 -Force
+            foreach ($f in (Get-ChildItem "$env:RUNNER_TEMP\probe" -Filter '*drvload.exe' -ErrorAction SilentlyContinue)) {
+              if ($f.FullName -ne $dl) { Remove-Item $f.FullName -Force -ErrorAction SilentlyContinue }
+            }
+            $out = & $dl2 "$env:RUNNER_TEMP\probe\subject.dll" 2>&1
             $code = $LASTEXITCODE
             if ($out) { $out | ForEach-Object { Write-Host "  $_" } }
             else { Write-Host "  (no stdout)" }
             Write-Host "  exit code: $code"
-            Show-File "$dl.txt" 'drvload log (as the harness opened it)'
-            Get-ChildItem "$env:RUNNER_TEMP\probe" -Filter '*drvload*' -ErrorAction SilentlyContinue | ForEach-Object {
-              Write-Host "  $($_.Name) ($($_.Length) bytes)"
-              Get-Content $_.FullName -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" }
-            }
+            Show-File "$dl2.txt" 'drvload log'
+            Get-ChildItem "$env:RUNNER_TEMP\probe" -Filter '*drvload*' -ErrorAction SilentlyContinue |
+              Where-Object { $_.Extension -ne '.exe' } | ForEach-Object {
+                Write-Host "  $($_.Name) ($($_.Length) bytes)"
+                Get-Content $_.FullName -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" }
+              }
           } else { Write-Host "  MISSING BINARY: $probe\drvload.exe" }
 
           Write-Host "probe matrix done"
