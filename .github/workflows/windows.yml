@@ -130,6 +130,8 @@ jobs:
           if not exist withaddon\nvmidi.dll exit /b 1
           if exist nvmidi.dll exit /b 1
           mingw32-make -f Makefile DEFS=-DNVGT_SKIP_ARRAY_ADDON -o noaddon\nvmidi.dll nvmidi.dll
+          if errorlevel 1 echo FAILED-IN-THE-MAKE-RECIPE
+          if not exist noaddon\nvmidi.dll echo NOMIDI-NO-DLL-WAS-WRITTEN
           if not exist noaddon\nvmidi.dll exit /b 1
           dir /B withaddon\nvmidi.dll noaddon\nvmidi.dll
       # One artifact per build, and the artifact's own name is what carries the
