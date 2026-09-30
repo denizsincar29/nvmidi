@@ -104,7 +104,7 @@ def api_version_from_header():
 # only after reading the field that follows, and it reads it at its real offset
 # rather than at offset 4: measured on ubuntu-latest and windows-latest, 30.09,
 # where the truncated struct made the plugin fault at address 0. The fields are
-# pointers, so `script_engine` is read at offset 8 + 27*8 = 224 and a struct of
+# pointers, so `script_engine` is read at offset 4 + 27*8 = 220 and a struct of
 # four bytes leaves it reading whatever followed in memory. A null check does
 # not save that - it reads the garbage, finds it non-null, and follows it.
 #
@@ -323,9 +323,29 @@ def run_python_test(args):
     try:
         accepted = bool(entry(ctypes.byref(shared)))
     except Exception as error:  # noqa: BLE001 - printing is the point
+        #
+        # A crash here is NOT attributed to the plugin, and an earlier version of
+        # these three lines did exactly that - it printed "the plugin
+        # dereferenced a null pointer" for any fault at all. That sentence was
+        # wrong about the one crash it was first read on: the fault was in this
+        # file (a four-byte struct, see the top of this section), not in the
+        # plugin, and a loader that blames its subject for its own layout bug
+        # sends the reader to the wrong repository.
+        #
+        # So only the fault is reported, and the two addresses a reader needs
+        # are put next to each other: where the struct this test builds actually
+        # lives, and what the fault touched. When they are near, it is this
+        # file's struct; when the touched address is far outside it, the plugin
+        # went somewhere of its own. A judgement between those two is a
+        # measurement, and this prints the measurement rather than the verdict.
         print("the entry point CRASHED: %r" % (error,))
-        print("the plugin dereferenced a null pointer, which is a fault inside the")
-        print("plugin and not something a loader can cause.")
+        base = ctypes.addressof(shared)
+        print("the engine table this test built is %d bytes at address 0x%x"
+              % (ctypes.sizeof(Plugin_Shared), base))
+        print("so a fault inside this file's own struct lands in 0x%x..0x%x."
+              % (base, base + ctypes.sizeof(Plugin_Shared) - 1))
+        print("Anything else the fault touched came from the plugin.")
+        print("VERDICT: the entry point faulted; the two addresses above say where.")
         return 1
 
     if not accepted:

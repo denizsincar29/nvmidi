@@ -15,6 +15,21 @@
 #include <deque>
 #include <mutex>
 
+// The export macro for the free functions further down, and the only reason
+// this header includes another one.
+//
+// It is included rather than defined here because the decision it encodes -
+// dllexport on Windows, default visibility on ELF, nothing for a static build -
+// is NVGT's to make and nvgt_plugin.h already makes it, under a name meant for
+// exactly this. A second copy of that #ifdef in this file would be a second
+// answer to the same question, and the two would drift the moment either
+// platform grew a third case.
+//
+// The dependency runs one way. nvgt_plugin.h does not include this file and
+// does not know it exists; nvmidi.cpp includes both, in the order it does
+// because this file needs the macro before it reaches the declarations below.
+#include "nvgt_plugin.h"
+
 class asIScriptEngine;
 class CScriptArray;
 class midi_config;
