@@ -29,6 +29,15 @@ SOURCES   = src/nvmidi.cpp third_party/rtmidi/RtMidi.cpp \
 # below would otherwise be the same file spelled differently - see the comment
 # there for what that cost.
 TARGET      ?= nvmidi.dll
+
+# Extra defines for a build that differs from the ordinary one, and empty for
+# every build that does not. A make variable rather than a word on the command
+# line, because make eats anything starting with a dash as one of its own
+# switches: a bare -DNVGT_SKIP_ARRAY_ADDON after the target is parsed as
+# -D, -N, -V and so on, one "invalid option" line per letter, before make
+# gives up on the target (run 36706922550). This variable is the only place a
+# caller can put a define and have the compiler, rather than make, see it.
+DEFS        ?=
 ifeq ($(OS),Windows_NT)
     TARGET    = nvmidi.dll
     CXXFLAGS += -D__WINDOWS_MM__
@@ -99,7 +108,7 @@ endif
 all: $(TARGET)
 
 $(TARGET): $(SOURCES) src/nvmidi.h
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(SOURCES) -o $(TARGET) $(LDFLAGS) $(LIBS)
+	$(CXX) $(CXXFLAGS) $(DEFS) $(INCLUDES) $(SOURCES) -o $(TARGET) $(LDFLAGS) $(LIBS)
 
 # Compiles the plugin source and the add-on without RtMidi, and without
 # emitting an object: a fast way to catch a typo in the Angelscript
@@ -153,4 +162,4 @@ clean:
 # file called nvmidi-noarr.dll, it is being asked for nvmidi.dll a second time
 # under different -D flags. The name the e2e sees is the workflow's doing.
 nvmidi-noarr.dll: $(SOURCES) src/nvmidi.h
-	$(CXX) $(CXXFLAGS) -DNVGT_SKIP_ARRAY_ADDON $(INCLUDES) $(SOURCES) -o $(TARGET) $(LDFLAGS) $(LIBS)
+	$(CXX) $(CXXFLAGS) -DNVGT_SKIP_ARRAY_ADDON $(DEFS) $(INCLUDES) $(SOURCES) -o $(TARGET) $(LDFLAGS) $(LIBS)

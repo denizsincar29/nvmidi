@@ -503,6 +503,17 @@ jobs:
       # directory is the root either way, and the write lands where -o points.
       # The first build is moved out of the root rather than deleted, because
       # the e2e job has steps that read it there.
+      #
+      # The flag goes in through DEFS, a make variable the file reads (see the
+      # no-addon target in the Makefile), and not as -DNVGT_SKIP_ARRAY_ADDON on
+      # this command line. make parses every word after its own options as a
+      # switch: run 36706922550 printed "invalid option -- D", "invalid option
+      # -- N" and a whole line per letter before refusing the target, so a bare
+      # -D here is make syntax and not a compiler flag. It is also why the flag
+      # could never have been a command-line CXXFLAGS= - that replaces the
+      # variable the windows branch uses to add -D__WINDOWS_MM__, and the build
+      # then takes the Linux RtMidi branch and produces no dll while exiting 0
+      # (run 36702495507).
       - name: build the library without the array add-on
         shell: cmd
         run: |
@@ -514,7 +525,7 @@ jobs:
           move /Y nvmidi.dll withaddon\nvmidi.dll
           if not exist withaddon\nvmidi.dll exit /b 1
           if exist nvmidi.dll exit /b 1
-          mingw32-make -f Makefile -o noaddon\nvmidi.dll -DNVGT_SKIP_ARRAY_ADDON nvmidi.dll
+          mingw32-make -f Makefile DEFS=-DNVGT_SKIP_ARRAY_ADDON -o noaddon\nvmidi.dll nvmidi.dll
           if not exist noaddon\nvmidi.dll exit /b 1
           dir /B withaddon\nvmidi.dll noaddon\nvmidi.dll
       # One artifact per build, and the artifact's own name is what carries the
