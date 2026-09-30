@@ -730,9 +730,25 @@ jobs:
           # for a person, so running it here would hang until the timeout.
           out=$(timeout 120 "$nvgt" --compile scripts/hear_test.nvgt 2>&1 || true)
           echo "$out"
-          if ! printf '%s' "$out" | grep -q 'midi_message\|midi_input\|nvmidi'; then
-            echo "::warning title=the compiler never saw the plugin::no midi_ name was reported, so this pass says less than it looks like"
+          # A pass that ran without the plugin is not a pass. Measured on run
+          # 36775536153: this job reported success while its own output held
+          # "ERROR: failed to load plugin", because the step never failed on
+          # anything and the engine's --compile prints the error rather than
+          # returning non-zero for it. Both branches end in an error here, and
+          # an error in a job with no continue-on-error fails the job.
+          if printf '%s' "$out" | grep -q 'failed to load plugin'; then
+            echo "::error title=the plugin was not next to the engine::the hearing test compiled against an engine that could not load nvmidi, so a green here would have meant nothing"
+            exit 1
           fi
+          if ! printf '%s' "$out" | grep -q 'midi_message\|midi_input\|nvmidi'; then
+            echo "::error title=the compiler never saw the plugin::no midi_ name was reported, so this pass says less than it looks like"
+            exit 1
+          fi
+          if printf '%s' "$out" | grep -q 'Compilation error'; then
+            echo "::error title=the hearing test does not compile::the engine's own compiler rejected it"
+            exit 1
+          fi
+          echo "the hearing test compiles against an engine that loaded the plugin"
 
   shipped-backend:
     runs-on: ubuntu-latest
