@@ -1408,6 +1408,15 @@ jobs:
           # 36729333733: "--- compile pass finished, exit  ---". A file, a
           # second read of it and the process's own code fix both.
           Write-Host '--- compiling the e2e script first ---'
+          # The compile pass runs the same script with the same stdout file as
+          # the real run below, so it overwrites the evidence it was added to
+          # explain. Measured on run 36775764009: this step, launching $src with
+          # -RedirectStandardOutput $log, left "--- logs_e2e.txt: 0 bytes ---"
+          # where the real run's transcript had been, and every reader after it
+          # then reported "the script printed no E2E_API_NUMBERS line" about a
+          # file the compile pass had just truncated. The crash and the compile
+          # pass are two runs and they need two files.
+          $log = Join-Path $env:GITHUB_WORKSPACE 'logs_e2e_compile.txt'
           $clog = Join-Path $env:GITHUB_WORKSPACE 'compile_e2e.txt'
           $p0 = Start-Process -FilePath $exe -ArgumentList @($src) -Wait -PassThru `
             -NoNewWindow -RedirectStandardOutput $clog -RedirectStandardError "$clog.err"
@@ -1455,6 +1464,12 @@ jobs:
           # No arguments after the script: the hint travels in the environment
           # (NVGT_E2E_HINT, set by the synth step) because the engine's option
           # parser rejects an unknown flag before it ever reads the script.
+          # The real run gets its own stdout file, restored to the name the rest
+          # of the job reads, and the compile pass's file goes with it: the
+          # block further down reports the last started process's stream as the
+          # script's own speech, and left at logs_e2e_compile.txt it would
+          # report the compile pass for the run.
+          $log = Join-Path $env:GITHUB_WORKSPACE 'logs_e2e.txt'
           $p = Start-Process -FilePath $exe `
             -ArgumentList @($src) `
             -NoNewWindow -PassThru `
