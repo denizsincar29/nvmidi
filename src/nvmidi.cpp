@@ -2420,8 +2420,31 @@ struct registration {
 };
 
 
+// The three behaviours, defined where the type is complete. Each one is the
+// plainest thing that could be written: the whole point is that a std::string
+// member gets constructed and destroyed, and anything cleverer than the
+// compiler's own default would be a second place for that to go wrong.
+void midi_message_default_construct(midi_message* self) { new (self) midi_message(); }
+void midi_message_copy_construct(midi_message* self, const midi_message& other) { new (self) midi_message(other); }
+void midi_message_default_destruct(midi_message* self) { self->~midi_message(); }
+
 void register_midi_message(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectType("midi_message", sizeof(midi_message), asOBJ_VALUE | asGetTypeTraits<midi_message>()), "RegisterObjectType", __LINE__);
+	// The two behaviours are named one at a time and not left to
+	// asGetTypeTraits, and the reason is the run that answered with
+	// "Type 'midi_message' is missing behaviours" the moment asOBJ_POD came
+	// off. That is the same message run 36640089846 produced for the reference
+	// types, and there it was about addref and release. Here it is about the
+	// constructor: asOBJ_APP_CLASS_CONSTRUCTOR is a *convention* flag, it tells
+	// the engine how a type is passed across a boundary, and it does not answer
+	// the separate question of whether the type can be constructed at all.
+	// Asking for the same flag through asGetTypeTraits and then also naming
+	// <type>_construct/<type>_destruct as behaviours is what makes the answer
+	// unambiguous. The buffer member is the reason a destructor that runs is
+	// not optional any more, so it is named explicitly too.
+	reg->check( engine->RegisterObjectBehaviour("midi_message", asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(midi_message_default_construct), asCALL_CDECL_OBJLAST), "RegisterObjectBehaviour", __LINE__);
+	reg->check( engine->RegisterObjectBehaviour("midi_message", asBEHAVE_DESTRUCT, "void f()", asFUNCTION(midi_message_default_destruct), asCALL_CDECL_OBJLAST), "RegisterObjectBehaviour", __LINE__);
+	reg->check( engine->RegisterObjectBehaviour("midi_message", asBEHAVE_CONSTRUCT, "void f(const midi_message&in other)", asFUNCTION(midi_message_copy_construct), asCALL_CDECL_OBJLAST), "RegisterObjectBehaviour", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_message", "uint8 status", asOFFSET(midi_message, status)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_message", "uint8 data1", asOFFSET(midi_message, data1)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_message", "uint8 data2", asOFFSET(midi_message, data2)), "RegisterObjectProperty", __LINE__);

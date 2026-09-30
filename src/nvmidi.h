@@ -34,6 +34,23 @@ class asIScriptEngine;
 class CScriptArray;
 class midi_config;
 
+struct midi_message;
+
+// The three behaviours the engine has to be given by hand, declared here
+// because midi_message's registration needs them and midi_message is defined
+// below.
+//
+// They exist as free functions rather than as members because the engine's
+// asCALL_CDECL_OBJLAST convention passes the object as the last argument, and
+// a pointer to a member function is not a pointer to a function - the engine
+// loads it and jumps, which is a crash and not a compile error. The header
+// cannot say this without including angelscript.h for asBEHAVE_*, and it
+// deliberately does not: the engine headers belong to nvmidi.cpp, which
+// includes this file from inside that world.
+void midi_message_default_construct(midi_message* self);
+void midi_message_copy_construct(midi_message* self, const midi_message& other);
+void midi_message_default_destruct(midi_message* self);
+
 // A single MIDI message as received from or sent to a device.
 // status is the command byte (note on/off, control change, ...), data1 and
 // data2 are the two parameter bytes, and channel is the low nibble of status.
