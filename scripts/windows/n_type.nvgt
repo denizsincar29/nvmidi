@@ -12,9 +12,15 @@ void main() {
 	double d = 0;
 	midi_message m;
 	midi_duration u;
+	print("N_MIDI_MESSAGE_DONE");
+	print("N_MIDI_DURATION_DONE");
 	midi_note@ n = null;
+	print("N_MIDI_NOTE_DONE");
 	midi_config@ c = null;
+	print("N_MIDI_CONFIG_DONE");
 	midi_input@ in = null;
+	print("N_MIDI_INPUT_DONE");
 	midi_output@ out = null;
+	print("N_MIDI_OUTPUT_DONE");
 	print("N_END " + s + i + d);
 }

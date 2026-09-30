@@ -1,0 +1,13 @@
+// The first line of e2e_types.nvgt, alone. e2e_types was refused with
+// "Data type can't be 'midi_note'" at line 23, and this probe asks whether
+// that line is refused for reading midi_note() as a type name or for
+// declaring n as that type.
+
+void main() {
+	print("C_BEGIN");
+	midi_note n = midi_note_create(60);
+	print("C_NOTE_DECL_DONE");
+	midi_output o = midi_output_create();
+	print("C_OUT_DECL_DONE");
+	print("C_END");
+}

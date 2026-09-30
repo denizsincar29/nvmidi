@@ -1,0 +1,23 @@
+// One name, declared in a script that connects no plugin at all, so the
+// engine is answering about its own built in types and nothing else.
+// n_type's refusals cannot be read this way: its file opens nvmidi, so a
+// name missing from the engine and a name whose registration did not happen
+// say the same thing. This probe says which of the two it is, one name at a
+// time, so a refusal names exactly one word.
+
+void main() {
+	print("N1_BEGIN");
+	midi_message m;
+	print("N1_MIDI_MESSAGE_DONE");
+	midi_duration u;
+	print("N1_MIDI_DURATION_DONE");
+	midi_note@ n = null;
+	print("N1_MIDI_NOTE_DONE");
+	midi_config@ c = null;
+	print("N1_MIDI_CONFIG_DONE");
+	midi_input@ in = null;
+	print("N1_MIDI_INPUT_DONE");
+	midi_output@ out = null;
+	print("N1_MIDI_OUTPUT_DONE");
+	print("N1_END");
+}
