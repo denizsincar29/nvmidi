@@ -885,9 +885,9 @@ jobs:
               # build's script dies first and prints nothing, which is the
               # same reading as a wrong answer and has to be said apart from
               # it - hence the two markers.
-              $qv = if ($text -match 'QE_VERSION=(-?\d+)') { $Matches[1] } else { 'none' }
+              $qv = if ($text -match 'QE_PROBE=(-?\d+)') { $Matches[1] } else { 'none' }
               $qp = if ($text -match 'QE_PORTS=(-?\d+)') { $Matches[1] } else { 'none' }
-              Write-Host "  q_engine: version=$qv ports=$qp prints_ok=$([bool]($text -match 'QE_OK'))"
+              Write-Host "  q_engine: probe=$qv ports=$qp prints_ok=$([bool]($text -match 'QE_OK'))"
               Write-Host "  >>> $($c.name) / $($v.name): engine_reached=$(if ($text -match 'QE_OK') { 'yes' } else { 'no' })"
             }
           }

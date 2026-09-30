@@ -1523,16 +1523,37 @@ int midi_message_name_byte(const midi_message& m, unsigned int index) {
 	return (int)(unsigned char)name[index];
 }
 
-// What the engine says it is, asked through the pointer the plugin was
-// handed - not through asGetLibraryVersion, which is a free function the
-// engine exports and answers about the library it was linked from.
+// Which asEEngineProp the plugin asks the engine for.
 //
-// The two agree only if the plugin's engine object and the engine's own are
-// one build of Angelscript. A plugin compiled against a different engine
-// build would answer a different GetVersion here, or die answering at all.
+// asEP_INIT_CALL_STACK_SIZE is 30, the last enumerator this header defines
+// that the engine is guaranteed to implement: enumerators from 31 on were
+// added later and an engine of another vintage may not have them. 30 is the
+// one value both this header and any engine of this line agree on.
+static const int k_engine_probe_prop = 30;
+
+// The engine, asked through the plugin's own pointer.
 //
-// Only the control build reaches this line: the ordinary build dies above it.
-int midi_engine_version() { return g_engine ? g_engine->GetVersion() : -1; }
+// This exists because asIScriptEngine exposes no version of itself - the
+// interface is fixed and the library version lives in a free function the
+// engine exports. So the version cannot be read off the object. What can be
+// read is whether the object answers the way this header says it should.
+//
+// GetEngineProperty is a virtual, so the call resolves through the vtable
+// slot this header assigns it. If the engine was built from a different
+// header, that slot is a different function and the answer is nonsense or
+// the process dies - which is exactly the shape of the fault: the add-on
+// enters its first engine call and never returns.
+//
+// -1000000 marks "no answer". The property is an integer and 0 is a value
+// the engine may legitimately hold, so absence cannot be spelled 0.
+//
+// Every argument here is a raw void*, an int and a double: nothing in this
+// function is constructed or destructed, so a call that lands on the wrong
+// vtable slot still cannot corrupt anything on its way to the answer.
+int midi_engine_probe() {
+	if (!g_engine) return -1000000;
+	return (int)g_engine->GetEngineProperty((asEEngineProp)k_engine_probe_prop);
+}
 
 int midi_last_error_byte_count() { return (int)midi_last_error().size(); }
 int midi_last_error_byte(unsigned int index) {
@@ -2114,7 +2135,7 @@ void register_midi_globals(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterGlobalFunction("int midi_first_error_byte(uint index)", asFUNCTION(midi_first_error_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_input@ midi_input_create()", asFUNCTION(midi_input_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_output@ midi_output_create()", asFUNCTION(midi_output_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("int midi_engine_version()", asFUNCTION(midi_engine_version), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_engine_probe()", asFUNCTION(midi_engine_probe), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 }
 
 void register_nvmidi(asIScriptEngine* engine) {

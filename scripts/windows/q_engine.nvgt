@@ -1,8 +1,8 @@
 #pragma plugin nvmidi
 
 void main() {
-	int v = midi_engine_version();
-	print("QE_VERSION=" + v);
+	int v = midi_engine_probe();
+	print("QE_PROBE=" + v);
 	int n = midi_output_port_count();
 	print("QE_PORTS=" + n);
 	print("QE_OK");
