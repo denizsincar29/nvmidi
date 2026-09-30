@@ -670,20 +670,6 @@ jobs:
             @{ name = 'with-array-addon'; src = 'builds\nvmidi-with-addon\nvmidi.dll'; pragma = 'nvmidi' },
             @{ name = 'no-array-addon';   src = 'builds\nvmidi-no-addon\nvmidi.dll';   pragma = 'nvmidi' }
           )
-          # The tool that answers what a dll imports. Resolved inline rather
-          # than through a helper function, because powershell runs the script
-          # front to back: at this line the helper is defined further down and
-          # the call answers "not recognized as a name of a cmdlet".
-          $env:NM = (Get-Command x86_64-w64-mingw32-nm.exe -ErrorAction SilentlyContinue |
-                     Select-Object -First 1).Source
-          if (-not $env:NM) {
-            $env:NM = (Get-Command nm.exe -ErrorAction SilentlyContinue |
-                       Select-Object -First 1).Source
-          }
-          if (-not $env:NM) { throw 'nm is not on PATH; the import check needs it' }
-          Write-Host "NM: $env:NM"
-
-
           $probe = Get-Content (Join-Path $ws 'scripts\windows\loc_probe.nvgt') -Raw
 
           foreach ($c in $cases) {
@@ -716,41 +702,62 @@ jobs:
               # And the file has to be the build its label claims. Two rows
               # that differ only in a name measured one library three times in
               # a row across two runs, each time looking like a clean result.
-              # What the library is, read from the linker's list of what it
-              # needs rather than from its text.
+              # The add-on's call is a literal in the binary, so its presence
+              # is not a matter of opinion: it is either in the file the engine
+              # is about to load or it is not.
+              # The file has to be the build its label claims, and the way to
+              # ask is to look for a string only that build can carry.
               #
-              # Two earlier attempts read the file bytes and asked whether a
-              # message was in there. The first looked for each message as a
-              # substring of the whole library from offset zero; a substring
-              # search is satisfied by the earliest occurrence and the message
-              # a row is keyed on is not always the earliest one, so the
-              # control's own test answered "this is the ordinary build" for
-              # both artifacts - measured, run 36711443162, both 2988154 and
-              # 2987642 bytes carrying calling=True. The second split the
-              # library on nulls and matched whole literals, which cannot be
-              # fooled by a neighbour but found neither message at all -
-              # measured, run 36712454884, both artifacts carrying
-              # calling=False skipmessage=False. Whether the compiler really
-              # ends each literal with a null byte, or packs them some other
-              # way, is a property of a toolchain this workflow should not be
-              # asserting.
+              # Three readings have been tried and two of them were wrong, so
+              # this records what each one answered rather than which one
+              # sounds right.
               #
-              # The question underneath is narrower and has a written answer.
-              # src/nvmidi.cpp calls into the add-on only under
-              # #ifndef NVGT_SKIP_ARRAY_ADDON, so the control never references
-              # CreateScriptArray and the ordinary build does; if the two
-              # differed in anything else, the binaries would not be 512 bytes
-              # apart. The linker records exactly this, by name, in the import
-              # table, and it cannot be present by accident: an import is
-              # written only for a reference that survived the preprocessor.
-              $dll = Join-Path $dir 'nvmidi.dll'
-              $names = (& $env:NM -u $dll) -join "`n"
-              if ($LASTEXITCODE -ne 0) { throw "nm could not read $dll" }
-              $importsTheAddon = ($names -match 'CreateScriptArray')
+              # One: a substring search over the whole file's bytes. That is
+              # the reading that works, and it is the one below. It is not
+              # subtle - a literal in the file at all means the reference to
+              # it was not compiled out, and a reference that was compiled out
+              # leaves no literal behind. Measured on the artifacts of run
+              # 36714462130, downloaded and grepped directly: the control,
+              # 2987642 bytes, contains "NVGT_SKIP_ARRAY_ADDON is set" and
+              # neither "CreateScriptArray" nor "calling RegisterScriptArray";
+              # the ordinary build, 2988154 bytes, contains "calling
+              # RegisterScriptArray" and not the skip message.
+              #
+              # Two: an exact whole-literal match, splitting the file on null
+              # bytes first. That answers false for both artifacts - measured,
+              # run 36712454884, both carrying calling=False skipmessage=False
+              # - because the compiler does not place the bare message in the
+              # string literal table. The stored literal is "nvmidi: calling
+              # RegisterScriptArray", with the fprintf's own prefix, and the
+              # same is true of the skip message. Whether the compiler
+              # terminates each literal with a null is a property of a
+              # toolchain this workflow has no business asserting anyway.
+              #
+              # Three: the import table. An import is recorded only for a
+              # reference that survived the preprocessor, so it looked like a
+              # written answer - but it is not one here, because the plugin
+              # does not import anything from the engine at all. Both
+              # artifacts' import tables were parsed and they are identical:
+              # KERNEL32, WINMM and the api-ms-win-crt set, nothing else. The
+              # engine hands the plugin its API through pointers in a struct,
+              # so there is no name in the import table to find. Measured on
+              # the same two artifacts; it answered CreateScriptArray=False
+              # for both in run 36714462130 and skipped the ordinary build.
+              $raw = [System.IO.File]::ReadAllText((Join-Path $dir 'nvmidi.dll'),
+                                               [System.Text.Encoding]::GetEncoding(28591))
+              $hasCall = $raw.Contains('calling RegisterScriptArray')
+              $hasSkip = $raw.Contains('NVGT_SKIP_ARRAY_ADDON is set')
               $wantCall = ($v.name -eq 'with-array-addon')
-              Write-Host "  $($v.name) imports CreateScriptArray=$importsTheAddon (this row wants $wantCall)"
-              if ($importsTheAddon -ne $wantCall) {
-                Write-Host "  >>> $($c.name) / $($v.name): the library is the other build, so this row would answer for the wrong library"
+              Write-Host "  $($v.name) carries calling=$hasCall skipmessage=$hasSkip (this row wants calling=$wantCall)"
+              #
+              # A row that is skipped says so in its own line, and a build
+              # that carries no marker either way is a build this step cannot
+              # identify - not a build to run anyway.
+              if (-not $hasCall -and -not $hasSkip) {
+                throw "$($c.name) / $($v.name): the library at $dir carries neither marker, so it is not either of the two builds this step knows how to read"
+              }
+              if ($hasCall -ne $wantCall) {
+                Write-Host "  >>> $($c.name) / $($v.name): skipped - the library is the other build, so this row would answer for the wrong library"
                 continue
               }
 
