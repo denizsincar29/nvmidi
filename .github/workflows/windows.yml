@@ -470,75 +470,6 @@ jobs:
           path: tools/winmm_loopback/nvmidi.dll
           if-no-files-found: error
 
-      # The driver has to reach the e2e job, which runs on a different runner:
-      # nothing the build job leaves on disk is visible there. The artifact is
-      # that hand-off, and every job below that runs after this one downloads
-      # it into the workspace at the same path, so the file the e2e stages is
-      # the file this step built rather than a copy that has to be kept in step
-      # by hand.
-      #
-      # The second build, and it has to happen here rather than in the e2e.
-      #
-      # An artifact is a byte stream with a destination name, not a tree: the
-      # e2e cannot ask for the same artifact twice under two names, and it
-      # cannot rename what it downloads, because the name it writes is the name
-      # the file had on the uploading side. So the distinction between the two
-      # builds has to exist before the upload - and a filesystem will not hold
-      # two files called nvmidi.dll, which is why this is a rename in the middle
-      # of the job and not a second artifact.
-      #
-      # `move`, not `copy`: with both files present the second make would find
-      # nvmidi.dll up to date, decide there is nothing to do, and the ordinary
-      # build would silently become a second copy of the no-addon one. Every
-      # number after that would be the wrong library's, reported as healthy.
-      #
-      # The rename is spelled out on a line of a `shell: cmd` step because that
-      # is the only place it can run: `move` is a cmd built-in, and make on this
-      # runner cannot start cmd built-ins at all (runs 36702218450, `del`;
-      # 36703826070, `copy`).
-      #
-      # `move` overwrites here, and that had to be checked rather than
-      # assumed: rename(2) on POSIX replaces the destination silently, cmd's
-      # `move` may or may not, and `/N` is not the switch it looks like -
-      # `move /n /y` fails outright with "The syntax of the command is
-      # incorrect" and exit 1 (run 36705971611), so `/N` is not a no-overwrite
-      # flag in this shell. The invocation that does overwrite is plain
-      # `move /y`, and the two lines below it are what prove it did: the
-      # second one catches a build that never happened, and the probe's
-      # content check catches a file that was renamed by not being renamed.
-  # The rename this whole experiment rests on, on its own, before anything
-  # else in the run can be blamed for it.
-  #
-  # Every attempt to obtain two builds of one source has died at the point
-  # where one file has to become two names, and each failure looked like a
-  # different problem: a plugin that would not load, an artifact that was
-  # empty, a control that carried the treatment. The rename is one command in
-  # one shell, so it gets a job with nothing else in it - a file is placed
-  # under a name that already exists, and the job reports whether the bytes
-  # say the move happened. A red here is the rename; a green here moves the
-  # question elsewhere, which is the point.
-  rename:
-    runs-on: windows-latest
-    steps:
-      - name: a move onto an existing name replaces the bytes
-        shell: cmd
-        run: |
-          echo first build > nvmidi.dll
-          echo second build > nvmidi-noarr.dll
-          move /y nvmidi.dll nvmidi-noarr.dll
-          echo --- nvmidi.dll:
-          if exist nvmidi.dll (type nvmidi.dll) else (echo gone, as move should leave it)
-          echo --- nvmidi-noarr.dll:
-          type nvmidi-noarr.dll
-          findstr /C:"first build" nvmidi-noarr.dll && (
-            echo the move did not overwrite: the old file is still there
-            exit /b 1
-          )
-          findstr /C:"second build" nvmidi-noarr.dll >nul || (
-            echo the destination does not hold what was moved onto it
-            exit /b 1
-          )
-
       # `move` cannot do this job at all, and now that is a measurement rather
       # than a suspicion.
       #
@@ -606,6 +537,64 @@ jobs:
           name: nvmidi-no-addon
           path: noaddon/nvmidi.dll
           if-no-files-found: error
+
+      # The driver has to reach the e2e job, which runs on a different runner:
+      # nothing the build job leaves on disk is visible there. The artifact is
+      # that hand-off, and every job below that runs after this one downloads
+      # it into the workspace at the same path, so the file the e2e stages is
+      # the file this step built rather than a copy that has to be kept in step
+      # by hand.
+      #
+      # The second build, and it has to happen here rather than in the e2e.
+      #
+      # An artifact is a byte stream with a destination name, not a tree: the
+      # e2e cannot ask for the same artifact twice under two names, and it
+      # cannot rename what it downloads, because the name it writes is the name
+      # the file had on the uploading side. So the distinction between the two
+      # builds has to exist before the upload - and a filesystem will not hold
+      # two files called nvmidi.dll, which is why this is a rename in the middle
+      # of the job and not a second artifact.
+      #
+      # `move`, not `copy`: with both files present the second make would find
+      # nvmidi.dll up to date, decide there is nothing to do, and the ordinary
+      # build would silently become a second copy of the no-addon one. Every
+      # number after that would be the wrong library's, reported as healthy.
+      #
+      # The rename is spelled out on a line of a `shell: cmd` step because that
+      # is the only place it can run: `move` is a cmd built-in, and make on this
+      # runner cannot start cmd built-ins at all (runs 36702218450, `del`;
+      # 36703826070, `copy`).
+      #
+      # `move` overwrites here, and that had to be checked rather than
+      # assumed: rename(2) on POSIX replaces the destination silently, cmd's
+      # `move` may or may not, and `/N` is not the switch it looks like -
+      # `move /n /y` fails outright with "The syntax of the command is
+      # incorrect" and exit 1 (run 36705971611), so `/N` is not a no-overwrite
+      # flag in this shell. The invocation that does overwrite is plain
+      # `move /y`, and the two lines below it are what prove it did: the
+      # second one catches a build that never happened, and the probe's
+      # content check catches a file that was renamed by not being renamed.
+  rename:
+    runs-on: windows-latest
+    steps:
+      - name: a move onto an existing name replaces the bytes
+        shell: cmd
+        run: |
+          echo first build > nvmidi.dll
+          echo second build > nvmidi-noarr.dll
+          move /y nvmidi.dll nvmidi-noarr.dll
+          echo --- nvmidi.dll:
+          if exist nvmidi.dll (type nvmidi.dll) else (echo gone, as move should leave it)
+          echo --- nvmidi-noarr.dll:
+          type nvmidi-noarr.dll
+          findstr /C:"first build" nvmidi-noarr.dll && (
+            echo the move did not overwrite: the old file is still there
+            exit /b 1
+          )
+          findstr /C:"second build" nvmidi-noarr.dll >nul || (
+            echo the destination does not hold what was moved onto it
+            exit /b 1
+          )
 
   e2e:
     runs-on: windows-latest
