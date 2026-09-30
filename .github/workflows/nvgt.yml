@@ -633,6 +633,18 @@ jobs:
             exit 1
           fi
 
+      # A failure that prints its log inline is not enough: the log is the
+      # one thing that says *why*, and after the job ends it is gone. The last
+      # Windows investigation had to be done by inference for exactly this
+      # reason. Upload first, then decide.
+      - name: keep the logs either way
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: logs/
+          if-no-files-found: warn
+
       # The library the release attaches is the dummy one, because ALSA cannot
       # be assumed on a user's machine. That is a deliberate trade, and it is
       # exactly why the real backend is exercised here: the artefact a musician
