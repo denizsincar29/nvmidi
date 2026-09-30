@@ -206,7 +206,7 @@ int main(int argc, char **argv)
 			say("DRVLOAD -> msg=0x%03lx %s id=%lu %s",
 			    calls[i].msg, describe(calls[i].msg),
 			    (unsigned long)driver_id, span);
-			ret = entry((DWORD)driver_id, calls[i].msg, calls[i].p1, calls[i].p2);
+			ret = entry((DWORD)driver_id, calls[i].msg, calls[i].p1, calls[i].p2, calls[i].p3);
 			say("DRVLOAD <- msg=0x%03lx ret=0x%lx gave=%lu %s",
 			    calls[i].msg, (unsigned long)ret, (unsigned long)desc_given,
 			    (cfg.dwDCISize == before_dcisize) ? "dci-untouched" : "DCI-REWRITTEN");
