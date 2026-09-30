@@ -225,3 +225,48 @@ Design, and the reasons that are not obvious:
 
 Neither file has run on hardware yet. Nothing in this repository has ever
 carried a byte between two processes - that is the whole reason they exist.
+
+## The window into the crash, opened (this session)
+
+The Windows run has been failing with `nvgt exited -1073741819 (0xC0000005)`
+after about two seconds for a long stretch of runs, and every reading of it
+was taken through a file that was always empty. That file is now explained.
+
+**stdout is buffered by the engine and the buffer does not survive a crash.**
+The control is `scripts/windows/e2e_min.nvgt` - a `#pragma plugin nvmidi` and
+two prints - and on the runner it exits 0 in 1.3 seconds leaving
+`MIN_BEGINMIN_END` in stdout: sixteen bytes, no trailing newline. That is a
+clean exit flushing. `e2e_winmm.nvgt` on the same runner dies at 1.9 seconds
+and leaves **0 bytes of stdout** beside **4783 bytes of stderr**, and stderr
+was never buffered. So the 0 byte `logs_e2e.txt` is the crash's fingerprint,
+not a defect of the harness, and no line added to that script could have been
+read back while the crash stood. `can_flush = true` at the top of `main()` is
+the attempt to change that; the compile pass will refuse the name if a script
+cannot reach it, and that refusal is itself an answer.
+
+**The plugin is not what dies.** The 4783 byte stderr file from run
+36775764009 carries the whole registration trace on a real Windows runner:
+`engine plugin api version 5, this plugin built against 5`, `calls=157
+refused=0`, every registration crumb through `end of register_nvmidi`, `engine
+type probe: 6 of 6 registered types are in the engine`, and
+`6 of the plugin's own types answered to their name after registration`. The
+plugin loads and registers; the death is after that, inside the e2e script's
+own run. The note in windows.yml saying no script can reach `main()` with the
+plugin loaded and that the crash precedes it is refuted by `e2e_min`, which
+reaches `main()` and exits 0.
+
+**Two of my own claims were wrong and are corrected in the tree.** The commit
+`6ca957c` said the compile pass truncated `logs_e2e.txt`; run 36776804229, on
+that very revision, still reports 0 bytes, which a pass writing elsewhere
+cannot produce. And the older comment that the crash precedes any script was
+asserted as measurement when it was inference. Both rewritten.
+
+## What green still does not mean
+
+Unchanged by any of this, and worth keeping beside it: no build machine has
+ever carried a MIDI byte. The GitHub runner's kernel has no sound subsystem,
+so the transport has no instrument there at all, and the octave echo asked for
+in message 5506 is two unmeasured halves stacked on each other. A green e2e
+would prove the type surface and the port enumeration. The hearing test is
+where the transport gets measured, on the one machine that has a sequencer and
+a person sitting at it.
