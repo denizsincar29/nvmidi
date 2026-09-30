@@ -314,12 +314,26 @@ def run_python_test(args):
         return 1
 
     shared = Plugin_Shared()
-    shared.version = reported
+    # A version it will refuse, deliberately.
+    #
+    # This test's question is whether the plugin checks the version at all,
+    # and that question is only asked by handing it a number that is not the
+    # one it was built for. Filling in `reported` made the check pass by
+    # construction and then kept going into a table whose script_engine is
+    # still null - nvgt_plugin() reads the version, is satisfied, and
+    # registers its types against a null engine, which faults. The fault then
+    # lands in this test, on the first thing that touches the engine, and a
+    # loader that faults on its own harness teaches nothing about the library.
+    #
+    # So the harness stays on its own side of the line: it supplies a table it
+    # knows is unusable, a refusal is the measurement it is looking for, and
+    # an acceptance is reported as the finding it is rather than walked into.
+    shared.version = reported + 1
 
     print("")
     print("calling nvgt_plugin() with a zeroed engine table...")
-    print("the plugin refuses a structure it cannot use, so a refusal here means")
-    print("the api version check answered no - which is a fact about this file.")
+    print("the plugin refuses a structure it is not built to take, so a refusal")
+    print("here is the api version check answering no - a fact about this file.")
     try:
         accepted = bool(entry(ctypes.byref(shared)))
     except Exception as error:  # noqa: BLE001 - printing is the point
