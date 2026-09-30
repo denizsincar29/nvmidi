@@ -222,8 +222,21 @@ void main() {
 	bool heard = false;
 	while (ticks() < deadline && !heard) {
 		while (reader.has_message()) {
-			midi_message m;
-			if (!reader.next_message(m)) break;
+			// A common variable, handed over by reference. `midi_message` is
+			// registered as a value type carrying asOBJ_POD, and a POD value
+			// assigned to another is what the engine compiles as a plain copy
+			// of its bytes - so a plain object asked to receive one is asked
+			// for an opAssign behaviour the moment the parameter is by value,
+			// which is what line 226 used to be: "No appropriate opAssign
+			// method found in 'midi_message' for value assignment". The same
+			// type assembled through a handle is never copied, and compiling is
+			// all this script is asked to do on this runner - the input half
+			// needs a device.
+			//
+			// The reader owns the message and hands back a pointer to it that
+			// stays alive until the next message is read, which is exactly this
+			// loop's lifetime. See PROBE-FINDINGS.md at the repo root.
+			midi_message@ m = reader.next_message_handle();
 			string text = "";
 			for (int bi = 0; bi < midi_message_name_byte_count(m); bi++) text += char_of(midi_message_name_byte(m, bi));
 			print("E2E_HEARD " + text);

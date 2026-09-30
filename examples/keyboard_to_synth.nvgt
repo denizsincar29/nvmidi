@@ -137,8 +137,11 @@ void main() {
 	announce("From " + bytes_of_input_port_name(input) + " to " + bytes_of_port_name(output));
 
 	while (!key_pressed(KEY_ESCAPE)) {
-		midi_message m;
-		while (input.next_message(m)) {
+		// As in echo_monitor: a handle, because a value argument makes the
+		// engine copy a POD type and then ask the type for an opAssign
+		// behaviour it does not have.
+		midi_message@ m = input.next_message_handle();
+		while (m !is null) {
 			uint command = m.status & 0xf0;
 
 			if (command == 0x90 && m.data2 > 0) {
@@ -157,6 +160,7 @@ void main() {
 				output.send(m.status, m.data1, m.data2);
 			}
 			// Everything else is dropped. Add cases here as you need them.
+			m = input.next_message_handle();
 		}
 		wait(5);
 	}

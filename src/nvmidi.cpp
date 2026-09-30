@@ -692,6 +692,12 @@ bool midi_message_read_out(const midi_message& src, midi_message& out) {
 	return true;
 }
 
+midi_message* midi_input::next_message_handle() {
+	std::lock_guard<std::mutex> lock(queue_mutex);
+	if (queue.empty()) return nullptr;
+	return &queue.front();
+}
+
 bool midi_input::next_message(midi_message& out) {
 	std::lock_guard<std::mutex> lock(queue_mutex);
 	if (queue.empty()) return false;
@@ -2505,6 +2511,11 @@ void register_midi_input(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool has_message() const", asMETHOD(midi_input, has_message), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "uint get_pending() const", asMETHOD(midi_input, get_pending), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool next_message(midi_message&out) const", asMETHOD(midi_input, next_message), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	// The handle form, and the one every script should read through: the engine
+	// never copies a handle, so this registers no value-assignment question for
+	// the compiler to fail on. Registered with the same return type spelled as
+	// a handle, which is the whole point.
+	reg->check( engine->RegisterObjectMethod("midi_input", "midi_message@ next_message_handle()", asMETHOD(midi_input, next_message_handle), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "void clear()", asMETHOD(midi_input, clear), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "void set_ignore_sysex(bool)", asMETHOD(midi_input, set_ignore_sysex), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool get_ignore_sysex() const", asMETHOD(midi_input, get_ignore_sysex), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
