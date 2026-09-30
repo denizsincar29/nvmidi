@@ -670,6 +670,20 @@ jobs:
             @{ name = 'with-array-addon'; src = 'builds\nvmidi-with-addon\nvmidi.dll'; pragma = 'nvmidi' },
             @{ name = 'no-array-addon';   src = 'builds\nvmidi-no-addon\nvmidi.dll';   pragma = 'nvmidi' }
           )
+          # The tool that answers what a dll imports. Named once here because
+          # the step below uses it and no step should guess where it lives.
+          $env:NM = Resolve-Tool 'x86_64-w64-mingw32-nm.exe'
+          if (-not $env:NM) { $env:NM = Resolve-Tool 'nm.exe' }
+          if (-not $env:NM) { $env:NM = Resolve-Tool 'nm' }
+          if (-not $env:NM) { throw 'nm is not on PATH; the import check needs it' }
+          Write-Host "NM: $env:NM"
+          function Resolve-Tool([string] $name) {
+            $c = Get-Command $name -ErrorAction SilentlyContinue
+            if ($c) { return $c.Source }
+            return $null
+          }
+
+
           $probe = Get-Content (Join-Path $ws 'scripts\windows\loc_probe.nvgt') -Raw
 
           foreach ($c in $cases) {
@@ -702,38 +716,40 @@ jobs:
               # And the file has to be the build its label claims. Two rows
               # that differ only in a name measured one library three times in
               # a row across two runs, each time looking like a clean result.
-              # The add-on's call is a literal in the binary, so its presence
-              # is not a matter of opinion: it is either in the file the engine
-              # is about to load or it is not.
+              # What the library is, read from the linker's list of what it
+              # needs rather than from its text.
               #
-              # Both readings are taken from the whole library, not from one
-              # offset. A substring search is satisfied by the first occurrence
-              # of the key, and the key being searched for is the build's own
-              # message - "NVGT_SKIP_ARRAY_ADDON is set" - which this source
-              # carries twice: once as the fprintf that prints it, and once as
-              # the comment above the flag that explains why. The comment sits
-              # near the bottom of the file, the fprintf near the top, and the
-              # ordinary build was assembling the name of the add-on it was
-              # about to register in the same translation unit - so the literal
-              # the string literal table puts first is not the fprintf's. Both
-              # strings are null-terminated and the compiler emits them
-              # null-separated, so reading to the first null answers with the
-              # wrong one: measured, run 36711443162, both artifacts - the
-              # 2988154-byte ordinary build and the 2987642-byte control -
-              # answered ['calling RegisterScriptArray'], and the control row
-              # then ran a library that had never had the call compiled out.
-              # A null is the one byte a string literal cannot contain, so
-              # splitting the library on it and asking whether any complete
-              # literal equals the key cannot be fooled by these neighbours.
-              $bytes = [System.IO.File]::ReadAllBytes((Join-Path $dir 'nvmidi.dll'))
-              $ascii = [System.Text.Encoding]::ASCII.GetString($bytes)
-              $strings = [System.Collections.Generic.HashSet[string]]::new()
-              foreach ($s in ($ascii -split "`0")) { [void]$strings.Add($s) }
-              $hasCall = $strings.Contains('calling RegisterScriptArray')
-              $hasSkip = $strings.Contains('NVGT_SKIP_ARRAY_ADDON is set')
+              # Two earlier attempts read the file bytes and asked whether a
+              # message was in there. The first looked for each message as a
+              # substring of the whole library from offset zero; a substring
+              # search is satisfied by the earliest occurrence and the message
+              # a row is keyed on is not always the earliest one, so the
+              # control's own test answered "this is the ordinary build" for
+              # both artifacts - measured, run 36711443162, both 2988154 and
+              # 2987642 bytes carrying calling=True. The second split the
+              # library on nulls and matched whole literals, which cannot be
+              # fooled by a neighbour but found neither message at all -
+              # measured, run 36712454884, both artifacts carrying
+              # calling=False skipmessage=False. Whether the compiler really
+              # ends each literal with a null byte, or packs them some other
+              # way, is a property of a toolchain this workflow should not be
+              # asserting.
+              #
+              # The question underneath is narrower and has a written answer.
+              # src/nvmidi.cpp calls into the add-on only under
+              # #ifndef NVGT_SKIP_ARRAY_ADDON, so the control never references
+              # CreateScriptArray and the ordinary build does; if the two
+              # differed in anything else, the binaries would not be 512 bytes
+              # apart. The linker records exactly this, by name, in the import
+              # table, and it cannot be present by accident: an import is
+              # written only for a reference that survived the preprocessor.
+              $dll = Join-Path $dir 'nvmidi.dll'
+              $names = (& $env:NM -u $dll) -join "`n"
+              if ($LASTEXITCODE -ne 0) { throw "nm could not read $dll" }
+              $importsTheAddon = ($names -match 'CreateScriptArray')
               $wantCall = ($v.name -eq 'with-array-addon')
-              Write-Host "  $($v.name) carries calling=$hasCall skipmessage=$hasSkip (this row wants calling=$wantCall)"
-              if ($hasCall -ne $wantCall) {
+              Write-Host "  $($v.name) imports CreateScriptArray=$importsTheAddon (this row wants $wantCall)"
+              if ($importsTheAddon -ne $wantCall) {
                 Write-Host "  >>> $($c.name) / $($v.name): the library is the other build, so this row would answer for the wrong library"
                 continue
               }
