@@ -671,7 +671,26 @@ unsigned int midi_input::get_pending() const {
 bool midi_input::next_message(midi_message& out) {
 	std::lock_guard<std::mutex> lock(queue_mutex);
 	if (queue.empty()) return false;
-	out = queue.front();
+	// Members, not `out = queue.front();`.
+	//
+	// Measured, on the nvgt job of run 36769749314: the assignment was refused
+	// at compile time - "ERROR: No appropriate opAssign method found in
+	// 'midi_message' for value assignment" - so every script that reads a
+	// message failed to build, and the reader that proves the input half works
+	// was in that set. A plugin type needs an explicit opAssign behaviour for
+	// `a = b` to compile; that is the engine's rule and it applies to the
+	// caller's line even when the assignment happens inside the plugin.
+	//
+	// Both sides of this line are plugin-owned, so the copies can be member
+	// writes with no assignment operator in sight. buffer is the only member
+	// with a non-trivial copy and is written first, with assign() rather than
+	// operator=, for that same reason.
+	out.buffer.assign(queue.front().buffer);
+	out.status = queue.front().status;
+	out.data1 = queue.front().data1;
+	out.data2 = queue.front().data2;
+	out.channel = queue.front().channel;
+	out.timestamp = queue.front().timestamp;
 	queue.pop_front();
 	return true;
 }
