@@ -2740,6 +2740,20 @@ std::string midi_first_error() {
 // ---------------------------------------------------------------------------
 
 plugin_main(nvgt_plugin_shared* shared) {
+	// A null table is refused before anything is read out of it.
+	//
+	// This line exists because the ci probe calls the entry point with a table
+	// of zeroes, and the version line below reads shared->version before any
+	// check - so the probe measured a dereference of address 0 rather than the
+	// api-version answer it was written for (measured on windows-latest,
+	// 30.09: "access violation writing 0x0000000000000000" instead of a
+	// refusal). A pointer that is null and a struct that is zeroed are two
+	// different faults and the probe was meant to ask about the second.
+	if (!shared) {
+		fprintf(stderr, "nvmidi: the engine passed no plugin table at all\n");
+		fflush(stderr);
+		return false;
+	}
 	// The engine's api version, printed BEFORE the comparison and on stderr.
 	//
 	// Why before. prepare_plugin refuses a mismatch at nvgt_plugin.h:157 and
