@@ -1,6 +1,7 @@
 # nvmidi — state of the investigation
 
-Last updated: 2026-09-30, at commit 512c960.
+Last updated: 2026-09-30, after run 36779797186 (the buffering-story
+retraction, and the probe loop cut to the cases whose load the run verifies).
 
 ## The root cause, found and fixed
 
@@ -102,6 +103,24 @@ Telegram context:
 3. The build failure was a missing include plus two missing declaration
    families, not the "silent step at the end of a chain" I first claimed.
 4. The sweep invalidation, retracted.
+5. **The buffering story was half wrong.** I told him a 0 byte
+   `logs_e2e.txt` was the crash's fingerprint because a dying process skips
+   the stdout flush. Run 36779797186 shows `e2e_min` exiting **0** with the
+   same 4783 bytes on stderr as every crashing probe, and `n_inputonly`
+   printing 440 bytes to stdout with **0** on stderr - so the 4783 bytes are
+   the plugin's registration trace on every load, not a fault symptom. The
+   buffering half is real; the "fingerprint" half was mine and it was wrong.
+   It is corrected in `windows.yml`, in `e2e_winmm.nvgt` and above, and the
+   probe loop is cut from twenty-three cases to six because twelve of the
+   others only ever measured the compiler's refusals or the same
+   registration baseline.
+6. **`probe_pragma_only` was never killed at a 60-second limit** - it exits 0
+   in 0.6 s (run 36779797186). I wrote that it was cut short. It was not.
+7. **`e2e_winmm.nvgt`'s "the script never started" guard is not evidence the
+   plugin failed.** The job's guard says `nvgt did not run it at all` while
+   `e2e_min` runs to a clean exit on the same runner, so the guard is
+   measuring the death, not the load - and the death is now sited earlier
+   than the line-542 create call I had named.
 
 ## The reader, resolved (512c960)
 
@@ -226,43 +245,73 @@ Design, and the reasons that are not obvious:
 Neither file has run on hardware yet. Nothing in this repository has ever
 carried a byte between two processes - that is the whole reason they exist.
 
-## The window into the crash, opened (this session)
+## The buffering/registration-trace story, and its retraction
 
 The Windows run has been failing with `nvgt exited -1073741819 (0xC0000005)`
-after about two seconds for a long stretch of runs, and every reading of it
-was taken through a file that was always empty. That file is now explained.
+after about a second for a long stretch of runs, and a reading of it was
+built around the file that was always empty. Part of that reading is now
+retracted by the run's own numbers.
 
-**stdout is buffered by the engine and the buffer does not survive a crash.**
-The control is `scripts/windows/e2e_min.nvgt` - a `#pragma plugin nvmidi` and
-two prints - and on the runner it exits 0 in 1.3 seconds leaving
-`MIN_BEGINMIN_END` in stdout: sixteen bytes, no trailing newline. That is a
-clean exit flushing. `e2e_winmm.nvgt` on the same runner dies at 1.9 seconds
-and leaves **0 bytes of stdout** beside **4783 bytes of stderr**, and stderr
-was never buffered. So the 0 byte `logs_e2e.txt` is the crash's fingerprint,
-not a defect of the harness, and no line added to that script could have been
-read back while the crash stood. The engine's own switch for it, `can_flush`, is out of a
-script's reach: `can_flush = true;` on the first line of `main()` was refused
-with "ERROR: No matching symbol 'can_flush'", exit 65, measured on run
-36778136862 - the second repair for this to die at that wall, after `fflush()`
-on run 36710433374. The buffer cannot be turned off from a script, so the
-crash itself stays the only way in, and it stays the thing to fix.
+**What was claimed.** The engine's `print()` buffers, and its buffer is
+flushed at a clean exit. `scripts/windows/e2e_min.nvgt` - a `#pragma plugin
+nvmidi` and two prints - exits 0 leaving `MIN_BEGINMIN_END` in stdout,
+sixteen bytes, no trailing newline. That much is still true. The claim that
+followed is not: that a *crashing* process skips that flush, so that the 0
+byte `logs_e2e.txt` beside the 4783 byte stderr file is the crash's own
+fingerprint.
 
-**The plugin is not what dies.** The 4783 byte stderr file from run
-36775764009 carries the whole registration trace on a real Windows runner:
-`engine plugin api version 5, this plugin built against 5`, `calls=157
-refused=0`, every registration crumb through `end of register_nvmidi`, `engine
-type probe: 6 of 6 registered types are in the engine`, and
-`6 of the plugin's own types answered to their name after registration`. The
-plugin loads and registers; the death is after that, inside the e2e script's
-own run. The note in windows.yml saying no script can reach `main()` with the
-plugin loaded and that the crash precedes it is refuted by `e2e_min`, which
-reaches `main()` and exits 0.
+**What run 36779797186 measured.** From the probe loop's own printed line
+(`exit {code} after {sec}s, stdout {n} bytes, stderr {n} bytes`):
 
-**Two of my own claims were wrong and are corrected in the tree.** The commit
-`6ca957c` said the compile pass truncated `logs_e2e.txt`; run 36776804229, on
-that very revision, still reports 0 bytes, which a pass writing elsewhere
-cannot produce. And the older comment that the crash precedes any script was
-asserted as measurement when it was inference. Both rewritten.
+    e2e_min           exit 0 after 0.6s, stdout 16 bytes, stderr 4783 bytes
+    l_int, m_str, k_lit  exit 0,            stdout  4 bytes, stderr 4783 bytes
+    i_var             exit 0,               stdout  7 bytes, stderr 4783 bytes
+    g_float           exit 0,               stdout 12 bytes, stderr 4783 bytes
+    n_handle2         exit 0,               stdout 72 bytes, stderr 4783 bytes
+    probe_pragma_only exit 0,               stdout 21 bytes, stderr 4783 bytes
+    n_type1, n_ctor   exit 65 after 0.2s,   stdout  0 bytes, stderr    0 bytes
+    j_pragma          exit 65,              stdout 94 bytes, stderr    0 bytes
+    n_noteonly        exit 65,              stdout 254 bytes, stderr   0 bytes
+    n_inputonly       exit 65,              stdout 440 bytes, stderr   0 bytes
+
+Two things fall out and neither can be argued with:
+
+- `e2e_min` exits **0** with **the same 4783 bytes on stderr** as every
+  crashing probe, and all eight of those `.err` files are byte-identical
+  (md5 `20775200`). A clean exit and a crash cannot share one stderr file if
+  that file is the crash's own trace.
+- The sizes are mutually exclusive. `i_var` reports stdout 7 with stderr 4783;
+  `n_inputonly` reports stdout 440 with stderr **0**. If a death before the
+  flush produced the 4783 bytes, `n_inputonly` could not have zero.
+
+The 4783 bytes are the plugin's **registration trace**, emitted on every load
+of the library, and they are the baseline of the run rather than the symptom
+of anything. They say one thing and it is worth saying: the plugin
+registered. Registration completes and the script runs to a clean exit 0 for
+at least eight probes - that is the safe baseline, and it is established by
+the run itself rather than by a grep.
+
+**What replaced it as the read of the crash.** A 0 byte `logs_e2e.txt` now
+means only that the process died before any print reached the file. The
+probes that die at 0.2 s with a 0-byte stderr die *before* the registration
+trace exists at all, i.e. before the plugin's load-time work is done; and the
+plugin's own heartbeat log (`scripts/windows/nvmidi-heartbeat.log`, 112
+bytes) shows the static constructor entered, a heartbeat thread started, a
+beat at ms=0 and another at ms≈251 - then silence, while the process lives on
+to 1.1 s. That points at the plugin's load-time path or the engine's startup,
+which is earlier than the `midi_output_create()` call the previous session
+had designated as the control. That is a hypothesis and is marked as one; it
+is not measured yet.
+
+**Superseded claims corrected in the tree.** Commit `6ca957c` said the
+compile pass truncated `logs_e2e.txt`; run 36776804229, on that very
+revision, still reports 0 bytes, which a pass writing elsewhere cannot
+produce. And the sentence "a 0 byte logs_e2e.txt IS the crash's fingerprint"
+is gone from `windows.yml` and from `e2e_winmm.nvgt`. The `can_flush` /
+`fflush()` refusals stand as measurements: `can_flush = true;` was refused
+with "ERROR: No matching symbol 'can_flush'" (exit 65, run 36778136862) and
+`fflush()` the same way (run 36710433374). A script still cannot turn the
+buffer off; that part was never in doubt.
 
 ## What green still does not mean
 

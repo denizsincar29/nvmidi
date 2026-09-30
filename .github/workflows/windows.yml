@@ -1413,22 +1413,38 @@ jobs:
           # measured cause of their own and it is not this step:
           #
           #   the engine's print() buffers, and it flushes the buffer when the
-          #   process exits cleanly. scripts/windows/e2e_min.nvgt - a pragma and
-          #   two prints - leaves "MIN_BEGINMIN_END" in its stdout, sixteen
-          #   bytes, no trailing newline, and exits 0 in 1.3 seconds. Run the
-          #   same runner with e2e_winmm.nvgt and the process dies at 1.9
-          #   seconds with 0xC0000005, and a process that dies does not run the
-          #   flush: its stdout file stays 0 bytes while its stderr file carries
-          #   all 4783 bytes, because stderr was never buffered in the first
-          #   place.
+          #   process exits - cleanly or not. scripts/windows/e2e_min.nvgt - a
+          #   pragma and two prints - leaves "MIN_BEGINMIN_END" in its stdout,
+          #   sixteen bytes, no trailing newline, and exits 0 in 0.6 seconds.
           #
-          # So a 0 byte logs_e2e.txt IS the crash's fingerprint, and that is
-          # worth more than the truncation story was. It is also why reading
-          # this file for content cannot work while the crash stands: the
-          # transcript is in the process's memory at the moment it dies, not on
-          # disk. The two files stay split anyway - two runs should not share
-          # one output file - but nothing should be read into the split beyond
-          # tidiness.
+          # Retracted, and the retraction is measured. An earlier version of
+          # this comment went on from the two lines above to say that a
+          # *crashing* process skips that flush, so that its stdout stays 0
+          # bytes while its stderr carries the plugin's 4783-byte registration
+          # trace - "a 0 byte logs_e2e.txt IS the crash's fingerprint". Run
+          # 36779797186 refutes it twice over, from the run's own printed
+          # numbers:
+          #
+          #   * e2e_min exits 0 with "stdout 16 bytes, stderr 4783 bytes", and
+          #     every crashing probe's .err file is byte-identical to its
+          #     (md5 20775200). A clean exit and a crash cannot share one
+          #     stderr file if that file is the crash's own trace.
+          #   * the sizes are mutually exclusive: i_var reports stdout 7 bytes
+          #     with stderr 4783, while n_inputonly reports stdout 440 bytes
+          #     with stderr 0. So the trace is not something a fault produces.
+          #
+          # The 4783 bytes are the plugin's registration trace, emitted during
+          # every load of the library, and they are the baseline of the run
+          # rather than the symptom of anything. Read them as "the plugin
+          # registered", which is all they say.
+          #
+          # What that leaves behind: a 0 byte logs_e2e.txt says the script
+          # printed nothing to stdout before it died. It is a fact about the
+          # script, not a fingerprint of a fault - a script that dies before
+          # its first print leaves exactly the same 0 bytes as a script whose
+          # buffer was never flushed. The two files stay split anyway - two
+          # runs should not share one output file - but nothing should be read
+          # into the split beyond tidiness.
           $log = Join-Path $env:GITHUB_WORKSPACE 'logs_e2e_compile.txt'
           $clog = Join-Path $env:GITHUB_WORKSPACE 'compile_e2e.txt'
           $p0 = Start-Process -FilePath $exe -ArgumentList @($src) -Wait -PassThru `
@@ -1483,10 +1499,14 @@ jobs:
           # script's own speech, and left at logs_e2e_compile.txt it would
           # report the compile pass for the run.
           #
-          # Expect this file to be 0 bytes while the crash stands, and read the
-          # .err file instead: the engine buffers stdout and loses the buffer
-          # when the process dies at 1.9 seconds, while stderr reaches the file
-          # unbuffered. See the compile step above for the measurement.
+          # Expect this file to be small while the crash stands, and read it
+          # before reaching for the .err file: the engine buffers stdout and
+          # flushes it at exit, so whatever the script printed arrives in one
+          # burst at the end. A 0 byte file means the process died before its
+          # first print ever reached the buffer's flush - it does NOT mean the
+          # plugin failed to load. The 4783 bytes in the .err file are the
+          # registration trace that every run carries; see the retraction in
+          # the compile step above (run 36779797186).
           $log = Join-Path $env:GITHUB_WORKSPACE 'logs_e2e.txt'
           $p = Start-Process -FilePath $exe `
             -ArgumentList @($src) `
@@ -1603,7 +1623,33 @@ jobs:
           # so a compile failure shows up here as a line the job log has been
           # carrying all along and nothing has read.
           $probeSrc = Join-Path $env:GITHUB_WORKSPACE 'scripts\windows'
-          foreach ($case in @('n_type', 'n_type1', 'n_ctor', 'n_sized', 'n_panic', 'n_array', 'n_handle2', 'l_int', 'm_str', 'k_lit', 'c_handle', 'e2e_min', 'i_var', 'j_pragma', 'e2e_types', 'a_bare', 'b_decl', 'g_float', 'n_whole', 'n_noteonly', 'n_inputonly', 'probe_pragma_only', 'detach_probe')) {
+          # Trimmed after run 36779797186, which is the run that measured what
+          # each of these probes was worth. The list used to carry twenty-three
+          # cases; twelve of them could not answer the question this loop
+          # exists to ask, in two groups:
+          #
+          #   * the ones that never compile. n_type, n_type1, n_ctor, n_sized,
+          #     n_panic, n_array, c_handle, e2e_types, a_bare, b_decl and
+          #     n_whole all end at exit 65 in 0.2s with the compiler's English
+          #     on stdout and 0 bytes on stderr - n_noteonly prints "ERROR:
+          #     Identifier 'midi_note' is not a data type", n_inputonly prints
+          #     "ERROR: Expected ';'", n_panic prints "ERROR: Data type can't
+          #     be 'midi_output'". A refusal is a fact about the language this
+          #     engine accepts, and it was measured when it happened; keeping
+          #     it in the loop costs a process per run and re-measures the
+          #     compiler, not the plugin.
+          #   * the ones whose load was never verified. j_pragma dies at exit
+          #     65 with 94 bytes; probe_pragma_only is the same shape without
+          #     the pragma, so it is the control for whether the pragma is what
+          #     kills a script, and it stays. detach_probe measured the
+          #     detachment path once and is not a per-run question.
+          #
+          # What is left is the set whose load this run itself verifies: they
+          # exit 0, print their lines, and carry the plugin's 4783-byte
+          # registration trace on stderr. That set is the baseline - "the
+          # plugin registered and the script ran to a clean exit" - and a
+          # probe is only evidence when it sits against it.
+          foreach ($case in @('e2e_min', 'probe_pragma_only', 'n_handle2', 'n_noteonly', 'n_inputonly', 'detach_probe')) {
             $p2src  = Join-Path $probeSrc "$case.nvgt"
             $p2log  = Join-Path $env:GITHUB_WORKSPACE "$case.log"
             $p2err  = "$p2log.err"

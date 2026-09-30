@@ -293,15 +293,25 @@ void main() {
 	// stdout has to stop being buffered before the first line of this script
 	// means anything. Measured, and it cost two runs and a wrong commit:
 	//
-	//   e2e_min.nvgt, a #pragma and two prints, exits 0 in 1.3 seconds and
+	//   e2e_min.nvgt, a #pragma and two prints, exits 0 in 0.6 seconds and
 	//   leaves "MIN_BEGINMIN_END" in its stdout - sixteen bytes, no trailing
-	//   newline - which is the engine flushing its buffer on a clean exit.
-	//   This script, on the same runner, dies at 1.9 seconds with 0xC0000005
-	//   and leaves 0 bytes of stdout beside 4783 bytes of stderr. stderr is
-	//   not buffered; stdout is, and a process that dies does not flush.
+	//   newline - which is the engine flushing its buffer on exit.
 	//
-	// So while this crash stands, every print() in this file is written into
-	// memory and thrown away, and no amount of adding lines will read it back.
+	// One half of the reading that followed this measurement is retracted.
+	// It went on to say that the crash skips that flush, so that this script's
+	// 0 bytes of stdout beside 4783 bytes of stderr are the crash's own
+	// fingerprint. Run 36779797186 says otherwise: e2e_min itself reports
+	// "stderr 4783 bytes" on a clean exit 0, the same bytes as every crashing
+	// probe's .err file (md5 20775200), and i_var reports stdout 7 with stderr
+	// 4783 while n_inputonly reports stdout 440 with stderr 0. The 4783 bytes
+	// are the plugin's registration trace, present on every load, and they are
+	// not the symptom of anything.
+	//
+	// What survives is the useful part and it is unchanged: the engine's
+	// print() buffers, and while this crash stands every print() in this file
+	// is written into memory and may never reach the file - so a short stdout
+	// file is not evidence that the plugin failed to load, and 0 bytes means
+	// the process died before any flush, not that the script was never run.
 	//
 	// The engine has a switch for exactly this and a script cannot reach it.
 	// `can_flush` is the setting, and `can_flush = true;` on the first line of
@@ -560,10 +570,23 @@ void main() {
 	// This is the only instance of the type, so it doubles as a control for
 	// the `@` question before any port is opened: if the run dies here, the
 	// fault is in creating an object, and nothing below it - no handle, no
-	// winmm call, no melody - can be blamed. The trace already narrows the
-	// window hard on its own: registration completes (6 of 6 types in the
-	// engine, calls=157 refused=0) and the process dies at about 1.1 seconds,
-	// which is before any of the waits below could account for it.
+	// winmm call, no melody - can be blamed.
+	//
+	// That control is weaker than it reads, and run 36779797186 says why: the
+	// death leaves 0 bytes of stdout, so this script never prints
+	// E2E_BEFORE_CREATE - but it also never prints E2E_BEGIN, which stands
+	// hundreds of lines above this one, and the job's own guard says "nvgt did
+	// not run it at all". A death that lands before the first print of the
+	// file cannot be attributed to a call at line 580 by a file that shows no
+	// print at all. The plugin's heartbeat log points the same way and says
+	// more: the static constructor is entered, a heartbeat thread starts, it
+	// beats at ms=0 and again at ms=251, and then it is silent while the
+	// process lives on to 1.1 seconds - so the plugin was alive and its own
+	// thread stopped, which is not what a bad call in a script looks like.
+	//
+	// Nothing here is deleted: the create-and-open pair below is still the
+	// first thing this script would like to establish. What it is not is a
+	// proven site for the fault, and it should not be read as one.
 	//
 	// Note what is *absent* from this script's stderr during the crash, since
 	// it is the same file the registration trace arrives on: the compiler's
