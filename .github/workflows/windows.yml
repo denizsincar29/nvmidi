@@ -687,11 +687,24 @@ jobs:
               # rows distinguishable at all.
               Copy-Item $dll -Destination (Join-Path $dir 'nvmidi.dll') -Force
 
-              # A directory holds one library under this name. If something
+              # A directory holds one library under this name. If anything
               # else in it answers to nvmidi, the engine may open that instead
-              # and the reading below describes a file nobody chose - which is
-              # exactly what the previous table did, by leaving nvmidi.dll in
-              # place beside the copy. Fail loudly rather than measure it.
+              # and the reading below describes a file nobody chose.
+              #
+              # A copy of nvmidi.dll sitting in the same directory is that
+              # case and not a harmless one, measured: run 36717021758, rows
+              # 3-working-dir and 4-beside-script. Both had just been written
+              # the ordinary build, both ran from a private runner temp
+              # directory holding only that library - 2988154 bytes, listed
+              # under "in reach" - and both loaded the control anyway:
+              # addon_skipped=True, the marker only the other build carries.
+              # The copy left in $dir is what answered them.
+              #
+              # So the copy into $dir stays - the directory has to hold the
+              # library the location is about - but a run may only be read
+              # from the copy that stands alone, and a location whose own
+              # directory answers to nvmidi cannot be measured this way at
+              # all. That is said here and skipped, not measured.
               $strays = @(Get-ChildItem -Path $dir -Filter 'nvmidi*.dll' |
                           Where-Object { $_.Name -ne 'nvmidi.dll' })
               if ($strays.Count -gt 0) {
