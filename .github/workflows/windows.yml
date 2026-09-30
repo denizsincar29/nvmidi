@@ -97,7 +97,7 @@ jobs:
           echo MAKE-FORCED-EXITED-WITH=%ERRORLEVEL%
           if exist nvmidi-noarr.dll (echo FORCED-WROTE-THE-DLL) else (echo FORCED-WROTE-NOTHING)
           echo --- what make said, from a file and not from the pipe ---
-          findstr /N /C:"error" /C:"warning" /C:"nvmidi.cpp" /C:"scriptarray.cpp" probe.out
+          findstr /N /C:"error" /C:"Error" /C:"warning" /C:"Entering" /C:"Nothing" probe.out
           echo --- how much of it there was ---
           for %%F in (probe.out) do echo PROBE-OUT-BYTES=%%~zF
 
@@ -207,10 +207,10 @@ jobs:
       # two files called nvmidi.dll, which is why this is a rename in the middle
       # of the job and not a second artifact.
       #
-      # `move`, not `copy`: with both files present the second make would find
-      # nvmidi.dll up to date, decide there is nothing to do, and the ordinary
-      # build would silently become a second copy of the no-addon one. Every
-      # number after that would be the wrong library's, reported as healthy.
+      # `move`, not `copy`: with both files present the second make finds
+      # nvmidi.dll up to date and runs no recipe, so the ordinary build would be
+      # published as if it were the no-addon one. Every number after that would
+      # be the wrong library's, reported as healthy. Measured, run 36709045673.
       #
       # The rename is spelled out on a line of a `shell: cmd` step because that
       # is the only place it can run: `move` is a cmd built-in, and make on this

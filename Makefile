@@ -139,11 +139,19 @@ clean:
 # (CreateProcess(NULL, copy /Y nvmidi.dll nvmidi-noarr.dll), Makefile:146).
 #
 # So this is not a target the workflow builds by name. It is the same command
-# the ordinary target runs, with the flag, and by the time the workflow invokes
-# it the ordinary build has already been renamed out of its way: the second
-# make finds no nvmidi.dll and writes this one. That is why the recipe writes
-# $(TARGET) and not a hardcoded second name - make is not being asked for a
-# file called nvmidi-noarr.dll, it is being asked for nvmidi.dll a second time
-# under different -D flags. The name the e2e sees is the workflow's doing.
-nvmidi-noarr.dll: $(SOURCES) src/nvmidi.h
+# the ordinary target runs, with the flag, written under $(TARGET): make is not
+# being asked for a file called nvmidi-noarr.dll, it is being asked to run that
+# command again with the flag set. The name the e2e sees is the workflow's
+# doing.
+#
+# $(TARGET) is a prerequisite, and that is what makes it a second build rather
+# than a first one. The file it names already exists - the ordinary build wrote
+# it moments earlier and the workflow has not renamed it away yet - so make
+# considers this target up to date and runs no recipe at all, leaving whatever
+# the ordinary build wrote sitting in the tree as if it were the no-addon
+# library. Measured, run 36709045673: the step asked for this target with -o
+# to keep the ordinary dll, make answered "Nothing to be done for 'all'",
+# exited 0, and wrote no dll. Naming the file as a prerequisite or forcing the
+# recipe with -B is what makes the second build happen.
+nvmidi-noarr.dll: $(SOURCES) src/nvmidi.h $(TARGET)
 	$(CXX) $(CXXFLAGS) -DNVGT_SKIP_ARRAY_ADDON $(INCLUDES) $(SOURCES) -o $(TARGET) $(LDFLAGS) $(LIBS)
