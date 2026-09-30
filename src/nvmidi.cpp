@@ -2033,10 +2033,17 @@ struct registration {
 		// bisection=no.
 		//
 		// The two builds are also told apart by their own bytes without
-		// this string: only the control carries "the engine does not know
-		// array<T", and only the ordinary build carries "calling
-		// RegisterScriptArray" and "RegisterScriptArray returned". This
-		// literal is here so the two agree in name as well as in count.
+		// this string, but not by the pair that was written here first:
+		// "calling RegisterScriptArray" and "RegisterScriptArray returned"
+		// are BOTH in the control, because both are printed inside the else
+		// arm of `if (engine_knows_arrays() && array_is_usable())` and that
+		// is the arm a control takes - the flag makes engine_knows_arrays()
+		// answer true without looking, and with no array<int> registered
+		// array_is_usable() answers false. The line that really separates
+		// them is the then arm's own, "the engine already has array<T> that
+		// resolves": it is reachable only when the detection answered, which
+		// a control never reaches. This literal is here so the two agree in
+		// name as well as in count.
 		//
 		// It is printed and not merely named, because a named string that
 		// is never used is not in the artifact at all. Measured, run

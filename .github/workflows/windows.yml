@@ -235,10 +235,43 @@ jobs:
             }
             return $hits
           }
-          $marker = 'RegisterScriptArray returned'
-          $inWith = Count-Needle $withAddon $marker
-          $inNo   = Count-Needle $noAddon   $marker
-          Write-Host "CALLING-MARKER with-addon=$inWith no-addon=$inNo"
+          #
+          # The needle is the literal that only ONE of the two builds can
+          # carry, and which one it is was read off the control flow rather
+          # than assumed - the previous two needles here were both assumed and
+          # both wrong.
+          #
+          # 'RegisterScriptArray returned' is the line that was here and it
+          # answers nothing: it is printed at the END of the else arm of
+          # `if (engine_knows_arrays() && array_is_usable())`, and in a control
+          # build that arm is exactly where control goes. The flag makes
+          # engine_knows_arrays() answer true without looking (the detection
+          # below it is compiled out), and with no array<int> registered
+          # array_is_usable() answers false - so the conjunction is false, the
+          # else runs, and the control carries 'calling RegisterScriptArray'
+          # AND 'RegisterScriptArray returned'. Both of them. The old assert
+          # `if ($inNo -ne 0) { throw }` could therefore never pass, whatever
+          # the two artifacts were, and the mislabelling it was meant to catch
+          # was never what it measured.
+          #
+          # What is true by construction is the other line. 'the engine already
+          # has array<T> that resolves' sits in the THEN arm, so it is reachable
+          # only when engine_knows_arrays() answered yes by DETECTION - which
+          # the flag makes impossible, because that build returns before the
+          # detection. So it is in every ordinary build and in no control, and
+          # it is the one reading here that separates the two files.
+          #
+          # A needle that is in neither file, or in both, is reported as such
+          # and fails the step: silent zeroes are how the previous version went
+          # three runs without an answer.
+          $withOnly = 'the engine already has array<T> that resolves'
+          $ctrlOnly = 'NVGT_SKIP_ARRAY_ADDON is set'
+          $inWith = Count-Needle $withAddon $withOnly
+          $inNo   = Count-Needle $noAddon   $withOnly
+          $ctrlWith = Count-Needle $withAddon $ctrlOnly
+          $ctrlNo   = Count-Needle $noAddon   $ctrlOnly
+          Write-Host "WITH-ADDON-ONLY with-addon=$inWith no-addon=$inNo (ordinary build carries it, control must not)"
+          Write-Host "CONTROL-ONLY with-addon=$ctrlWith no-addon=$ctrlNo (control carries it, ordinary build must not)"
           # The count is not enough to act on, because "the control carries the
           # marker" has two possible readings and only one of them is about this
           # plugin. So each needle is located and its 64 bytes either side are
@@ -264,14 +297,14 @@ jobs:
             }
             if ($shown -eq 0) { Write-Host ("NEEDLE {0}: not present" -f $label) }
           }
-          Show-Needle $withAddon 'with-addon' $marker
-          Show-Needle $noAddon   'no-addon'   $marker
-          Show-Needle $withAddon 'with-addon' 'NVGT_SKIP_ARRAY_ADDON is set'
-          Show-Needle $noAddon   'no-addon'   'NVGT_SKIP_ARRAY_ADDON is set'
-          Show-Needle $withAddon 'with-addon' 'the engine does not know array<T'
-          Show-Needle $noAddon   'no-addon'   'the engine does not know array<T'
-          if ($inWith -lt 1) { throw 'the with-addon build does not carry the add-on call' }
-          if ($inNo   -ne 0) { throw 'the no-addon build carries the add-on call, so it is not the control' }
+          Show-Needle $withAddon 'with-addon' $withOnly
+          Show-Needle $noAddon   'no-addon'   $withOnly
+          Show-Needle $withAddon 'with-addon' $ctrlOnly
+          Show-Needle $noAddon   'no-addon'   $ctrlOnly
+          if ($inWith -lt 1) { throw 'the with-addon build does not carry the line only the ordinary build can reach, so the artifact labelled with-addon is not an ordinary build' }
+          if ($inNo   -ne 0) { throw 'the no-addon build carries the ordinary build''s own line, so it is not the control' }
+          if ($ctrlWith -ne 0) { throw 'the with-addon build carries the control''s marker, so the artifact labelled with-addon is a control' }
+          if ($ctrlNo -lt 1) { throw 'the no-addon build does not carry the control''s marker, so it is not the control' }
 
           Get-ChildItem withaddon/nvmidi.dll, noaddon/nvmidi.dll | ForEach-Object { Write-Host ("{0} {1}" -f $_.Length, $_.FullName) }
 
@@ -930,20 +963,33 @@ jobs:
                                                [System.Text.Encoding]::GetEncoding(28591))
               $hasCall = $raw.Contains('calling RegisterScriptArray')
               $hasSkip = $raw.Contains('NVGT_SKIP_ARRAY_ADDON is set')
-              # Neither name found is not a mystery, it is a named state: the
-              # artifact step ends with a note about what the two builds are
-              # called when nothing asks, and this step ends by quoting the
-              # two literals it searched for, so the next reading starts from
-              # the strings rather than from the word "neither".
-              $hasSkipReason = -not ($raw.Contains('the engine does not know array<T'))
+              # The third name that used to be read here was invented. There is
+              # no literal 'the engine does not know array<T' in this tree at
+              # all - not in src/, not in tools/, nowhere - so the check that
+              # searched for it was `-not $raw.Contains(<string no build has>)`,
+              # which is true for every artifact, and it was computed into a
+              # variable no branch below ever read. Two ways of saying nothing,
+              # one of them dressed as a fact about the build. The name that is
+              # really in one build and not the other is below.
+              $hasOrdinaryLine = $raw.Contains('the engine already has array<T')
               $wantCall = ($v.name -eq 'with-array-addon')
-              Write-Host "  $($v.name) carries calling=$hasCall skipmessage=$hasSkip no-detection-branch=$hasSkipReason (this row wants calling=$wantCall)"
+              Write-Host "  $($v.name) carries calling=$hasCall skipmessage=$hasSkip ordinary-line=$hasOrdinaryLine (this row wants calling=$wantCall)"
               #
               # A row that is skipped says so in its own line, and a build
               # that carries no marker either way is a build this step cannot
               # identify - not a build to run anyway.
+              #
+              # 'Neither marker' is a state the ordinary build can really be in,
+              # and the message used to say otherwise: it named 'the engine
+              # already has array<T' as the ordinary build's own line, while the
+              # two literals actually searched for were 'calling
+              # RegisterScriptArray' and 'NVGT_SKIP_ARRAY_ADDON is set'. The
+              # ordinary build prints neither of those on the path this step
+              # runs, so it landed here and was thrown as unidentifiable. A
+              # message that describes a check other than the one above it is
+              # worse than a bare one.
               if (-not $hasCall -and -not $hasSkip) {
-                throw "$($c.name) / $($v.name): the library at $dir carries neither marker, so it is not either of the two builds this step knows how to read. The two literals this step searched for were 'calling RegisterScriptArray' and 'NVGT_SKIP_ARRAY_ADDON is set'; the ordinary build is the one whose stderr says 'the engine already has array<T', and the build with the call removed is the one that says neither that nor 'calling'."
+                throw "$($c.name) / $($v.name): the library at $dir carries neither of the two literals this step searches for, 'calling RegisterScriptArray' and 'NVGT_SKIP_ARRAY_ADDON is set', so this step cannot tell which of the two builds it is holding. The ordinary build carries 'calling RegisterScriptArray' and the control carries 'NVGT_SKIP_ARRAY_ADDON is set'; a file with neither is a third thing and no row may run against it."
               }
               if ($hasCall -ne $wantCall) {
                 Write-Host "  >>> $($c.name) / $($v.name): skipped - the library is the other build, so this row would answer for the wrong library"
