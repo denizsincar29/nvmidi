@@ -194,3 +194,34 @@ code paths between runs. (3) must never be presented as "the note arrived".
   midi_message over a std::string member (`-Wclass-memaccess`). It is
   pre-existing and on a path that predates the buffer, but it is exactly the
   class of fault the POD flag caused.
+
+## The hearing test (this turn)
+
+`scripts/hear_test.nvgt` and `scripts/hear_test.py` exist now, and they are
+the answer to the one question ci cannot ask. The script measures both halves
+of the transport on a machine that has a sequencer and a person at it: every
+message the instrument sends is printed and spoken, and then the same bytes
+are sent back out an octave higher - the feature that was asked for.
+
+Design, and the reasons that are not obvious:
+
+- It speaks through `screen_reader_speak` and not through the engine's alert
+  box. `alert` waits for a person to press its button, and a voice prompt that
+  must be dismissed before the next one is heard turns an arpeggio into a queue
+  of dialogs. `e2e_midi.nvgt` avoids the reader for the opposite reason: on a
+  build machine with no reader attached the call never returns.
+- The port is chosen through `midi_config.txt`, which is how the plugin's own
+  parser works - `match` is a substring matched case-insensitively against the
+  port names (`midi_config::load`/`pick`, src/nvmidi.cpp:1525 and :1561), and
+  `port`/`index` are an index. The earlier draft of this script called
+  `config.set_input_port()`, which does not exist; there is no such method.
+- Phase two reopens both ports through configs of their own, because a port is
+  chosen by the config its object was opened with, and because playing into the
+  port that is being read would read the echo back as input for ever.
+- The launcher exists for one Windows reason: nvgt opens its own console and
+  hides it behind the game, so a test that talks to the console is invisible
+  exactly when it matters. It reads that console back, prints each line, and
+  turns the transcript into a verdict that separates measured from reported.
+
+Neither file has run on hardware yet. Nothing in this repository has ever
+carried a byte between two processes - that is the whole reason they exist.

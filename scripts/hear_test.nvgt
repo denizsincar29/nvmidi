@@ -1,0 +1,246 @@
+// nvgt loads this plugin only when the script asks for it by name: without
+// the pragma below the engine never opens the library and every midi_* name
+#pragma plugin nvmidi
+
+// One byte, back as a one-character string. This engine's string(byte) gives
+// the decimal digits of the number rather than the character they stand for -
+// measured on a windows runner, where the backend name came out of the byte
+// pair as "110118109105100105..." and every comparison against "Windows"
+// failed.
+//
+// A table walked with substr() does not work either, and that is measured too:
+// index 32 answers 'W', index 65 answers '-', index 47 answers 'l', and
+// substr(67, 1) is already empty on a literal whose length() is 68. The offsets
+// are not one constant, so what the engine is doing there is unmeasured; what
+// is measured is that the first ten and first twenty six characters of a
+// literal read correctly (find("1") is 1, find("A") is 10). That is all this
+// branch needs: digits, A-Z and a-z come from those two ranges, the punctuation
+// a backend name is made of is a plain branch, and nothing walks the table.
+//
+// Every bound is a number because a character literal here is a one character
+// string, not a code: measured, `b >= '0'` is "No conversion from 'const
+// string' to math type available".
+const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
+const string digits = "0123456789";
+string char_of(uint b) {
+	if (b >= 48 && b <= 57) return digits.substr(b - 48, 1);
+	if (b >= 65 && b <= 90) return byte_letters.substr(b - 65 + 10, 1);
+	if (b >= 97 && b <= 122) return byte_letters.substr(b - 97 + 36, 1);
+	if (b == 47) return "/";
+	if (b == 46) return ".";
+	if (b == 95) return "_";
+	if (b == 45) return "-";
+	if (b == 43) return "+";
+	if (b == 32) return " ";
+	return ".";
+}
+
+
+// --- what this script is for ----------------------------------------------
+//
+// It exists to answer one question that no build machine can answer: does a
+// byte that arrives from a real instrument get out of the plugin again?
+//
+// The e2e job in ci stands down on a machine whose kernel has no snd-seq
+// module, and every github runner is such a machine - measured, kernel
+// 6.17.0-1022-azure, "the runner ships a kernel with no sound subsystem". So
+// the whole transport half of this plugin (a message read out of the queue, a
+// message written to a port) has never been measured anywhere. This script
+// measures it on the only machine that has both a sequencer and a person
+// sitting at it.
+//
+// It does not use the alert box on purpose. The alert box waits for a person
+// to press its button, and a voice prompt that has to be dismissed before the
+// next one can be heard turns a fast arpeggio into a queue of dialogs. Every
+// prompt here is written to the console AND spoken through the reader, which
+// is what nvgt's own examples do; the reader is the only one of the two a
+// blind person can use, and the console is the one a sighted assistant can
+// read afterwards.
+
+// --- the console and the voice --------------------------------------------
+
+void say(const string&in text) {
+	print(text);
+	screen_reader_speak(text, true);
+}
+
+// The plugin hands its strings over as a count plus an indexed byte - see the
+// readme. These put them back together here, where the engine's own strings
+// were measured alive.
+string bytes_of_last_error() {
+	string s = "";
+	for (int i = 0; i < midi_last_error_byte_count(); i++) s += char_of(midi_last_error_byte(i));
+	return s;
+}
+string bytes_of_input_port_name(midi_input@ o) {
+	string s = "";
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += char_of(o.get_port_name_byte(i));
+	return s;
+}
+string bytes_of_port_name(midi_output@ o) {
+	string s = "";
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += char_of(o.get_port_name_byte(i));
+	return s;
+}
+string bytes_of_message(const midi_message&in m) {
+	string s = "";
+	for (int i = 0; i < midi_message_name_byte_count(m); i++) s += char_of(midi_message_name_byte(m, i));
+	return s;
+}
+
+// --- picking the instrument ------------------------------------------------
+
+// The port is chosen the way a user chooses one: a line in midi_config.txt
+// that the plugin matches, case-insensitively, against the port names it can
+// see. That is read out of midi_config::load and pick() in src/nvmidi.cpp - it
+// is not guessed. The file knows three keys: match (a substring of the port
+// name), port (an index) and index (the same). Anything else is ignored, so a
+// file written here stays readable by other scripts in this repository.
+//
+// The line is written rather than the whole file replaced, because the two
+// halves of this test want different ports and the second half must not
+// overwrite the first.
+void write_config(const string&in port_name, bool append) {
+	file@ f = open("midi_config.txt", append ? "a" : "w");
+	if (f is null) {
+		say("Cannot write midi_config.txt in this folder. Run the test from a folder you can write to.");
+		return;
+	}
+	if (!append) {
+		f.write("# written by scripts/hear_test.nvgt\n");
+		f.write("# match is a substring of the port name, case-insensitive\n");
+	}
+	f.write("match=" + port_name + "\n");
+	f.close();
+}
+
+// --- the test --------------------------------------------------------------
+
+void main() {
+	say("nvmidi hearing test. Console and speaker both.");
+	string api = "";
+	for (int i = 0; i < midi_api_name_byte_count(); i++) api += char_of(midi_api_name_byte(i));
+	print("HEAR_API " + api);
+
+	const uint ins = midi_input_port_count();
+	const uint outs = midi_output_port_count();
+	print("HEAR_INPUT_PORTS " + ins);
+	print("HEAR_OUTPUT_PORTS " + outs);
+	if (ins == 0) {
+		say("No midi input ports. Plug the nord in, wait a few seconds, and start this again - a reader built before the instrument was plugged in never attaches to it.");
+		return;
+	}
+
+	// The port to listen on, and the port to play back out of. It is passed in
+	// by the launcher, which knows which is which; when nothing is passed the
+	// first port in the list above is used, and the list is printed either way.
+	string in_name = "";
+	if (get_argc() > 1) in_name = get_arg(1);
+	string out_name = in_name;
+	if (get_argc() > 2) out_name = get_arg(2);
+	if (in_name == "" && ins > 0) {
+		string s0 = "";
+		for (int i = 0; i < midi_input_port_name_byte_count(0); i++) s0 += char_of(midi_input_port_name_byte(0, i));
+		in_name = s0;
+		out_name = s0;
+	}
+	print("HEAR_IN " + in_name);
+	print("HEAR_OUT " + out_name);
+
+	// Phase one picks the instrument, by name, through the config file.
+	write_config(in_name, false);
+	midi_config@ for_input = midi_config_create();
+	for_input.load_if_present("midi_config.txt");
+
+	midi_input@ keyboard = midi_input_create();
+	if (!keyboard.open_config(for_input, "nvmidi hear in")) {
+		say("Cannot open the input: " + bytes_of_last_error());
+		return;
+	}
+	say("Listening on " + bytes_of_input_port_name(keyboard));
+
+	// Phase one, the input half: every message the instrument sends is named.
+	// This is the half that has never been measured by anything.
+	//
+	// The loop ends on escape, which is the way every other script in this
+	// repository ends, and also on its own after a while so that a run left
+	// alone does not hold the port open for ever.
+	say("Play something on the instrument now. Press escape when you are done.");
+	const uint listen_until = ticks() + 120000;
+	uint heard = 0;
+	uint last_heard = 0;
+	while (!key_pressed(KEY_ESCAPE) && ticks() < listen_until) {
+		midi_message m;
+		while (keyboard.next_message(m)) {
+			heard++;
+			last_heard = ticks();
+			string text = bytes_of_message(m);
+			print("HEAR_MSG " + text);
+			// Only the note events are spoken: a keyboard that streams clock or
+			// aftertouch would otherwise bury the notes in chatter.
+			if (text.find("note") >= 0) say(text);
+		}
+		wait(5);
+	}
+	print("HEAR_TOTAL " + heard);
+	keyboard.close();
+
+	// Phase two, the echo half: the same bytes played back, an octave up. This
+	// is the feature that was asked for, and the reason the two halves cannot
+	// share one port - playing into the port being read would read the echo
+	// back as input and never stop.
+	if (heard > 0) {
+		// Phase two wants a different port for each direction - the bytes come
+		// in from the keyboard and go out to the synth - so the file is
+		// rewritten before the two objects are created. The input is reopened
+		// because of the rtmidi trap documented in scripts/e2e_midi.nvgt: a
+		// reader attaches to what exists when it is built and never rescans,
+		// and its port came from the config it was opened with.
+		write_config(in_name, true);
+		midi_config@ for_input2 = midi_config_create();
+		for_input2.load_if_present("midi_config.txt");
+		write_config(out_name, true);
+		midi_config@ for_output = midi_config_create();
+		for_output.load_if_present("midi_config.txt");
+
+		midi_input@ again = midi_input_create();
+		midi_output@ speaker = midi_output_create();
+		const bool have_in2 = again.open_config(for_input2, "nvmidi hear echo in");
+		const bool have_out = speaker.open_config(for_output, "nvmidi hear out");
+		if (!have_in2) {
+			say("Cannot reopen the input for the echo: " + bytes_of_last_error());
+		} else if (!have_out) {
+			say("Cannot open " + out_name + " for playing back: " + bytes_of_last_error());
+		} else {
+			say("Now the echo: play again. Every note comes back an octave higher, out of " + bytes_of_port_name(speaker) + ".");
+			const uint echo_until = ticks() + 120000;
+			uint echoes = 0;
+			while (!key_pressed(KEY_ESCAPE) && ticks() < echo_until) {
+				midi_message m;
+				while (again.next_message(m)) {
+					uint command = m.status & 0xf0;
+					if (command == 0x90 && m.data2 > 0) {
+						int n = m.data1 + 12;
+						if (n > 127) n -= 12;
+						speaker.send_note_on(m.channel, n, m.data2);
+						echoes++;
+						print("HEAR_ECHO note on " + m.data1 + " -> " + n);
+					} else if (command == 0x80 || (command == 0x90 && m.data2 == 0)) {
+						int n = m.data1 + 12;
+						if (n > 127) n -= 12;
+						speaker.send_note_off(m.channel, n, m.data2);
+						print("HEAR_ECHO note off " + m.data1 + " -> " + n);
+					}
+				}
+				wait(5);
+			}
+			speaker.all_notes_off();
+			again.close();
+			speaker.close();
+			print("HEAR_ECHOES " + echoes);
+		}
+	}
+	say("Test finished.");
+	// wait() lets the last lines reach the console before the process goes away.
+	wait(300);
+}
