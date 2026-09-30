@@ -2112,13 +2112,18 @@ void register_nvmidi(asIScriptEngine* engine) {
 	// registers array as a keyword rather than a template, and every script
 	// here writes array<midi_note@>.
 	//
-	// Alive but not sufficient: with this call in place, run 36673402079 still
-	// refused the probe n_noteonly.nvgt with "Identifier 'midi_note' is not a
-	// data type" - and midi_note's registration names no array at all. The
-	// remaining cause is the plugin api version mismatch the entry point
-	// reports: this header says 5, the engine it ran against says 6, and
-	// prepare_plugin returns false on that difference, so no type of this
-	// plugin reaches any script.
+	// Alive but not sufficient, and the reason recorded here was not measured.
+	// It said a plugin api version mismatch (this header's 5 against an
+	// engine's 6) kept every type out of every script. The only ground for
+	// that number was plug_api.c's blob, which sets blob.version = v + 1
+	// itself before calling the entry point - so "the engine says 6" was the
+	// harness reading back its own constant, not the engine's answer. What is
+	// measured is narrower: run 36673402079 refused the probe n_noteonly.nvgt
+	// with "Identifier 'midi_note' is not a data type", and midi_note's
+	// registration names no array at all, so the array add-on is not the
+	// whole story. It is not the version either until a runner prints
+	// shared->version back, which plugin_main now does before prepare_plugin
+	// compares it.
 	RegisterScriptArray(engine, false);
 
 	register_midi_message(engine, &reg);
@@ -2176,6 +2181,23 @@ std::string midi_first_error() {
 // ---------------------------------------------------------------------------
 
 plugin_main(nvgt_plugin_shared* shared) {
+	// The engine's api version, printed BEFORE the comparison and on stderr.
+	//
+	// Why before. prepare_plugin refuses a mismatch at nvgt_plugin.h:157 and
+	// returns false without touching a single function pointer, so the line
+	// below it cannot run on a mismatch - and a mismatch is exactly the case
+	// this line exists to measure. Printing it here is also the only way to
+	// tell the two readings apart: either the engine's own constant differs
+	// from the 5 in this header, or the engine rewrites the version field
+	// after setting it (nvgt_plugin.h:182). The number settles which.
+	//
+	// stderr, not stdout: the crash that brings us here loses a buffered
+	// stdout (measured - logs_e2e.txt is 0 bytes because E2E_BEGIN is still
+	// in the buffer when the process dies), and fflush is called in the same
+	// breath because a line written and not flushed is a line not written.
+	fprintf(stderr, "nvmidi: engine plugin api version %d, this plugin built against %d\n",
+		shared->version, NVGT_PLUGIN_API_VERSION);
+	fflush(stderr);
 	if (!prepare_plugin(shared)) {
 		fprintf(stderr, "nvmidi: the engine's plugin api version is %d, this plugin was built against %d\n",
 			shared->version, NVGT_PLUGIN_API_VERSION);

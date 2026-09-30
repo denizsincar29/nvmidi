@@ -29,6 +29,11 @@
 
 void main() {
 	print("W_BEGIN");
+	// Before the first plugin call, so that a death in midi_output_port_count
+	// leaves W_BEGIN in the log instead of an empty file. The run this probe
+	// was written for exited 70 with no stdout at all - indistinguishable
+	// from never having started.
+	fflush();
 	const uint OUTPUTS = midi_output_port_count();
 	print("W_OUTPUTS " + OUTPUTS);
 	string synth_name = "";

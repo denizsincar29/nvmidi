@@ -265,6 +265,12 @@ string bytes_of_object_port_name(midi_output@ o) {
 
 void main() {
 	print("E2E_BEGIN");
+	// The first of several flushes. This script has no fflush anywhere else,
+	// and that is why logs_e2e.txt has been 0 bytes on every failing run: the
+	// death it is written to report happens with E2E_BEGIN still sitting in
+	// the buffer, so the log says nothing rather than saying where. Flushing
+	// here costs one call and turns "no output" into "output up to here".
+	fflush();
 
 	// The two lists have to describe the same run, and a mismatch would be
 	// read as a timing fault further down, so it is named here where it is.

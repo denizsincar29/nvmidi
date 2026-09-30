@@ -2,10 +2,32 @@
 //
 // One line of script, one marker. This file is copied into each candidate
 // location and run from there; whichever run prints LOC_OK is a location the
-// engine accepts. Nothing else is in the file, so an exit code here is a
-// statement about the pragma resolution and nothing about the plugin's API.
+// engine accepts. Nothing else is in the file.
+//
+// What an exit code here means, corrected. This comment used to say an exit
+// code was "a statement about the pragma resolution and nothing about the
+// plugin's API". That is wrong, and run 36697433283 is what showed it: all
+// four locations exited 70 with an empty stdout and "system exception" on
+// stderr, which is a death *inside the plugin*, not a failure to find it.
+// Resolution and load are one act - the engine locates the dll, calls its
+// entry point, and the entry point is the plugin's own code (prepare_plugin,
+// then the registrations). So this file does measure plugin code; it simply
+// measures none of the plugin's *script-facing* API. The two are different
+// questions and the header conflated them.
+//
+// The discriminator that makes 70 readable at all, measured on the same run:
+// a pragma naming a plugin that does not exist exits 65 with 94 bytes on
+// stdout and "ERROR: failed to load plugin". Absent gives 65 with a name;
+// present-but-dying gives 70 with nothing. So the engine does find nvmidi.dll.
+//
+// fflush is not decoration. print() buffers, and the failure this file exists
+// to observe kills the process before the buffer reaches the log - the same
+// way logs_e2e.txt is 0 bytes in the e2e step (E2E_BEGIN is written and never
+// flushed). Without the flush below, LOC_OK on a run that later dies would be
+// indistinguishable from no LOC_OK at all.
 #pragma plugin nvmidi
 
 void main() {
 	print("LOC_OK");
+	fflush();
 }
