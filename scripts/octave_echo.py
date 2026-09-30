@@ -584,6 +584,11 @@ NVGT_DEMO = """#pragma plugin nvmidi
 // from the registration rather than from memory: open(uint port),
 // has_message(), next_message(midi_message&out), send(uint, uint, uint),
 // all_notes_off().
+//
+// midi_message is declared with a `@` and that is measured, not decoration:
+// the engine refuses a bare declaration of a plugin type with "Identifier
+// 'midi_message' is not a data type", even when the plugin is loaded and its
+// types are registered. Run 36758442593, commit 85248fd, probe n_ctor.
 void main() {
 	const int OCTAVE = 12;
 	const int SECONDS = <SECONDS>;
@@ -598,7 +603,7 @@ void main() {
 
 	for (int i = 0; i < SECONDS * 200; i++) {
 		while (midi_in.has_message()) {
-			midi_message m;
+			midi_message@ m = null;
 			if (!midi_in.next_message(m)) break;
 			print("in  status " + m.status + " data " + m.data1 + " " + m.data2);
 

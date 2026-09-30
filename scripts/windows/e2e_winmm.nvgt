@@ -240,30 +240,46 @@ string bytes_of_last_error_as_numbers() {
 }
 // Why this parameter carries a `@`.
 //
-// This comment has now been wrong in both directions, so what follows is only
-// what the runner said, with the run it said it in.
+// Measured on run 36758442593, commit 85248fd, three probes at once, because
+// this comment has now been wrong in both directions and the next reading has
+// to come from an instrument that can tell the two apart:
 //
-// The first reading, from run 36730213750, was that the bare spelling is the
-// one the engine takes: the e2e's own declaration was bare and no `@` rule
-// looked responsible. The launch on that run reported "Parameter type can't be
-// 'midi_output', because the type cannot be instantiated.", "Data type can't
-// be 'midi_output'", ten "No matching symbol 'port'", "Attempting to
-// instantiate invalid template 'array<midi_note>'" and "Data type can't be
-// 'midi_note'" - 28 ERROR: lines in all. The bare form does not compile: the
-// type is refused as a type, every name declared with it goes with it, and
-// the handle is what the engine wants after all. c_handle.nvgt still asks
-// both spellings in one file, so the reading stays measured rather than
-// remembered.
+//   n_ctor.nvgt has `#pragma plugin nvmidi` and its plugin traced
+//   `crumb: register_midi_globals done`, then "6 of 6 registered types are in
+//   the engine". It declares two names bare, exactly as the first draft of
+//   this file did:
 //
-// The `@` rule was separately measured, column-exact, on run 36726960949:
-// a `@` after a plugin type is refused by the parser, with the column landing
-// on the `@` itself (`c_handle.nvgt:5 (13)`, `e2e_types.nvgt:14 (13)`,
-// "ERROR: Expected ';'" and "ERROR: Instead found '@'"). That reading stands
-// on its own and is not in question; it just was not the whole rule.
+//       midi_note n = midi_note_create(60);
+//       midi_output o = midi_output_create();
 //
-// So: a handle, spelled with a `@`, and the factory that returns it is what
-// fills it. This is the spelling this parameter and every declaration of a
-// plugin type in this file use.
+//   and the engine refuses both of them: "Identifier 'midi_note' is not a
+//   data type", "Identifier 'midi_output' is not a data type". The plugin is
+//   loaded and its types are registered, so this is not a load failure. A
+//   bare name is not a type in a declaration.
+//
+//   n_type1.nvgt is the control. It declares all six names with NO pragma at
+//   all, so the engine answers about its own types and nothing else, and all
+//   six are refused: midi_message, midi_duration, midi_note and midi_config
+//   each with "Identifier 'X' is not a data type", and the two `@` forms with
+//   "Expected ';'" / "Instead found '@'". Without the pragma the two
+//   sentences cannot be told apart, which is exactly how an earlier control
+//   probe (`n_type`, whose file opens the plugin) was misread as evidence for
+//   the bare form.
+//
+// The earlier reading in this comment cited run 36730213750: its 28 ERROR
+// lines were "Data type can't be 'midi_output'", "No matching symbol 'port'",
+// "Attempting to instantiate invalid template 'array<midi_note>'" and
+// "Data type can't be 'midi_note'". Those are refusals OF the bare form, one
+// line per use of a name the engine will not take as a type - they were read
+// as evidence for it because the file they came from declared every name
+// bare, so every line was refused and nothing named which form was wrong.
+//
+// A last form has since been measured: `Expected ';'` / `Instead found '@'`
+// appears when an `@` declaration is unusable in that context too, seen for
+// midi_config@ and midi_input@ in n_type and for all three `@` forms in the
+// no-pragma control. So the engine's two sentences mean: bare declaration of
+// a plugin type - refused, "Identifier 'X' is not a data type"; `@`
+// declaration - taken, unless that context refuses it.
 string bytes_of_object_port_name(midi_output@ o) {
 	string s = "";
 	for (int i = 0; i < o.get_port_name_byte_count(); i++) {
@@ -607,12 +623,9 @@ void main() {
 	// this is the call every example in the repository uses.
 	if (port.open(chosen, "nvmidi e2e windows")) {
 		// The factory's result is a handle, and a handle is what insert_last
-		// takes. The element type is written bare - `array<midi_note>` - for
-		// the same reason every other declaration in this file is: a `@` on a
-		// plugin type is a parse error in this engine, and the bare name
-		// carries the handle anyway. The array is passed to the chord methods
-		// by reference, so its own type, not a handle to it, is what they
-		// want.
+		// takes, so the element type carries the `@` too. The array is passed
+		// to the chord methods by reference, so its own type, not a handle to
+		// it, is what they want.
 		array<midi_note@> chord = array<midi_note@>();
 		uint[]@ chord_pitches = {60, 64, 67};
 		for (uint i = 0; i < 3; i++) {
