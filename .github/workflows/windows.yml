@@ -813,8 +813,7 @@ jobs:
                 (Join-Path $dir 'nvmidi.dll'),
                 (Join-Path $ws  'nvmidi.dll'),
                 (Join-Path $root 'nvmidi.dll'),
-                (Join-Path $root 'lib
-vmidi.dll')
+                (Join-Path $root 'lib\\nvmidi.dll')
               )
               foreach ($r in ($reach | Select-Object -Unique)) {
                 if (Test-Path $r) {
