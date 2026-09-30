@@ -646,6 +646,29 @@ static DWORD WINAPI publish_thread(LPVOID unused) {
 
 BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
 	(void)reserved;
+	if (reason == DLL_PROCESS_DETACH) {
+		// The one call that says whether the module is unloaded under a live
+		// stack. write_status reopens the file every time, so this mark lands
+		// whether the detach is an unload or a process exit; a detach line in
+		// the status file therefore means the loader took this image away,
+		// and the status file that still holds the ATTACH lines says the
+		// unload happened before DllMain returned rather than after the
+		// process was already going.
+		//
+		// What it separates, and why nothing else could: DllMain's last line
+		// is written after a 250ms sleep, so it is absent whenever the process
+		// died inside this function. Absent for two reasons that need
+		// opposite repairs - the loader unloaded the image under the running
+		// DllMain (a self-replacing copy letting the original go), or someone
+		// inside ran a second LoadLibrary of itself, whose ATTACH ran nested
+		// and whose DETACH on that inner unload wiped the lower-level lines.
+		//
+		// Measured on run 36726960949: the e2e's crash is an execute fault at
+		// nvmidi.dll+0x15e6 with a one frame stack, the address inside an
+		// unloaded image - so a jump through a pointer into a module the
+		// loader had already taken away. This mark names who took it.
+		write_status("DETACH=DllMain-entered");
+	}
 	if (reason == DLL_PROCESS_ATTACH) {
 		// Three marks, and they are the whole point of this change: the process
 		// that loads this dll dies inside this function, and nothing else in

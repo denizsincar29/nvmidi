@@ -2,7 +2,7 @@
 
 void main() {
 	print("F1");
-	midi_output@ port_out = midi_output_create();
+	midi_output port_out = midi_output_create();
 	print("F2");
 	bool opened = port_out.open(0, "probe");
 	print("F3 opened=" + opened);

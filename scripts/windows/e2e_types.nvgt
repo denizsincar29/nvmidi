@@ -11,13 +11,16 @@ void main() {
 	uint outs = midi_output_port_count();
 	print("MIN_PORT_COUNT_DONE " + outs);
 	print("MIN_PORT_CREATE");
-	midi_output@ out = midi_output();
+	print("MIN_DECL_OUT");
+	midi_output out = midi_output();
 	print("MIN_PORT_CREATE_DONE");
 	print("MIN_DURATION");
+	print("MIN_DECL_D");
 	midi_duration d = midi_duration(100, MIDI_MS);
 	print("MIN_DURATION_DONE");
 	print("MIN_NOTE");
-	midi_note@ n = midi_note_create(60);
+	print("MIN_DECL_N");
+	midi_note n = midi_note_create(60);
 	print("MIN_NOTE_DONE");
 	print("MIN_END");
 }

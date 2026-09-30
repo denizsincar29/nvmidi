@@ -30,16 +30,16 @@ void main() {
 	print("PANIC_BEGIN");
 
 	print("MIDI_PROBE_A");
-	midi_output@ p = null;
+	midi_output p = midi_output_create();
 	p.open("not a port number");
 	print("MIDI_PROBE_A_DONE");
 
 	print("MIDI_PROBE_B");
-	midi_output[]@ a;
+	midi_output[] a;
 	print("MIDI_PROBE_B_DONE");
 
 	print("MIDI_PROBE_C");
-	midi_input@ q = null;
+	midi_input q = midi_input_create();
 	q.open("not a port number");
 	print("MIDI_PROBE_C_DONE");
 

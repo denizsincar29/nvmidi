@@ -1,9 +1,20 @@
+// probe: a_bare - is the bare name alone a declaration the engine takes.
+//
+// The `@` is gone from line 5. What run 36726960949 measured is that a `@`
+// after a plugin type is a parse error with the column sitting on the `@`
+// (c_handle.nvgt:5 (13), e2e_types.nvgt:14 (13)), and this file is that same
+// line with the character removed - so its answer is the other half: whether
+// a bare name declares at all, and whether the simple type next to it in
+// b_decl behaves the same way.
+//
+// Nothing is called. The question is about the declaration and only that, so
+// a failure here is the declaration and never a call going wrong.
 #pragma plugin nvmidi
 
 void main() {
 	print("A1");
-	midi_output@ out = midi_output();
+	midi_output out;
 	print("A2");
-	midi_output@ out2 = midi_output_create();
+	midi_output d;
 	print("A3");
 }

@@ -1209,6 +1209,21 @@ jobs:
           $exe = Join-Path $env:NVGT_DIR 'nvgt.exe'
           $src = Join-Path $env:GITHUB_WORKSPACE 'scripts\windows\e2e_winmm.nvgt'
           $log = Join-Path $env:GITHUB_WORKSPACE 'logs_e2e.txt'
+          # Compile the same script before running it, and report the compiler's
+          # own lines. The job has been reading a process that died with an exit
+          # code and an empty log, and the step below has been turning that into
+          # "the script never started" and "no compilation errors in
+          # logs_e2e.txt" - while the engine had in fact refused the script and
+          # printed why, into this step's own stdout rather than into the
+          # redirect. Measured on run 36726960949: e2e_types.nvgt reported
+          # "line: 14 (13) ERROR: Expected ';' / ERROR: Instead found '@'" for
+          # a declaration of this plugin's type, and that same declaration was
+          # in e2e_winmm.nvgt. Whether it still is decides what the crash below
+          # is even about, so it is asked here, before the launch, and the
+          # answer is in the log in the compiler's own words.
+          Write-Host '--- compiling the e2e script first ---'
+          & $exe $src 2>&1 | Select-Object -First 40 | Write-Host
+          Write-Host "--- compile pass finished, exit $LASTEXITCODE ---"
           # No arguments after the script: the hint travels in the environment
           # (NVGT_E2E_HINT, set by the synth step) because the engine's option
           # parser rejects an unknown flag before it ever reads the script.
