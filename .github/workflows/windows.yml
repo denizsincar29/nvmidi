@@ -203,9 +203,22 @@ jobs:
           Move-Item -Force nvmidi-noarr.dll noaddon/nvmidi.dll
           Write-Host "NO-ADDON-BYTES $((Get-Item noaddon/nvmidi.dll).Length)"
 
-          # The control is the control only if the add-on's call is not in it.
-          # The strings are literals in the binary, so this is a property of the
-          # file the engine will load rather than of the label on the folder.
+          # The control is the control only if the add-on's *call* is not in it,
+          # and that is a different question from whether the add-on's strings
+          # are in it - which is what the check here used to ask, by counting
+          # the log line the call prints. It counted wrong, and the measure is
+          # in the source file beside the line: run 36753050043, one marker in
+          # each build, so the control was failed for carrying the call at the
+          # moment the control was correct. A literal in a file that links
+          # scriptarray.o is present whatever branch holds it and whether or not
+          # that branch is ever reached; the text the registration itself hands
+          # the engine is the same string a second time.
+          #
+          # The returned-call line is the one literal that answers it. It sits
+          # after RegisterScriptArray in the branch the control compiles away,
+          # and it appears in no other part of this plugin or of the add-on, so
+          # a hit is only produceable by the call having returned.
+          #
           # The check the e2e probe later makes reads `calling=` the same way;
           # doing it here means a build that wrote the wrong file fails at the
           # build instead of being discovered in the probe step that consumes
@@ -222,7 +235,7 @@ jobs:
             }
             return $hits
           }
-          $marker = 'calling RegisterScriptArray'
+          $marker = 'RegisterScriptArray returned'
           $inWith = Count-Needle $withAddon $marker
           $inNo   = Count-Needle $noAddon   $marker
           Write-Host "CALLING-MARKER with-addon=$inWith no-addon=$inNo"
@@ -845,6 +858,22 @@ jobs:
               # step's exception at the no-array-addon row of the first
               # location. The literal is back in the file now, in the branch
               # the flag guards, so the name and the count agree again.
+              #
+              # One correction to the reading itself, measured later: the skip
+              # message above only told the two builds apart because of a
+              # detail nobody chose - the stored literal is "nvmidi:
+              # NVGT_SKIP_ARRAY_ADDON is set", with the prefix, so it does not
+              # collide with the bare name a reader searches for. The
+              # substring in nvmidi.cpp is in fact two literals wide: the
+              # fprintf's message and the marker fprintf two lines above it,
+              # which is the add-on's own name. Measured on the builds of run
+              # 36753050043 (with-addon and no-addon, 2994751 bytes each): the
+              # string "NVGT_SKIP_ARRAY_ADDON" is in both. What keeps this line
+              # honest is the bare-marker search below, not the prefix - so a
+              # future edit that unifies the two messages would turn this check
+              # into a throw on the ordinary build without any of the code
+              # moving. Searching the marker instead of the name is what that
+              # edit cannot break.
               #
               # Two: an exact whole-literal match, splitting the file on null
               # bytes first. That answers false for both artifacts - measured,

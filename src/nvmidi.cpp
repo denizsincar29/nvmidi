@@ -2580,6 +2580,26 @@ registration_result register_nvmidi(asIScriptEngine* engine) {
 		fprintf(stderr, "nvmidi: the array add-on must supply array<T>, calling RegisterScriptArray\n");
 		fflush(stderr);
 		RegisterScriptArray(engine, false);
+		// A second literal after the call, so that this build and the control
+		// can be told apart by a string that exists in a known build and in no
+		// other. The pair around the call cannot do it: both of its lines sit
+		// in the branch the control compiles away, and the control's branch has
+		// a line of its own - so counting any one of them is the same
+		// question, and it went wrong. Measured, run 36753050043:
+		//
+		//   CALLING-MARKER with-addon=1 no-addon=1
+		//
+		// two different builds, one marker each - which the workflow read as the
+		// control carrying the add-on ("carries the add-on call, so it is not
+		// the control") and threw. The count was right about the control and
+		// wrong about the pair: the control does carry that string, because it
+		// is a literal in a file that links scriptarray.o and holds it twice
+		// over, in this branch that is never reached and in the text the
+		// registration itself passes to the engine.
+		//
+		// So what the bytes are asked is a question the reachability of the
+		// branch does not affect and the add-on's own copies do not answer:
+		// a returned-call literal that is this line and nowhere else.
 		fprintf(stderr, "nvmidi: RegisterScriptArray returned\n");
 		fflush(stderr);
 	}
