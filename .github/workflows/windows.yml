@@ -19,6 +19,23 @@ name: windows
 on:
   push:
   workflow_dispatch:
+    inputs:
+      # A measurement, not a setting: with this on, the e2e launch is killed
+      # right after the script starts, and the loopback driver's status file
+      # then answers whether the process's exit runs the unload path. Off by
+      # default and read from the environment, so every push keeps the job
+      # byte-for-byte what it was.
+      kill_early:
+        description: 'kill the e2e script right after the launch'
+        type: boolean
+        default: false
+      kill_at_mark:
+        description: 'kill the e2e script at the BACKEND marker, before the send'
+        type: boolean
+        default: false
+env:
+  NVMIDI_KILL_EARLY: ${{ inputs.kill_early && '1' || '' }}
+  NVMIDI_KILL_AT_MARK: ${{ inputs.kill_at_mark && '1' || '' }}
 
 jobs:
   build:
@@ -1221,9 +1238,59 @@ jobs:
           # in e2e_winmm.nvgt. Whether it still is decides what the crash below
           # is even about, so it is asked here, before the launch, and the
           # answer is in the log in the compiler's own words.
+          #
+          # Run as written, and keep every line in a step log. The first
+          # attempt piped the compiler through Select-Object -First 40; the
+          # upload alone is about fifty "nvmidi: reg line" lines, so the window
+          # closed before any diagnostic, and the pipeline emptied
+          # $LASTEXITCODE so the exit line read blank. Measured on run
+          # 36729333733: "--- compile pass finished, exit  ---". A file, a
+          # second read of it and the process's own code fix both.
           Write-Host '--- compiling the e2e script first ---'
-          & $exe $src 2>&1 | Select-Object -First 40 | Write-Host
-          Write-Host "--- compile pass finished, exit $LASTEXITCODE ---"
+          $clog = Join-Path $env:GITHUB_WORKSPACE 'compile_e2e.txt'
+          $p0 = Start-Process -FilePath $exe -ArgumentList @($src) -Wait -PassThru `
+            -NoNewWindow -RedirectStandardOutput $clog -RedirectStandardError "$clog.err"
+          Write-Host "--- compile pass finished, exit $($p0.ExitCode) ---"
+          $ctext = if (Test-Path $clog) { Get-Content $clog -Raw } else { '' }
+          $cerr  = if (Test-Path "$clog.err") { Get-Content "$clog.err" -Raw } else { '' }
+          # Both streams carry registration lines; what the compiler refuses
+          # with is an ERROR: line, and that is what gets named here. The tail
+          # matters when nothing matches - a refusal that is not an ERROR: line
+          # is still a finding, and the last lines are the only place it shows.
+          $bad = @(($ctext, $cerr) -split "`n" | Where-Object { $_ -match 'ERROR:' })
+          if ($bad.Count -eq 0) {
+            Write-Host 'the compiler printed no ERROR: line; the last lines of both streams follow'
+            ($ctext -split "`n") | Select-Object -Last 15 | ForEach-Object { Write-Host "cout: $_" }
+            ($cerr  -split "`n") | Select-Object -Last 15 | ForEach-Object { Write-Host "cerr: $_" }
+          } else {
+            Write-Host "the compiler refused the script, $($bad.Count) ERROR: lines:"
+            $bad | Select-Object -First 30 | ForEach-Object { Write-Host "cerr: $_" }
+          }
+          # A one-variable measurement switch. Clicking Run workflow installs
+          # nothing, so the two hypotheses the driver's status file separates
+          # - fault before the debugger attaches, or fault after - cannot be
+          # told apart by a dispatch. With kill_early set the script is killed
+          # the instant AFTER the marker, and a non-empty DETACH= in the
+          # status file then means the single 0xC0000005 on the matrix above is
+          # the exit path itself. Left off, nothing about the job changes.
+          if ($env:NVMIDI_KILL_EARLY -eq '1') {
+            Write-Host 'NVMIDI_KILL_EARLY is set: killing the script right after the launch, to read the unload path'
+            Start-Sleep -Milliseconds 600
+            try { $p.Kill() } catch {}
+            Write-Host "killed; the status file says: $(if (Test-Path $env:NVMIDI_LOOPBACK_STATUS) { Get-Content $env:NVMIDI_LOOPBACK_STATUS -Raw } else { '<no status file>' })"
+          }
+          if ($env:NVMIDI_KILL_AT_MARK -eq '1') {
+            $mark = Join-Path $env:GITHUB_WORKSPACE 'logs_e2e.txt'
+            for ($i = 0; $i -lt 1500; $i++) {
+              $s = if (Test-Path $mark) { Get-Content $mark -Raw } else { '' }
+              if ($s -match 'E2E_OK BACKEND') { break }
+              if ($s -match 'E2E_PORT') { Write-Host 'the script named a port without naming a backend; stopping'; break }
+              if ($p.HasExited) { Write-Host 'the script exited on its own before the marker'; break }
+              Start-Sleep -Milliseconds 20
+            }
+            try { $p.Kill() } catch {}
+            Write-Host "killed at the marker; the status file says: $(if (Test-Path $env:NVMIDI_LOOPBACK_STATUS) { Get-Content $env:NVMIDI_LOOPBACK_STATUS -Raw } else { '<no status file>' })"
+          }
           # No arguments after the script: the hint travels in the environment
           # (NVGT_E2E_HINT, set by the synth step) because the engine's option
           # parser rejects an unknown flag before it ever reads the script.
