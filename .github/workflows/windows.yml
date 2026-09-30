@@ -29,7 +29,14 @@ jobs:
           submodules: recursive
       - name: build
         shell: cmd
-        run: mingw32-make
+        # The compiler that dies in the control build below dies the same way
+        # here, and here it is the only thing in the step: if the ordinary
+        # build's recipe also stops without a diagnostic, the two commands
+        # exit alike and the flag is not what kills it.
+        run: |
+          mingw32-make
+          echo ORDINARY-MAKE-EXITED-WITH=%ERRORLEVEL%
+          if not exist nvmidi.dll echo ORDINARY-BUILD-WROTE-NO-DLL
       - name: build the loopback driver
         shell: bash
         # -o puts the dll where the artifact upload and the e2e's staged copy
