@@ -126,6 +126,20 @@ void main() {
 	const uint outs = midi_output_port_count();
 	print("HEAR_INPUT_PORTS " + ins);
 	print("HEAR_OUTPUT_PORTS " + outs);
+	// Every port, listed rather than counted. The launcher reads these lines
+	// to build its menu, and the names are also the only way to find out what
+	// the engine calls the instrument - midi_config matches on a substring of
+	// exactly this text.
+	for (uint i = 0; i < ins; i++) {
+		string s = "";
+		for (int j = 0; j < midi_input_port_name_byte_count(i); j++) s += char_of(midi_input_port_name_byte(i, j));
+		print("HEAR_INPUT_PORT " + i + " " + s);
+	}
+	for (uint i = 0; i < outs; i++) {
+		string s = "";
+		for (int j = 0; j < midi_output_port_name_byte_count(i); j++) s += char_of(midi_output_port_name_byte(i, j));
+		print("HEAR_OUTPUT_PORT " + i + " " + s);
+	}
 	if (ins == 0) {
 		say("No midi input ports. Plug the nord in, wait a few seconds, and start this again - a reader built before the instrument was plugged in never attaches to it.");
 		return;
