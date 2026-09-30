@@ -716,6 +716,43 @@ jobs:
         shell: bash
         run: ./scripts/nvgt_pin.sh fetch engine
 
+      # The plugin has to be beside the engine before anything can compile, and
+      # this job forgot that until its own guard said so. Measured on run
+      # 36775763905, the first run that could fail at all: 31 seconds in,
+      # "Compilation error: file: nvmidi / line: 0 (0) / ERROR: failed to load
+      # plugin", and every green this job had reported before that line existed
+      # was a green over an engine that had refused the library.
+      #
+      # It is placed in every directory a nvmidi.so has ever been found in, for
+      # the reason the scripts job spells out: the engine loads a plugin by
+      # bare name, so the copy that wins is the one the loader's search finds,
+      # and which directories those are is a property of the engine build. One
+      # file per directory the engine tree contains.
+      - name: put the plugin where the engine looks
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq g++ libasound2-dev >/dev/null
+          make MIDI_BACKEND=dummy
+          nvgt="$(find engine -type f -name nvgt | head -n1)"
+          if [ -z "$nvgt" ]; then
+            echo "::error title=no engine::the pinned engine was not found, so the plugin has nowhere to go"
+            exit 1
+          fi
+          chmod +x "$nvgt"
+          placed=0
+          while IFS= read -r dir; do
+            cp nvmidi.so "$dir/nvmidi.so"
+            echo "nvmidi.so -> $dir"
+            placed=$((placed + 1))
+          done < <(find engine -type d)
+          echo "placed in $placed directories under engine/"
+          ls -la nvmidi.so
+          if [ ! -s nvmidi.so ]; then
+            echo "::error title=the plugin did not build::nvmidi.so is empty, so every script would fail with \"failed to load plugin\""
+            exit 1
+          fi
+
       - name: the hearing test parses
         shell: bash
         run: |
