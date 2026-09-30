@@ -111,6 +111,63 @@ check:
 clean:
 	$(RM) $(TARGET)
 
+# Compile the plugin and the add-on, then link only the objects whose symbol
+# tables actually reference the add-on.
+#
+# This exists because of one line that will not say what it is. The ordinary
+# link has never once produced a dll, make reports success, and the diagnostics
+# that would explain it are not in the CI log: measured in run 36709928607, the
+# last line the runner carries out of the compile is scriptarray.cpp:370,
+# while that file has 380 lines, and the link's own output - ld writes "cannot
+# find -l...", "undefined reference", "Error 1" - appears nowhere in the log at
+# all. So neither "the link is fine and the dll is written somewhere else" nor
+# "the link fails silently" can be told apart from the outside.
+#
+# That is the same trap the ordinary target set once already: a silent step at
+# the end of a chain, read as whatever the reader expected. So this splits the
+# chain: the compile runs as three separate steps that each have to exit 0, and
+# the link runs as a step of its own. If the dll is missing afterwards, the
+# object files and the linker's own words are both in the tree.
+#
+# The reference is what makes the flag correct. In the no-addon build
+# src/nvmidi.cpp is compiled with -DNVGT_SKIP_ARRAY_ADDON, so it never calls
+# into scriptarray.cpp and does not contain its symbols; link it against
+# scriptarray.o anyway and the linker pulls the whole object in to satisfy a
+# reference that does not exist. Measured, run 36703826070: that is what fails
+# ("undefined reference to CreateScriptArray" and four more), which is a fact
+# about the flag's reach and not about the build. Asking the object files which
+# of them carry an undefined reference to the add-on's entry points answers it
+# directly, and the answer is the list of objects to link.
+#
+# nm comes from the toolchain that is already compiling. On the windows runner
+# that is x86_64-w64-mingw32-g++ and x86_64-w64-mingw32-nm; elsewhere g++ and
+# nm, since the object format is whatever the compiler emits either way.
+NM ?= $(patsubst g++%,nm%,$(firstword $(CXX)))
+
+obj:
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c src/nvmidi.cpp -o nvmidi.o
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c third_party/rtmidi/RtMidi.cpp -o RtMidi.o
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c third_party/angelscript/scriptarray.cpp -o scriptarray.o
+
+link: obj
+	echo --- undefined references that name the array add-on ---
+	type nul > refs.txt
+	for %f in (nvmidi.o RtMidi.o scriptarray.o) do @($(NM) -u %f | findstr /C:"CreateScriptArray" >> refs.txt || echo %f HAS-NONE)
+	echo --- which objects have to be linked, and why ---
+	type refs.txt
+	echo --- linking ---
+	set ADDON=
+	for /f "tokens=3" %a in ('findstr /C:"CreateScriptArray" refs.txt') do @set ADDON=%a
+	echo addon-object-from-refs.txt=%ADDON%
+	$(CXX) nvmidi.o RtMidi.o -o nvmidi.dll $(LDFLAGS) $(LIBS)
+	echo LINK-WITHOUT-ADDON=%ERRORLEVEL%
+	if exist nvmidi.dll echo LINK-WITHOUT-ADDON-WROTE-THE-DLL
+	if exist nvmidi.dll del /Q nvmidi.dll
+	$(CXX) nvmidi.o RtMidi.o scriptarray.o -o nvmidi.dll $(LDFLAGS) $(LIBS)
+	echo LINK-WITH-ADDON=%ERRORLEVEL%
+	if exist nvmidi.dll echo LINK-WITH-ADDON-WROTE-THE-DLL
+	dir /B nvmidi.dll
+
 # The same source, built with the array add-on's registration left out.
 #
 # Why a separate target and not one jar built twice: nvgt loads a plugin by
