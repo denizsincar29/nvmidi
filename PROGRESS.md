@@ -1,6 +1,6 @@
 # nvmidi — state of the investigation
 
-Last updated: 2026-09-30, at commit 99a109b.
+Last updated: 2026-09-30, at commit 512c960.
 
 ## The root cause, found and fixed
 
@@ -102,3 +102,95 @@ Telegram context:
 3. The build failure was a missing include plus two missing declaration
    families, not the "silent step at the end of a chain" I first claimed.
 4. The sweep invalidation, retracted.
+
+## The reader, resolved (512c960)
+
+`midi_message` carries an `opAssign` behaviour now, and that is what the
+engine was asking for all along. A call to `next_message(midi_message&out)`
+compiles to a copy of the argument into the caller's object, and this engine
+routes that copy through the type's assignment operator: measured on run
+36772964284, "No appropriate opAssign method found in 'midi_message' for
+value assignment" on the caller's line, with the script failing to build.
+
+`midi_duration` already carries two opAssign behaviours for the same reason,
+which is the clue that was sitting in the file from the start.
+
+The handle form (74c3ed5) was an attempt to avoid that behaviour and it
+cannot work in this engine: a handle is formed only for a type carrying
+asOBJ_REF, asOBJ_ASHANDLE, asOBJ_FUNCDEF or asOBJ_TEMPLATE_SUBTYPE
+(asCDataType::MakeHandle in the SDK), and midi_message is asOBJ_VALUE
+because it holds a std::string. Registering it as a handle produced "Object
+handle is not supported for this type" on every script in the repository,
+including two that never name the reader.
+
+Green again on run 36773886009: scripts and e2e-midi both success,
+`calls=157 refused=0`, all five scripts compiling and running. The only
+FAIL inside the log is the e2e script's own `E2E_NO_BUS` - the runner has
+the Dummy backend and lists no ports, which is the machine, not the plugin.
+
+## What green does NOT mean (measured this turn)
+
+The e2e-midi job succeeded on 512c960, and that success covers *less* than
+it looks like. From its own log:
+
+    kernel: 6.17.0-1022-azure
+    modules on this machine that mention sound:
+      none - the runner ships a kernel with no sound subsystem
+    modprobe: FATAL: Module snd-seq not found in directory /lib/modules/6.17.0-1022-azure
+    the sequencer cannot be opened: No such device or address
+    ##[warning]the kernel has no snd-seq, so no note can be played into a port
+
+The job is built to stand down when NVGT_MIDI_SINK=none, and that is the
+branch every run so far has taken. The consequences, in terms of what is
+actually known:
+
+- Registration and compilation: proven. calls=157 refused=0, six types, all
+  five scripts build and run.
+- The ALSA backend is real, not the Dummy stub: proven by the separate
+  backend.nvgt step.
+- That a note sent in from another process is read out of the queue
+  (E2E_HEARD): NEVER MEASURED. No message has ever entered this plugin.
+- That a message sent out reaches a port (SENT/PLAYED): NEVER MEASURED.
+- The octave echo, end to end: never measured, and it cannot be measured on
+  a machine with no sequencer.
+
+So the plugin currently has a proven *type surface* and an unproven
+*transport*. Those are different things and the green build does not
+distinguish them.
+
+## Where the sequencer could come from
+
+The github-hosted ubuntu runner will not have it: the kernel image carries
+no sound modules and the workflow has already measured that twice.
+
+1. A self-hosted runner on hardware that has snd-seq (Deniz's Pi, or the
+   VPS if it allows module loads). Cheapest correct answer, and the same
+   runner serves the octave-echo test on real hardware.
+2. A container whose kernel is the host's and which can modprobe snd-seq /
+   snd-virmidi. "Container" does not by itself help: a container shares the
+   host kernel, so it inherits exactly the same absence. The requirement is
+   a *host* with the sound subsystem, not a container.
+3. Port the transport assertions onto a userspace loopback that needs no
+   kernel sequencer. This tests the plugin against itself and is therefore
+   weak evidence - say so in the log rather than letting it read as proof.
+
+Recommendation: (1), plus (3) as a smoke test that at least exercises the
+code paths between runs. (3) must never be presented as "the note arrived".
+
+## Still open after 512c960
+
+
+- Windows e2e run 36773886116 was still in_progress when this was written.
+  The last Windows run this tree has measured is 74c3ed5, and it failed -
+  but 74c3ed5 is the handle detour, so it says nothing about 512c960.
+- The transport half of the plugin has no instrument at all (see above).
+  This is the largest open item in the file, larger than the handle
+  question was: every MIDI claim the readme makes is currently untested.
+- `logs/` is not uploaded as an artefact, so the running `logs_e2e.txt` that
+  the Windows job prints cannot be read back after the fact. Worth an
+  upload-artifact step before the next Windows attempt, or the same
+  guessing starts over.
+- A compiler warning worth clearing: `src/nvmidi.cpp:748` memsets a
+  midi_message over a std::string member (`-Wclass-memaccess`). It is
+  pre-existing and on a path that predates the buffer, but it is exactly the
+  class of fault the POD flag caused.
