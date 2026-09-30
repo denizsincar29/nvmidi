@@ -62,6 +62,7 @@ import ctypes
 import ctypes.util
 import os
 import platform
+import re
 import sys
 import time
 
@@ -84,14 +85,67 @@ def api_version_from_header():
 
 # --- 1. the shared structure ------------------------------------------------
 #
-# Only the first field is read or written here. The plugin reads it first and
-# refuses the whole structure when it disagrees, so a test that got this wrong
-# would fail before touching anything else - which is the safe way round.
-# Reading further into the table would be reading a layout this file does not
-# claim to know.
+# This struct has to be the WHOLE thing, not just the version field.
+#
+# The first version of it was `[("version", c_int)]` - four bytes - on the
+# reasoning that the plugin reads the version first and refuses everything else,
+# so nothing further in is ever touched. The plugin does refuse further in, but
+# only after reading the field that follows, and it reads it at its real offset
+# rather than at offset 4: measured on ubuntu-latest and windows-latest, 30.09,
+# where the truncated struct made the plugin fault at address 0. The fields are
+# pointers, so `script_engine` is read at offset 8 + 27*8 = 224 and a struct of
+# four bytes leaves it reading whatever followed in memory. A null check does
+# not save that - it reads the garbage, finds it non-null, and follows it.
+#
+# So the layout is spelled out in full, in declaration order, straight from
+# src/nvgt_plugin.h. The two X() lists are 13 and 14 entries - counted from the
+# header by scripts/ci or by hand - and `script_engine`, `script_thread_manager`
+# and `user` follow them. `_check_layout` re-counts the header so this file
+# cannot drift from the header it claims to mirror.
+#
+# Using c_void_p for every function pointer is deliberate: this test never calls
+# one, and a wrong signature here would be a call to the wrong function. It only
+# needs the width and the offset to be right.
+
+_SHARED_VERSION_OFFSET = 0
 
 class Plugin_Shared(ctypes.Structure):
-    _fields_ = [("version", ctypes.c_int)]
+    _fields_ = (
+        [("version", ctypes.c_int)]
+        + [("f_%d" % i, ctypes.c_void_p) for i in range(27)]   # 13 + 14
+        + [("script_engine", ctypes.c_void_p),
+           ("script_thread_manager", ctypes.c_void_p),
+           ("user", ctypes.c_void_p)]
+    )
+
+
+def _check_layout():
+    """Re-count the header's two X() lists so the struct above cannot drift.
+
+    A layout that silently disagrees with the header is worse than no layout:
+    the plugin reads a pointer that is not there and the failure surfaces as a
+    crash in the plugin, which is exactly the misreading this function exists to
+    prevent. Returns None when the counts agree, or a sentence when they do not.
+    """
+    header = os.path.join(REPO, "src", "nvgt_plugin.h")
+    try:
+        text = open(header, encoding="utf-8").read()
+    except OSError as error:
+        return "src/nvgt_plugin.h could not be read: %s" % (error,)
+    counts = []
+    for name in ("NVGT_PLUGIN_EXTERNAL_FUNCTIONS", "NVGT_PLUGIN_FUNCTIONS"):
+        match = re.search(
+            r"#define\s+%s\s*\\?\n((?:\s*X\([^\n]*\n)+)" % name, text)
+        if not match:
+            return "the %s list was not found in src/nvgt_plugin.h" % name
+        counts.append(len(re.findall(r"X\(", match.group(1))))
+    fields = len(Plugin_Shared._fields_)
+    expected = 1 + sum(counts) + 3
+    if fields != expected:
+        return ("the shared struct is %d field(s) but the header declares %d "
+                "(%d + %d function pointers + version + engine + thread manager + user)"
+                % (fields, expected, counts[0], counts[1]))
+    return None
 
 
 # --- 2. the Angelscript engine, only the surface this test uses -------------
@@ -239,6 +293,14 @@ def run_python_test(args):
 
     entry.restype = ctypes.c_bool
     entry.argtypes = [ctypes.POINTER(Plugin_Shared)]
+
+    drift = _check_layout()
+    if drift:
+        print("")
+        print("the shared structure in this test does not match the header: %s" % drift)
+        print("VERDICT: no test was run, because the struct this loader builds is")
+        print("not the struct the plugin reads.")
+        return 1
 
     shared = Plugin_Shared()
     shared.version = reported
