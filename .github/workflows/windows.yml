@@ -876,7 +876,6 @@ jobs:
             if (Test-Path "$log.err") {
               $err = Get-Content "$log.err" -Raw
               if ($err -and $err.Trim().Length -gt 0) { Write-Host '--- stderr ---'; Write-Host $err }
-          }
             }
           }
 
