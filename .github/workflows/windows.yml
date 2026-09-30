@@ -239,6 +239,37 @@ jobs:
           $inWith = Count-Needle $withAddon $marker
           $inNo   = Count-Needle $noAddon   $marker
           Write-Host "CALLING-MARKER with-addon=$inWith no-addon=$inNo"
+          # The count is not enough to act on, because "the control carries the
+          # marker" has two possible readings and only one of them is about this
+          # plugin. So each needle is located and its 64 bytes either side are
+          # printed as text: the offset says whether this is the plugin's own
+          # literal, and the neighbourhood says which string in the file is
+          # answering. The offsets of the two files are compared as well - two
+          # builds from one source have different sizes and different symbol
+          # tables, so equal offsets would say the two reads were of one file.
+          Write-Host ("SIZES with-addon={0} no-addon={1}" -f $withAddon.Length, $noAddon.Length)
+          function Show-Needle([byte[]]$haystack, [string]$label, [string]$needle) {
+            $n = [System.Text.Encoding]::ASCII.GetBytes($needle)
+            $shown = 0
+            for ($i = 0; $i -le $haystack.Length - $n.Length; $i++) {
+              $ok = $true
+              for ($j = 0; $j -lt $n.Length; $j++) { if ($haystack[$i + $j] -ne $n[$j]) { $ok = $false; break } }
+              if (-not $ok) { continue }
+              $from = [Math]::Max(0, $i - 64)
+              $to   = [Math]::Min($haystack.Length - 1, $i + $n.Length + 64)
+              $ctx  = [System.Text.Encoding]::ASCII.GetString($haystack[$from..$to])
+              $ctx  = $ctx -replace '[^\x20-\x7E]', '.'
+              Write-Host ("NEEDLE {0} at {1}: [{2}]" -f $label, $i, $ctx)
+              $shown++
+            }
+            if ($shown -eq 0) { Write-Host ("NEEDLE {0}: not present" -f $label) }
+          }
+          Show-Needle $withAddon 'with-addon' $marker
+          Show-Needle $noAddon   'no-addon'   $marker
+          Show-Needle $withAddon 'with-addon' 'NVGT_SKIP_ARRAY_ADDON is set'
+          Show-Needle $noAddon   'no-addon'   'NVGT_SKIP_ARRAY_ADDON is set'
+          Show-Needle $withAddon 'with-addon' 'the engine does not know array<T'
+          Show-Needle $noAddon   'no-addon'   'the engine does not know array<T'
           if ($inWith -lt 1) { throw 'the with-addon build does not carry the add-on call' }
           if ($inNo   -ne 0) { throw 'the no-addon build carries the add-on call, so it is not the control' }
 
