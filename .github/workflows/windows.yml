@@ -140,39 +140,39 @@ jobs:
       # because a cmd step's write to a file goes into the process stdout buffer
       # and never reaches the disk.
       - name: build the library without the array add-on
-        shell: cmd
+        shell: pwsh
+        # Written in PowerShell because the shell this step used to ask for was
+        # not the shell it got. `shell: cmd` selects an executable, but this
+        # runner inherits SHELL from the job environment - the build job sets
+        # MSYS2 - and under bash every cmd built-in in the old step was a
+        # command that does not exist: `type nul` and `for %f in (...)` were
+        # answered with "command not found", `if not exist ... exit /b 1` did
+        # nothing and exited 0, and no file was ever moved. Measured, run
+        # 36710220453: the step's own output line is
+        # "/usr/bin/bash: line 1: type: nul: not found". So the step had never
+        # once run the cmd it was written in, and the dll it was supposed to
+        # produce was never produced. `shell: pwsh` is an explicit path to
+        # pwsh.exe and does not go through SHELL.
         run: |
-          if not exist nvmidi.dll exit /b 1
-          if exist withaddon rmdir /S /Q withaddon
-          if exist noaddon rmdir /S /Q noaddon
-          mkdir withaddon
-          mkdir noaddon
-          move /Y nvmidi.dll withaddon\nvmidi.dll
-          if not exist withaddon\nvmidi.dll exit /b 1
-          if exist nvmidi.dll exit /b 1
-          mkdir linkout
-          mingw32-make --print-directory -f Makefile -B link > linkout\link.log 2>&1
-          echo MAKE-EXIT=%ERRORLEVEL%
-          if exist nvmidi.o echo OBJECT-WRITTEN nvmidi.o
-          if exist RtMidi.o echo OBJECT-WRITTEN RtMidi.o
-          if exist scriptarray.o echo OBJECT-WRITTEN scriptarray.o
-          echo --- the tail of what the link step said ---
-          powershell -NoProfile -Command "Get-Content linkout\link.log -Tail 60 | ForEach-Object { $_ }"
-          echo --- what is in the tree now ---
-          dir /B *.o *.dll
-          if errorlevel 1 echo FAILED-IN-THE-MAKE-RECIPE
-          if not exist noaddon\nvmidi.dll echo NOMIDI-NO-DLL-WAS-WRITTEN
-          if not exist noaddon\nvmidi.dll powershell -NoProfile -Command "$os=Get-CimInstance Win32_OperatingSystem; Write-Host ('free-mb={0} commit-limit-mb={1} commit-used-mb={2} z{3}' -f [int]($os.FreePhysicalMemory/1KB), [int]($os.TotalVirtualMemorySize/1KB), [int](($os.TotalVirtualMemorySize-$os.FreeVirtualMemory)/1KB), $os.SizeStoredInPagingFiles)"
-          if exist nvmidi.dll del /Q nvmidi.dll
-          if not exist noaddon\nvmidi.dll exit /b 1
-          dir /B withaddon\nvmidi.dll noaddon\nvmidi.dll
-      # One artifact per build, and the artifact's own name is what carries the
-      # distinction. Two files cannot share nvmidi.dll on one filesystem, and an
-      # artifact is one byte stream under one destination name, so packing a
-      # directory into a single artifact means its contents have to be told
-      # apart again on the far side - which is the very step that has been wrong
-      # every time it was attempted. Two artifacts cannot be confused for one
-      # another by any filesystem.
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force withaddon, noaddon | Out-Null
+          Move-Item -Force nvmidi.dll withaddon/nvmidi.dll
+          if (-not (Test-Path withaddon/nvmidi.dll)) { throw 'the ordinary build left no dll to move' }
+          if (Test-Path nvmidi.dll) { throw 'the ordinary dll is still in the root' }
+          Write-Host "WITH-ADDON-BYTES $((Get-Item withaddon/nvmidi.dll).Length)"
+
+          # The second build. -B because the target's prerequisite is the dll
+          # that was just moved away, and no -o: whatever of the two the recipe
+          # writes is the one the no-addon artifact should carry, and a relative
+          # -o is resolved by build.sh against the caller's directory.
+          mingw32-make --print-directory -f Makefile -B nvmidi-noarr.dll
+          Write-Host "MAKE-EXIT $LASTEXITCODE"
+          if ($LASTEXITCODE -ne 0) { throw 'the make for the no-addon build failed' }
+          if (-not (Test-Path nvmidi.dll)) { throw 'the no-addon build wrote no dll in the root' }
+          Move-Item -Force nvmidi.dll noaddon/nvmidi.dll
+          Write-Host "NO-ADDON-BYTES $((Get-Item noaddon/nvmidi.dll).Length)"
+          Get-ChildItem withaddon/nvmidi.dll, noaddon/nvmidi.dll | ForEach-Object { Write-Host ("{0} {1}" -f $_.Length, $_.FullName) }
+
       - name: keep the dll with the array add-on
         uses: actions/upload-artifact@v4
         with:
