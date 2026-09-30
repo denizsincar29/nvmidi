@@ -1367,18 +1367,26 @@ jobs:
           $exe = Join-Path $env:NVGT_DIR 'nvgt.exe'
           $src = Join-Path $env:GITHUB_WORKSPACE 'scripts\windows\e2e_winmm.nvgt'
           $log = Join-Path $env:GITHUB_WORKSPACE 'logs_e2e.txt'
-          # Where the plugin's own load probe writes, and it is emptied here
-          # rather than read and hoped about. The probe is C++ inside the
-          # library and it runs BEFORE the script's first statement, which is
-          # the only region left: every script that loads the plugin dies at
+          # Where the plugin's own heartbeat writes, and it is emptied here
+          # rather than read and hoped about. The heartbeat is a thread inside
+          # the library and it runs BEFORE the script's first statement, which
+          # is the only region left: every script that loads the plugin dies at
           # 0xC0000005 after 1.1 seconds with a 0 byte stdout, and a script
-          # cannot be the instrument for a death that precedes it. Appending
-          # is what the probe does, so a stale file from an earlier step would
-          # read as this run's progress.
-          $probeDir = Join-Path $env:GITHUB_WORKSPACE 'loadprobe'
-          New-Item -ItemType Directory -Force -Path $probeDir | Out-Null
-          Remove-Item (Join-Path $probeDir 'nvmidi-load.log') -ErrorAction SilentlyContinue
-          "NVGT_MIDI_LOAD_PROBE_DIR=$probeDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          # cannot be the instrument for a death that precedes it. Appending is
+          # what the heartbeat does, so a stale file from an earlier step would
+          # read as this run's progress - and a stale file is exactly what would
+          # be mistaken for a live process.
+          #
+          # The path is absolute, and the log also carries the pid and the
+          # milliseconds since the plugin's constructor. An absolute path plus a
+          # pid is what makes a missing file a fact: the previous revision of
+          # this job checked one path, and "not there" could not be told apart
+          # from "wrote somewhere else".
+          $heartbeatDir = Join-Path $env:GITHUB_WORKSPACE 'loadprobe'
+          New-Item -ItemType Directory -Force -Path $heartbeatDir | Out-Null
+          $heartbeatLog = Join-Path $heartbeatDir 'nvmidi-heartbeat.log'
+          Remove-Item $heartbeatLog -ErrorAction SilentlyContinue
+          "NVGT_MIDI_HEARTBEAT_LOG=$heartbeatLog" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           # Compile the same script before running it, and report the compiler's
           # own lines. The job has been reading a process that died with an exit
           # code and an empty log, and the step below has been turning that into
@@ -1666,16 +1674,36 @@ jobs:
             Write-Host (Get-Content $realErr -Raw)
             Write-Host '--- end of logs_e2e.txt.err ---'
           }
-          # And the plugin's own load probe, which is the only thing in this
+          # And the plugin's own heartbeat, which is the only thing in this
           # job that runs on the plugin's side of the load. A file that does
-          # not exist means the library's first statement never ran, and that
-          # is a different answer from a file whose last line names a stage.
-          $probeLog = Join-Path $env:GITHUB_WORKSPACE 'loadprobe\nvmidi-load.log'
-          if (Test-Path $probeLog) {
-            Write-Host ("--- nvmidi-load.log: {0} bytes ---" -f (Get-Item $probeLog).Length)
-            Write-Host (Get-Content $probeLog -Raw)
+          # not exist means the library's first statement never ran. A file
+          # whose last beat is a heartbeat before the death means the library
+          # was alive throughout and the fault is in the engine's work after
+          # it - and those are different answers, which is why the reader
+          # prints the count and the last line rather than the whole file.
+          $heartbeatLog = Join-Path $env:GITHUB_WORKSPACE 'loadprobe\nvmidi-heartbeat.log'
+          if (Test-Path $heartbeatLog) {
+            $beats = Get-Content $heartbeatLog
+            Write-Host ("--- nvmidi-heartbeat.log: {0} bytes, {1} lines ---" -f (Get-Item $heartbeatLog).Length, $beats.Count)
+            Write-Host ("--- first: {0}" -f $beats[0])
+            Write-Host ("--- last:  {0}" -f $beats[-1])
           } else {
-            Write-Host '--- nvmidi-load.log: the file does not exist, so the plugin never reached its first statement ---'
+            # Look for it anywhere before saying it does not exist. Asking one
+            # path is not a measurement of absence: the heartbeat's own
+            # fallback is the current directory, and an environment variable
+            # that did not reach the launched process - which is a real
+            # possibility with a detached process - would put the file there
+            # and produce a false "the plugin never ran".
+            Write-Host ('--- nvmidi-heartbeat.log is not at the path this job set ({0}) ---' -f $heartbeatLog)
+            $found = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Filter 'nvmidi-heartbeat.log' -ErrorAction SilentlyContinue
+            if ($found) {
+              foreach ($f in $found) {
+                Write-Host ("--- found instead: {0} ({1} bytes) ---" -f $f.FullName, $f.Length)
+                Write-Host (Get-Content $f.FullName -Raw)
+              }
+            } else {
+              Write-Host '--- and nowhere under the workspace either, so no byte of the plugin ran in this process ---'
+            }
           }
           # One source per fact, and every branch named.
           #

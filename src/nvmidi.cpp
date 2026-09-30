@@ -13,60 +13,122 @@
 #include "nvgt_plugin.h"
 
 // ---------------------------------------------------------------------------
-// The load probe
+// NVGT_MIDI_HEARTBEAT - the load ordering probe, and why it is a heartbeat
 // ---------------------------------------------------------------------------
 //
-// WHY THIS EXISTS. On windows the engine dies while loading this library: exit
-// 0xC0000005 after 1.1 seconds, the script's own stdout is a 0 byte file, and
-// the engine's compile diagnostics land in a 4372 byte stderr file that this
-// repository never prints. Every script that loads the plugin dies the same
-// way, so the fault is between the engine calling nvgt_plugin and the engine
-// reaching the script's first statement - a region that currently has no
-// instrument inside it at all. Every probe in scripts/windows is a script, and
-// a script cannot report on the load it did not survive.
+// WHAT IT MEASURES. A line every 250 ms, written by a detached thread, while
+// the engine loads, registers and compiles around this library.
 //
-// So this is a C++ probe and it is FIRST. It runs before this file's own
-// globals exist, before any static constructor anywhere in this translation
-// unit, and before the plugin touches the engine table - which is the whole
-// point, because all three are candidates and none of them can speak for
-// itself once the process is gone.
+// WHY A HEARTBEAT AND NOT A STAGE LOG. A stage log was tried first, in the
+// commit before this one, and it answered nothing: it wrote one line per stage
+// and the file came out empty. An empty file has two readings - nothing ran,
+// or something ran and the write did not land - and those two readings are the
+// whole question, so an instrument whose silence is ambiguous cannot answer it.
 //
-// It prints one line naming the stage reached, and it flushes, because the
-// buffer is what dies with the process. A silent -i.log means the death was
-// before this file's first statement: a static initialiser (there is one: the
-// music pattern tables), or a missing dependency, or the loader. A log that
-// ends at a named stage puts the fault between that stage and the next one.
+// What that first probe got wrong is the shape of the thing being measured. The
+// engine calling this library does not stop at this library's frames: it
+// compiles the script, and a compile can call back into registered code. So the
+// window that matters does not close when plugin_main returns, it closes when
+// the engine reaches the script's first statement - and, as the engine's own
+// stderr showed, the plugin is fully alive and registering in that window. The
+// death is later than any stage this file could name, so what is needed is not
+// a richer set of stages but a clock that keeps running until the process
+// stops.
 //
-// Its own includes come first, above the rest of the file's, because <cstdio>
-// and <cstdlib> are pulled in at line 73 and this block is the first thing in
-// the file: a probe that needs a declaration from a header included below it
-// would not compile where it stands, and moving it down to suit the includes
-// would put it after the static constructors it exists to bracket.
+// HOW TO READ IT. The last line is a timestamp, and it is the answer:
+//
+//   - the file does not exist - the loader never ran a byte of this library,
+//     so the fault is below us: a missing dependency, the import table, or the
+//     engine refusing to load the file at all.
+//   - the last line is old, and far from the script's death - the process
+//     entered this library and then went quiet, which puts the fault inside
+//     plugin_main or inside register_nvmidi, and the exit code's timing says
+//     which side.
+//   - the last line is within a heartbeat of the death - the loader, this
+//     library's statics, plugin_main and the whole registration are all
+//     innocent, and the fault is in the engine's own work after them: the
+//     compile, or the script's first statement.
+//
+// The third reading is the one the stage log could not distinguish from the
+// first, and it is the one the evidence points at.
+//
+// WHY A THREAD. A heartbeat on the main thread beats only while this library
+// is on the stack, which is the ambiguity above, restated in time. A thread
+// beats while the engine is doing something else entirely - it is the only way
+// to see whether the process is alive during the part of the load this file is
+// not in. It is started in the constructor rather than in plugin_main so the
+// first beat lands before the engine has called anything, and it is never
+// joined: the process exits over it, and that is correct, because its job ends
+// when the process does.
+//
+// ORDERING, and this file has been bitten by it. The probe is placed here,
+// directly under the two includes it needs nothing more than, because a static
+// constructor runs in the order statics appear in the translation unit. Above
+// this line there are no statics - only includes and the header's declarations.
+// Below it, in nvmidi.cpp, sit the music pattern tables, which are statics with
+// real constructors. So "static constructor runs first" is not a claim about
+// this file's layout that could drift; it is a property of where the block
+// sits, and moving it down would silently move it after the tables.
+//
+// WHAT IT WRITES WHERE. $NVGT_MIDI_HEARTBEAT_LOG if set, else "nvmidi-heartbeat.log"
+// in the current directory. The reader must be able to tell "the file is not
+// there" from "the path I checked is not where it went", and one fixed path
+// cannot: the next revision of the windows job prints the resolved path, the
+// milliseconds since the process started, and a recursive search for the name,
+// so a missing file is a fact rather than a guess about the working directory.
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <thread>
 
-static char g_load_probe_path[512];
+// One clock for the whole file. The first beat is written at once and every
+// later line carries the milliseconds since this variable was constructed, so
+// the numbers are readable without the reader knowing the wall clock, and two
+// beats from one process are comparable to each other.
+static const std::chrono::steady_clock::time_point g_heartbeat_origin =
+	std::chrono::steady_clock::now();
 
-static void load_probe(const char* stage) {
-	if (g_load_probe_path[0] == '\0') {
-		const char* directory = std::getenv("NVGT_MIDI_LOAD_PROBE_DIR");
-		if (!directory) directory = ".";
-		std::snprintf(g_load_probe_path, sizeof(g_load_probe_path), "%s/nvmidi-load.log", directory);
-	}
-	std::FILE* log = std::fopen(g_load_probe_path, "a");
+static std::atomic<bool> g_heartbeat_stop{false};
+
+static void heartbeat_write(const char* what, long long ms) {
+	const char* path = std::getenv("NVGT_MIDI_HEARTBEAT_LOG");
+	if (!path || path[0] == '\0') path = "nvmidi-heartbeat.log";
+
+	// Opened per beat and closed again. This is not the cheap choice - an open
+	// per line costs a syscall this library does not need - but a FILE* held
+	// open across the process's death is a buffer that dies with it, and the
+	// last beat is the one that matters. The reader gets every line that was
+	// written, up to the instant the process stopped.
+	std::FILE* log = std::fopen(path, "a");
 	if (!log) return;
-	std::fprintf(log, "stage %s\n", stage);
+	std::fprintf(log, "%s pid=%ld ms=%lld tid=%lu\n", what, (long)std::getpid(), ms,
+	             (unsigned long)std::hash<std::thread::id>{}(std::this_thread::get_id()));
 	std::fclose(log);
 }
 
-// The first statement in the file. Constructed before main, before any other
-// object in this translation unit, and it opens the log by itself: if the
-// loader is what fails, this is the last line anyone ever sees, and if it runs
-// the file's static constructors are innocent.
-struct load_probe_static_constructor_probe {
-	load_probe_static_constructor_probe() { load_probe("static constructor"); }
+static void heartbeat_thread() {
+	long long ms = 0;
+	while (!g_heartbeat_stop.load(std::memory_order_relaxed)) {
+		heartbeat_write("beat", ms);
+		std::this_thread::sleep_for(std::chrono::milliseconds(250));
+		ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::steady_clock::now() - g_heartbeat_origin).count();
+	}
+}
+
+struct heartbeat_starter {
+	heartbeat_starter() {
+		// The first line names the thread it comes from and is written before
+		// the thread exists, so that "the constructor ran" and "the thread
+		// runs" are two facts in the log rather than one.
+		heartbeat_write("static constructor entered", 0);
+		std::thread(heartbeat_thread).detach();
+		heartbeat_write("heartbeat thread started", 0);
+	}
 };
-static load_probe_static_constructor_probe g_load_probe_first;
+static heartbeat_starter g_heartbeat_starter;
+
 
 #include <RtMidi.h>
 #include <angelscript.h>
@@ -2937,7 +2999,6 @@ plugin_main(nvgt_plugin_shared* shared) {
 	// The probe's first entry point inside the engine's call. Reaching it says
 	// the loader resolved this symbol and the engine called it, which splits
 	// "the plugin never got control" from "it got control and died inside".
-	load_probe("plugin_main entered");
 	// A null table is refused before anything is read out of it.
 	//
 	// This line exists because the ci probe calls the entry point with a table
@@ -2981,7 +3042,6 @@ plugin_main(nvgt_plugin_shared* shared) {
 		return false;
 	}
 	const registration_result reg = register_nvmidi(shared->script_engine);
-	load_probe("register_nvmidi returned");
 	// Printed whether or not anything was refused, and with the count, so that
 	// "the engine took everything" and "the engine refused things and the
 	// lines above say which" are two readings a runner's log can tell apart.
@@ -3018,6 +3078,5 @@ plugin_main(nvgt_plugin_shared* shared) {
 	fflush(stderr);
 	// Kept so the playing code can call back into the script, see wait_until().
 	g_engine = shared->script_engine;
-	load_probe("plugin_main returned");
 	return true;
 }
