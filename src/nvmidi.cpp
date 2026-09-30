@@ -102,7 +102,17 @@ static void heartbeat_write(const char* what, long long ms) {
 	// written, up to the instant the process stopped.
 	std::FILE* log = std::fopen(path, "a");
 	if (!log) return;
-	std::fprintf(log, "%s pid=%ld ms=%lld tid=%lu\n", what, (long)::getpid(), ms,
+	// No pid, and that is a decision rather than an omission. getpid needs
+	// <unistd.h> on Linux and <process.h> on Windows, the project builds with
+	// -Werror, and I have no compiler here to settle which - the first two
+	// revisions of this line spent two CI round trips on exactly that, one on
+	// std::getpid and one on ::getpid with <cstdlib> alone. The pid was the
+	// third most useful thing a beat can carry: the path is what tells "not
+	// there" from "went elsewhere", the thread id below tells "a thread runs"
+	// from "a static ran", and the millisecond count is the entire point. A
+	// field the reader does not need is not worth a build that might not
+	// happen.
+	std::fprintf(log, "%s ms=%lld tid=%lu\n", what, ms,
 	             (unsigned long)std::hash<std::thread::id>{}(std::this_thread::get_id()));
 	std::fclose(log);
 }
