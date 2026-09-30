@@ -2642,7 +2642,30 @@ void register_midi_config(asIScriptEngine* engine, registration* reg) {
 static midi_input*  g_script_input  = midi_input_create();
 static midi_output* g_script_output = midi_output_create();
 
+// The crumbs. One line, stderr, flushed, before and after every registration
+// call that touches the engine's raw tables rather than its checked API.
+//
+// Why this is a line and not a comment in the log. The last run narrowed the
+// death to "somewhere after register_midi_globals returned" without naming a
+// call, because the plugin had said nothing between those two points. The log
+// ended on a successful function and the next event was the process dying, so
+// the only available next step was a hypothesis. Every hypothesis costs a CI
+// round trip, and two of those were already spent this week on a name I could
+// have looked up.
+//
+// stderr explicitly, and fflushed explicitly. std::cerr is unbuffered in
+// practice, but "in practice" is what a crash makes false: the whole point is
+// that the line survives a process that does not reach its return statement,
+// which is a property of the flush and not of the stream. The crumb is written
+// to be readable by a reader who has only the tail of a dead log.
+#define NVMIDI_CRUMB(what)                                                    \
+	do {                                                                      \
+		std::fprintf(stderr, "nvmidi: crumb: %s (%d)\n", (what), __LINE__);   \
+		std::fflush(stderr);                                                  \
+	} while (0)
+
 void register_midi_globals(asIScriptEngine* engine, registration* reg) {
+	NVMIDI_CRUMB("enter register_midi_globals");
 	reg->check( engine->RegisterGlobalFunction("uint midi_input_port_count()", asFUNCTION(midi_input_port_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("uint midi_output_port_count()", asFUNCTION(midi_output_port_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	// Why every string-returning function in this plugin hands the script
@@ -2717,11 +2740,15 @@ void register_midi_globals(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterGlobalFunction("int midi_last_error_byte(uint index)", asFUNCTION(midi_last_error_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("int midi_first_error_byte_count()", asFUNCTION(midi_first_error_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("int midi_first_error_byte(uint index)", asFUNCTION(midi_first_error_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-		reg->check( engine->RegisterGlobalProperty("midi_input midi_in",  g_script_input),  "RegisterGlobalProperty", __LINE__);
+	NVMIDI_CRUMB("before the global properties");
+	reg->check( engine->RegisterGlobalProperty("midi_input midi_in",  g_script_input),  "RegisterGlobalProperty", __LINE__);
 	reg->check( engine->RegisterGlobalProperty("midi_output midi_out", g_script_output), "RegisterGlobalProperty", __LINE__);
+	NVMIDI_CRUMB("before the two create functions");
 	reg->check( engine->RegisterGlobalFunction("midi_input@ midi_input_create()", asFUNCTION(midi_input_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_output@ midi_output_create()", asFUNCTION(midi_output_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	NVMIDI_CRUMB("before midi_engine_probe");
 	reg->check( engine->RegisterGlobalFunction("int midi_engine_probe()", asFUNCTION(midi_engine_probe), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	NVMIDI_CRUMB("end of register_midi_globals");
 }
 
 
@@ -2891,6 +2918,14 @@ registration_result register_nvmidi(asIScriptEngine* engine) {
 	// string, so they follow whatever needs them.
 	register_midi_globals(engine, &reg);
 	fprintf(stderr, "nvmidi: crumb: register_midi_globals done\n");
+	fflush(stderr);
+	// The count of what the engine kept, asked here and not later, because the
+	// question "did registration work" and the question "did anything after it
+	// run" are answered by two different lines and only the second one can be
+	// missing from a dead log. This is the last crumb before register_nvmidi
+	// returns, so a log that ends here says the whole registration was clean
+	// and the death is downstream of it.
+	fprintf(stderr, "nvmidi: crumb: end of register_nvmidi (calls=%d refused=%d)\n", reg.calls, reg.refused);
 	fflush(stderr);
 
 	// The engine is asked what it kept before this returns, because a code is a
