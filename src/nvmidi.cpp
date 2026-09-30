@@ -1514,6 +1514,43 @@ int midi_output_port_name_byte(unsigned int port, unsigned int index) {
 	}
 }
 
+// The same pair for the input side, in the same shape.
+//
+// These two were registered with the engine (midi_input_port_name_byte_count
+// and _byte in the block below) without ever being written, which is why the
+// build failed at the registration site rather than at a call site: the
+// register block is the only place in the file that named them. The script
+// could ask for an output port's name byte by byte and had no way to ask for
+// an input port's, which is the side that matters for a listening test - the
+// one where a person presses a key and something should report which hardware
+// produced it.
+//
+// RtMidiIn is a separate template argument because with_port is typed on the
+// concrete class, and the enumeration is the same on both sides.
+int midi_input_port_name_byte_count(unsigned int port) {
+	try {
+		return (int)with_port<RtMidiIn>([port](RtMidiIn& in) -> std::size_t {
+			if (port >= in.getPortCount()) return 0;
+			return in.getPortName(port).size();
+		});
+	} catch (RtMidiError&) {
+		return 0;
+	}
+}
+
+int midi_input_port_name_byte(unsigned int port, unsigned int index) {
+	try {
+		return with_port<RtMidiIn>([port, index](RtMidiIn& in) -> int {
+			if (port >= in.getPortCount()) return -1;
+			const std::string name = in.getPortName(port);
+			if (index >= name.size()) return -1;
+			return (int)(unsigned char)name[index];
+		});
+	} catch (RtMidiError&) {
+		return -1;
+	}
+}
+
 std::string midi_output_port_name(unsigned int port) {
 	try {
 		return with_port<RtMidiOut>([port](RtMidiOut& out) -> std::string {
