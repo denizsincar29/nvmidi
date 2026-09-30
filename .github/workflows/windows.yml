@@ -39,15 +39,21 @@ jobs:
           if not exist nvmidi.dll echo ORDINARY-BUILD-WROTE-NO-DLL
       - name: build the loopback driver
         shell: bash
-        # -o puts the dll where the artifact upload and the e2e's staged copy
-        # both expect it. build.sh resolves a relative -o against the caller's
-        # directory, so this path is a path in the workspace and not one inside
-        # the driver's own folder. That distinction is the whole bug this flag
-        # is here for: without it the driver landed in a build/ subdirectory,
-        # and then - once - at a path nobody looked at, which the e2e read as
-        # a driver that was never built. That reading sends the reader after a
-        # compile problem that does not exist, which is worse than an error.
-        run: bash tools/winmm_loopback/build.sh -o tools/winmm_loopback/nvmidi.dll
+        # build.sh writes its output beside itself, which is exactly where the
+        # artifact upload and the e2e's staged copy look for it. The -o that
+        # used to be here named that same path by hand, and build.sh resolves a
+        # relative -o against the *caller's* directory - the repository root -
+        # so the hand-written path landed one level down, in
+        # tools/winmm_loopback/tools/winmm_loopback/. The step still printed
+        # "built 52103 bytes", so it read as healthy; what the upload picked up
+        # instead was the leftover tools/winmm_loopback/nvmidi.dll from the
+        # 2026-09-11 run, 36408 bytes and two commits stale. Measured, run
+        # 36709257500: the log's upload lists path tools/winmm_loopback/nvmidi.dll
+        # and uploads 16103 bytes of zip, while the step's own output names
+        # /d/a/nvmidi/nvmidi/tools/winmm_loopback/tools/winmm_loopback/nvmidi.dll.
+        # A stale driver under the right name is worse than a missing one: every
+        # later step tests it and reports the result as this build's.
+        run: bash tools/winmm_loopback/build.sh
 
       - name: every function the compiler emits is one the driver expects to be called
         shell: bash
