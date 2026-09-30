@@ -358,6 +358,22 @@ jobs:
       # staging step below reads - one path, written down once, rather than a
       # copy that has to be kept in step by hand.
       #
+      # Which is why the path here is the directory and not
+      # `tools/winmm_loopback/nvmidi.dll`, although that is the path the build
+      # job names. `upload-artifact` with a path that names a file strips the
+      # last segment and uses it as the name *inside* the archive; matching
+      # that name on the way out means download-artifact would create a second
+      # directory to hold it, and the file would land at
+      # tools/winmm_loopback/nvmidi.dll/nvmidi.dll. Downloading to the plain
+      # directory puts the one entry back at tools/winmm_loopback/nvmidi.dll,
+      # which is what the staging step reads.
+      #
+      # Run 36733202629 is the measurement: the artifact downloaded, 52103
+      # bytes and one entry, and the next step still exited 1 on "the driver
+      # was not built" - the file was there, one directory down. Both spellings
+      # were written down to keep them in step, and this is the one that
+      # matched the upload's intent instead of its literal text.
+      #
       # This is the first step of a job that waits for the build job, so the
       # artifact is on the api by construction and not by timing. That is the
       # point of the wait: the failure this replaced was a download that ran
