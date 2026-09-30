@@ -101,17 +101,17 @@ string bytes_of_message(const midi_message&in m) {
 // halves of this test want different ports and the second half must not
 // overwrite the first.
 void write_config(const string&in port_name, bool append) {
-	file@ f = open("midi_config.txt", append ? "a" : "w");
-	if (f is null) {
-		say("Cannot write midi_config.txt in this folder. Run the test from a folder you can write to.");
-		return;
-	}
+	// file_put_contents is the engine's own function and the one its docs
+	// point at; the file object form (file f; f.open(...)) exists too, but the
+	// bare open() this first used does not - measured on run 36774668711,
+	// "line: 104 (12) ERROR: No matching symbol 'open'".
+	string text = "";
 	if (!append) {
-		f.write("# written by scripts/hear_test.nvgt\n");
-		f.write("# match is a substring of the port name, case-insensitive\n");
+		text += "# written by scripts/hear_test.nvgt\n";
+		text += "# match is a substring of the port name, case-insensitive\n";
 	}
-	f.write("match=" + port_name + "\n");
-	f.close();
+	text += "match=" + port_name + "\n";
+	file_put_contents("midi_config.txt", text, append);
 }
 
 // --- the test --------------------------------------------------------------
@@ -148,10 +148,16 @@ void main() {
 	// The port to listen on, and the port to play back out of. It is passed in
 	// by the launcher, which knows which is which; when nothing is passed the
 	// first port in the list above is used, and the list is printed either way.
+	//
+	// application.argv is how this engine hands a command line over -
+	// get_argc()/get_arg() do not exist, measured on run 36774668711:
+	// "line: 152 (6) ERROR: No matching symbol 'get_argc'". argv is indexed
+	// from 0, where 0 is the script's own path, so the first name the launcher
+	// passes is argv[1].
 	string in_name = "";
-	if (get_argc() > 1) in_name = get_arg(1);
+	if (application.argc > 1) in_name = application.argv[1];
 	string out_name = in_name;
-	if (get_argc() > 2) out_name = get_arg(2);
+	if (application.argc > 2) out_name = application.argv[2];
 	if (in_name == "" && ins > 0) {
 		string s0 = "";
 		for (int i = 0; i < midi_input_port_name_byte_count(0); i++) s0 += char_of(midi_input_port_name_byte(0, i));
