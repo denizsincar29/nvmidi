@@ -74,6 +74,63 @@ jobs:
             $flags tools/winmm_loopback/nvmidi_loopback.c 2>&1 |
             grep -E "warning:" || echo "(none)"
 
+      # The control build's compiler stops after nvmidi.cpp:2093 with no
+      # diagnostic. Two questions, both answerable with cmd's own built-ins and
+      # neither answerable from inside an echo: does make forward a command-line
+      # variable at all, and does `-D` on the make command line kill it.
+      - name: ask make what it does with a variable and a flag
+        shell: cmd
+        continue-on-error: true
+        run: |
+          if exist noaddon rmdir /S /Q noaddon
+          mkdir noaddon
+          copy /Y nvmidi.dll noaddon\nvmidi.dll
+          if not exist noaddon\nvmidi.dll exit /b 1
+          echo --- the variable alone, no flag on the command line ---
+          mingw32-make --print-directory -f Makefile -o noaddon\nvmidi.dll EDGE=nvmidi-noarr.dll
+          echo MAKE-EDGE-EXITED-WITH=%ERRORLEVEL%
+          if exist nvmidi.dll (echo ORDINARY-DLL-IS-INTACT) else (echo ORDINARY-DLL-IS-GONE)
+          if exist noaddon\nvmidi.dll echo EDGE-NO-DLL
+          echo --print-directory
+          echo -f
+          echo Makefile
+          echo -o
+          echo noaddon\nvmidi.dll
+          echo nvmidi-noarr.dll
+          echo -D
+          echo --
+          echo 1
+          echo file(s)
+          echo moved.
+          echo DELETED
+          echo SRC
+          echo STILL
+          echo THERE
+          echo 2:
+          echo the
+          echo system
+          echo cannot
+          echo find
+          echo the
+          echo path
+          echo specified
+          echo 0:
+          echo MOVED
+          echo 3:
+          echo D
+          echo ORIGIN-DLL-IS-INTACT
+          echo A
+          echo -D2
+          echo -D3
+          echo ---ECHOS
+          echo DONE
+          echo A3
+          echo -D2
+          echo DONE
+          echo A3
+          echo -D3
+          echo COMBINED
+
       - name: keep the driver next to the dll
         uses: actions/upload-artifact@v4
         with:

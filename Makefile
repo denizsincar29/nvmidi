@@ -121,34 +121,6 @@ clean:
 # nvmidi.dll. This target is therefore dead code for any ordinary user and
 # exists for exactly one measurement.
 #
-# The flag. NVGT_SKIP_ARRAY_ADDON is read in src/nvmidi.cpp. It used to sit on
-# this recipe's command line as a bare -DNVGT_SKIP_ARRAY_ADDON, and that is what
-# the flag was never doing.
-#
-# make exports nothing, but it *receives* everything: when a recipe line is
-# handed to the shell, the two variables it knows about are MAKE and
-# MFLAGS - and MFLAGS is make's own option vocabulary, dash-words included,
-# re-exported to every recipe it runs. A -D word after the target is parsed by
-# make as its own switches and dies there first ("invalid option -- D", run
-# 36706922550). A -D word inside the recipe is MFLAGS, so it survives make's
-# parse and reaches the command line - which is why the command line in the
-# log reads correctly and the compilation still stops.
-#
-# It stops because mingw32-make re-invokes itself. make sees -D in MFLAGS,
-# treats it as a request to re-execute, and does so *before* running the
-# recipe: the compiler line never starts, and what the log shows is the
-# ordinary build's output already in the buffer. Measured, run 36708301892:
-# the ordinary make printed ORDINARY-MAKE-EXITED-WITH=0 and wrote its dll;
-# the control printed the same last warning, the same no-diagnostic end and
-# the same output shape, and then died with exit 1 without ever running g++.
-#
-# So the flag goes into a variable make does not pass on as its own switches.
-# Making it part of a command-line CXXFLAGS= is the other wrong way: that
-# replaces the whole variable and silently drops -D__WINDOWS_MM__, and a MinGW
-# build without that define takes the Linux RtMidi branch and produces no dll
-# at all while exiting 0 (measured, run 36702495507). Neither the command line
-# nor a replaced CXXFLAGS works; only the shell can carry it.
-#
 # The header prerequisite is load-bearing. This file's own target used to be
 # listed in SOURCES, and on a case-insensitive filesystem `nvmidi-noarr.dll`
 # resolves to `nvmidi.dll` - so the target was its own prerequisite and make
