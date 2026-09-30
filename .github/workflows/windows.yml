@@ -693,6 +693,27 @@ jobs:
         shell: cmd
         run: mingw32-make
 
+      # The same source, built a second time with the array add-on left out.
+      #
+      # Why. Run 36700487540 traced every registration on stderr with a line
+      # number and put one marker on entry to register_nvmidi. The log shows
+      # the entry marker and then nothing - not one "reg line" - and the
+      # process exits 70. The only statement between the marker and the first
+      # check() is RegisterScriptArray(engine, false), so that call is where
+      # the process dies.
+      #
+      # One build cannot prove that, because a build is a fact and not a
+      # comparison. This second dll carries the same code minus that single
+      # call, and the location probe runs both against the same script in the
+      # same folder. If the no-addon build gets past the first registration
+      # line, the call is the fault and the fix is to register the add-on the
+      # way nvgt's own loader does instead of calling into it directly. If it
+      # dies in the same place, the add-on is exonerated and the fault is in
+      # the engine pointer itself - a larger finding, and one worth having.
+      - name: build the plugin without the array add-on
+        shell: cmd
+        run: mingw32-make clean && mingw32-make CXXFLAGS="-std=c++17 -O2 -fPIC -Wall -Wextra -D__WINDOWS_MM__ -DNVGT_SKIP_ARRAY_ADDON" && copy /Y nvmidi.dll nvmidi-noarr.dll
+
       # Where did we put it. nvgt searches lib/ next to itself for a plugin
       # named by #pragma plugin, so nvmidi.dll has to be there and not in the
       # working directory. Reported because a plugin that is not found and a
@@ -725,26 +746,33 @@ jobs:
             Write-Host 'the engine shipped no nvmidi.dll of its own'
           }
 
-          # EXPERIMENT (run 7f43a0e was the last before this line changed).
-          # Until now this step copied the loopback DRIVER - built by the
+          # This step used to copy the loopback DRIVER - built by the
           # winmm_loopback script with completely different flags, exporting
           # ModMessage and no NVGT plugin ABI at all - over the engine's own
-          # lib\nvmidi.dll, and named it nvmidi.dll. The engine imports
-          # neither winmm nor nvmidi (read out of its import table with
-          # pefile), so this file is the only reason it would ever touch
-          # either. If the e2e stops dying in the loader once this copy is
-          # gone, the crash was this substitution, not winmm and not the
-          # driver's entry point.
+          # lib\nvmidi.dll, under that name. The copy is off, and the reason it
+          # is off is not the reason written here before.
           #
-          # Kept as a named switch rather than a deletion so the old shape can
-          # be restored by flipping one value, and so the log says which shape
-          # ran.
+          # The old note said to watch this switch: if the e2e stopped dying
+          # once the substitution was gone, the crash was the substitution. The
+          # e2e kept dying, so that reading is closed. What the switch is
+          # retired on is a separate measurement (run 36700487540): with the
+          # real plugin in every candidate location and a script that names it
+          # and does nothing else, the process still exits 70 with a
+          # `system exception` - the death is inside the plugin's own code,
+          # reached through the engine's loader, and no file this step writes is
+          # in that path.
+          #
+          # Left in place, disabled, because the driver still has to be built
+          # (the receiving half of the two-process test calls it directly) and
+          # because a named switch reads better in the log than a deleted
+          # block. Turning it back on would install a driver under the plugin's
+          # name, which is what made the earlier runs unreadable.
           $installDriver = $false
           if ($installDriver) {
             Copy-Item nvmidi.dll -Destination (Join-Path $lib 'nvmidi.dll') -Force
             Write-Host 'the loopback driver is installed as lib\nvmidi.dll'
           } else {
-            Write-Host 'EXPERIMENT: leaving lib\nvmidi.dll alone; the engine keeps its own plugin'
+            Write-Host 'the loopback driver is NOT installed over lib\nvmidi.dll; that name belongs to the plugin'
           }
           $dll = Join-Path $lib 'nvmidi.dll'
           if (Test-Path $dll) {
@@ -807,26 +835,70 @@ jobs:
             @{ name = '4-beside-script';    dir = (Join-Path $ws 'pluginloc-script') }
           )
 
+          # Both builds, so each location answers the same question twice. The
+          # pair is the whole point: a single build can only say "it died", while
+          # two builds of one source that differ by a single call say whether
+          # that call is the cause.
+          #
+          # nvmidi-noarr.dll is not named "nvmidi.dll" because a directory holds
+          # a single file of a given name, and both readings have to run against
+          # the same folder and the same script. The pragma names the file, so
+          # the second build is asked for by its own name through a second copy
+          # of the probe - identical except for the line below.
+          $variants = @(
+            @{ name = 'with-array-addon'; dll = 'nvmidi.dll';         pragma = 'nvmidi' },
+            @{ name = 'no-array-addon';   dll = 'nvmidi-noarr.dll';   pragma = 'nvmidi-noarr' }
+          )
+          $probe = Get-Content (Join-Path $ws 'scripts\windows\loc_probe.nvgt') -Raw
+
           foreach ($c in $cases) {
             $dir = $c.dir
             New-Item -ItemType Directory -Force -Path $dir | Out-Null
-            Copy-Item $built -Destination (Join-Path $dir 'nvmidi.dll') -Force
-            $script = Join-Path $dir 'loc_probe.nvgt'
-            Copy-Item (Join-Path $ws 'scripts\windows\loc_probe.nvgt') -Destination $script -Force
 
-            # Run from the directory under test, because "the working directory"
-            # is one of the candidates and a run from $ws would collapse cases
-            # 3 and 4 into whatever $ws happens to be.
-            $log = Join-Path $env:RUNNER_TEMP "$($c.name).out"
-            Push-Location $dir
-            $p = Start-Process -FilePath $exe -ArgumentList @($script) -Wait -PassThru -NoNewWindow `
-                 -RedirectStandardOutput $log -RedirectStandardError "$log.err"
-            Pop-Location
-            $text = if (Test-Path $log) { (Get-Content $log -Raw) } else { '' }
-            $err  = if (Test-Path "$log.err") { (Get-Content "$log.err" -Raw) } else { '' }
-            Write-Host "=== $($c.name): dll and script in $dir, run from $dir ==="
-            Write-Host "  exit $($p.ExitCode)  stdout=[$($text -replace "`r?`n", ' | ')]  stderr=[$err]"
-            if ($text -match 'LOC_OK') { Write-Host "  >>> LOCATION ACCEPTED: $($c.name) ($dir)" }
+            foreach ($v in $variants) {
+              $dll = Join-Path $ws $v.dll
+              if (-not (Test-Path $dll)) {
+                Write-Host "=== $($c.name) / $($v.name): no $dll, skipped ==="
+                continue
+              }
+              Copy-Item $dll -Destination (Join-Path $dir $v.dll) -Force
+
+              # The probe says which plugin it wants on its one real line.
+              $script = Join-Path $dir "loc_probe_$($v.name).nvgt"
+              ($probe -replace '#pragma plugin \S+', "#pragma plugin $($v.pragma)") |
+                Set-Content -Path $script -Encoding ASCII
+
+              # Run from the directory under test, because "the working directory"
+              # is one of the candidates and a run from $ws would collapse cases
+              # 3 and 4 into whatever $ws happens to be.
+              $log = Join-Path $env:RUNNER_TEMP "$($c.name).$($v.name).out"
+              Push-Location $dir
+              $p = Start-Process -FilePath $exe -ArgumentList @($script) -Wait -PassThru -NoNewWindow `
+                   -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+              Pop-Location
+              $text = if (Test-Path $log) { (Get-Content $log -Raw) } else { '' }
+              $err  = if (Test-Path "$log.err") { (Get-Content "$log.err" -Raw) } else { '' }
+              Write-Host "=== $($c.name) / $($v.name): $($v.dll) and script in $dir, run from $dir ==="
+              Write-Host "  exit $($p.ExitCode)  stdout=[$($text -replace "`r?`n", ' | ')]  stderr=[$($err -replace "`r?`n", ' | ')]"
+              if ($text -match 'LOC_OK') { Write-Host "  >>> LOCATION ACCEPTED: $($c.name) / $($v.name) ($dir)" }
+
+              # The reading this step was rebuilt for. The add-on is called
+              # first thing inside register_nvmidi, before any type is
+              # registered, so a build that gets past it must leave the call
+              # line and, if nothing else kills it, the return line. A build
+              # with the call compiled out leaves the flag line instead and
+              # then reaches the first registration of its own accord.
+              $called = ($err -match 'calling RegisterScriptArray')
+              $back   = ($err -match 'RegisterScriptArray returned')
+              $skipped = ($err -match 'NVGT_SKIP_ARRAY_ADDON is set')
+              $proved = if ($v.name -eq 'no-array-addon') {
+                ($skipped -and -not ($err -match 'system exception'))
+              } else {
+                $called
+              }
+              Write-Host "  addon_call_entered=$called  addon_call_returned=$back  addon_skipped=$skipped"
+              Write-Host "  >>> $($c.name) / $($v.name): bisection=$(if ($proved) { 'PASSES THIS LOCATION' } else { 'no' })"
+            }
           }
 
       # A loopback driver is what makes two windows processes meet over midi.

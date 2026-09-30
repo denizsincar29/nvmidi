@@ -2146,7 +2146,29 @@ void register_nvmidi(asIScriptEngine* engine) {
 	// whole story. It is not the version either until a runner prints
 	// shared->version back, which plugin_main now does before prepare_plugin
 	// compares it.
+	//
+	// Behind a flag because this is now the suspect, measured rather than
+	// reasoned. Run 36700487540 put a flushed line before every registration
+	// and one on entry here. The log carries "entering register_nvmidi" and
+	// then nothing - no "reg line" at all, so control never reached the first
+	// check() below this point - and the process exits 70. The only statement
+	// between the entry marker and the first check() is this call. It is the
+	// last thing that runs before the death.
+	//
+	// The flag makes one dll serve both readings: built without
+	// NVGT_SKIP_ARRAY_ADDON it is the current behaviour, built with it the
+	// call is gone and everything after it either runs or is proven not to.
+	// A hypothesis that cannot be turned off cannot be tested.
+#ifndef NVGT_SKIP_ARRAY_ADDON
+	fprintf(stderr, "nvmidi: calling RegisterScriptArray\n");
+	fflush(stderr);
 	RegisterScriptArray(engine, false);
+	fprintf(stderr, "nvmidi: RegisterScriptArray returned\n");
+	fflush(stderr);
+#else
+	fprintf(stderr, "nvmidi: NVGT_SKIP_ARRAY_ADDON is set, the array add-on is not registered\n");
+	fflush(stderr);
+#endif
 
 	register_midi_message(engine, &reg);
 	// Every type a later declaration names has to exist first. The port
