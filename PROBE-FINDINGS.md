@@ -225,3 +225,98 @@ cannot be made twice and cannot be made speculatively.
   the whole apparatus exists to answer.
 - The loopback driver was not built on run 36603915214; the listener's verdict
   is not trustworthy until that is understood.
+
+
+## The host runs: the plugin registers end to end against a live engine
+
+Measured on the VPS (denizsincar.ru, x86_64 Debian 12, g++ 12) on 2026-09-30,
+not on a GitHub runner. Build:
+
+    g++ -std=c++17 -O1 -fPIC -Isrc -Ithird_party/rtmidi -Ithird_party/angelscript \
+        -DNVGT_PLUGIN_STATIC tools/probe_host.cpp src/nvmidi.cpp \
+        third_party/rtmidi/RtMidi.cpp third_party/angelscript/scriptarray.cpp \
+        libangelscript_239.a -lpthread -Wl,--allow-multiple-definition -o probe_host
+
+`libangelscript_239.a` is built from upstream master, which reports
+`ANGELSCRIPT_VERSION 23900` - the same number the plugin vendors in
+`third_party/angelscript/angelscript.h:61` ("2.39.0 WIP"). This is load-bearing
+and was the last blocker: `asCreateScriptEngine` defaults its argument to
+`ANGELSCRIPT_VERSION` and returns 0 when the caller's major/minor differ from
+the library's (as_scriptengine.cpp:233), so a 2.38.0 library answers a 2.39.0
+header with a null pointer and the message "could not create an Angelscript
+engine". The first archive built here was 2.38.0 and produced exactly that.
+
+Result:
+
+    the plugin's api version is 5
+    a real Angelscript engine was created (version 2.39.0 WIP)
+    calling the entry point, with a real engine and no stub table...
+    the entry point returned true
+    REGISTERED: the plugin ran its whole registration against a live Angelscript
+    the plugin asked the nvgt side of the table 0 time(s)
+    PROBE_EXIT=0
+
+**The nvgt-side count is the claim this host was built to test and it holds:**
+through the entire registration the plugin never reached for `nvgt_wait`,
+`ticks`, `refresh_window` or any other engine-supplied function. Everything it
+needed came from Angelscript.
+
+### The array add-on question is answered, and answered at run time
+
+    nvmidi: blind probe array<int> answered -8
+    nvmidi: blind probe array<uint> answered -8
+    nvmidi: blind probe array<double> answered -8
+    nvmidi: the engine already has array<T>, the array add-on is not called
+
+-8 is `asNO_TYPE_INFO`. The plugin asks the engine whether it knows the array
+types before registering them, gets a clear no from a bare host, and registers
+the add-on itself; against nvgt, where the types exist, it skips. This is the
+detection the "Still open" section below said was unsolved - it is solved, and
+it was in the tree while that paragraph was being written.
+
+### 22 refusals, all one code, and what they do *not* say
+
+Every refused registration answers **-10**, and -10 is `asALREADY_REGISTERED`
+(angelscript.h:655). The plugin's own trailer text - "at least one registration
+was refused for a reason other than asALREADY_REGISTERED" - is wrong: nothing
+was refused for any other reason. That sentence is what sent this session
+looking for a second class of failure that does not exist.
+
+The refusals are all **second and later registrations of a name that is already
+in the engine**: `nvmidi_note_create(int,int)` is registered twice in the source
+(2103 and 2109), `midi_note_number` twice (2108 and 2112), `midi_config`'s
+`match` property twice, its `load`/`load_if_present` twice, the two port lookups
+twice. The lines that *introduce* each type - `midi_note` at 1952, `midi_output`,
+`midi_input` - are not among them, and neither is `midi_config`'s first
+property.
+
+Which gives the host its reading, and the reading is the useful part:
+
+**A name that appears for the first time cannot be already registered.** So a
+-10 against a first-time name would mean the *type* was rolled back and the
+whole type is unusable - the fault a script hits when it writes
+`midi_output@ out;` and is told the type does not exist. A -10 against a
+duplicate only means the duplicate is redundant. The log above holds only the
+second kind, and `register_nvmidi` is entered exactly once (`grep -c` = 1), so
+the plugin registers once and some of its declarations are literally repeated in
+the source.
+
+Two things follow, and they are different sizes:
+
+- **Cosmetic, in this repo:** the duplicate registrations should go, and so
+  should the trailer sentence, which reports a category of error it never checks
+  for.
+- **Load-bearing, for nvgt:** "genuinely already registered" and "rolled back"
+  share one error code, so a plugin cannot tell them apart locally. That is the
+  whole reason the bound-type mystery below stayed unsolved for a day of
+  scripting: a failed registration at load and a successful one are the same
+  answer to the next question.
+
+## Corrected in this section
+
+The note in `tools/probe_host.cpp` saying the harness "has never once compiled"
+- and the same claim repeated in this file's history of messages - was true when
+written and is not true now. It compiles, links and runs; the three faults in
+it were a missing `#include <RtMidi.h>`, stand-ins that collided with the
+header's own forward declarations, and a hand-written `extern "C"` declaration
+of the entry point where the header, in this mode, declares it C++ and mangled.

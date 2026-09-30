@@ -37,11 +37,24 @@
 //
 //   g++ -std=c++17 -O1 -fPIC -Isrc -Ithird_party/angelscript \
 //       -DNVGT_PLUGIN_STATIC -c src/nvmidi.cpp -o nvmidi_static.o
-//   g++ -std=c++17 -O1 -fPIC -Isrc -Ithird_party/angelscript \
-//       -DNVGT_PLUGIN_STATIC tools/probe_host.cpp nvmidi_static.o \
+//   g++ -std=c++17 -O1 -fPIC -Isrc -Ithird_party/rtmidi \
+//       -Ithird_party/angelscript -DNVGT_PLUGIN_STATIC \
+//       tools/probe_host.cpp src/nvmidi.cpp \
 //       third_party/rtmidi/RtMidi.cpp third_party/angelscript/scriptarray.cpp \
-//       -langelscript -lpthread -o probe_host
-//   ./probe_host
+//       /path/to/libangelscript.a -lpthread -Wl,--allow-multiple-definition \
+//       -o probe_host
+//   ./probe_host; echo $?
+//
+// --allow-multiple-definition is not sloppiness: see the note above
+// NVGT_PLUGIN_STATIC on why the header defines plugin_version() in both this
+// host and the plugin, and why that is correct for both.
+//
+// libangelscript.a is not vendored. third_party/angelscript carries the
+// headers and the array add-on only, so the engine itself is built from
+// https://github.com/anjo76/angelscript (v2.38.0) - every .cpp under
+// sdk/angelscript/source, archived. -langelscript, which this comment used to
+// say, only works on a machine with the SDK installed, and the point of this
+// harness is that it needs nothing installed.
 //
 // NVGT_PLUGIN_STATIC is not a trick to avoid the dll: it is what the header
 // asks for when the plugin is compiled into the host rather than loaded from
@@ -49,29 +62,45 @@
 // instead of through the pointer table. Same code either way - the table is
 // only how the functions are found, not what they do.
 
+// NVGT_PLUGIN_STATIC makes the plugin's entry point a name in this program -
+// nvgt_plugin_1(), composed by the header - instead of an export looked up
+// from a dll. The plugin and this host then have to agree on one symbol, so
+// set it before including the header and for every translation unit in the
+// link; setting it in one and not the other is what the first attempts at
+// this file did, and the linker's answer was "undefined reference to
+// nvgt_plugin_1" while nm showed the symbol defined a few lines further up.
+//
+// Neither of the header's guards is set here, on purpose.
+//
+// NVGT_PLUGIN_INCLUDE would suppress the header's plugin_version() definition,
+// but it also guards the block that gives the entry point its extern "C"
+// linkage. With it set on this side only, the plugin's object carried
+// _Z13nvgt_plugin_1P18nvgt_plugin_shared while this host asked for a plain
+// nvgt_plugin_1 - and the linker's answer was "undefined reference to
+// nvgt_plugin_1" a few lines after nm had shown the symbol defined.
+//
+// Not setting it means the header defines plugin_version() here too, which is
+// a second definition next to the plugin's. That one is not a bug to route
+// around: it is the arrangement the header documents for NVGT_PLUGIN_STATIC,
+// where plugin_main/plugin_version *are* the entry points and the host is the
+// plugin. Two definitions of the same one-line accessor only collide because
+// this probe host is a throwaway harness with the plugin linked into it, and
+// --allow-multiple-definition is the cost of that convenience.
 #define NVGT_PLUGIN_STATIC 1
-
-// The plugin's own translation unit defines the entry point and the version
-// function through the header's macros; this one declares the two names it
-// will call.
 #include "nvgt_plugin.h"
 
 // Load-bearing, and not an oversight: the vendored RtMidi keeps its template
 // definitions in RtMidi.cpp instead of the header, so the header alone only
 // gives declarations. Including it here is what makes this translation unit
-// instantiate them; drop it and every RtMidi call in the plugin object becomes
-// an undefined reference at link time.
+// instantiate them - a host that did not would link the plugin's object
+// against an empty RtMidi and only find out at run time, when the plugin asks
+// for a port.
 #include <RtMidi.h>
 
 #include <cstdio>
 #include <cstdint>
 #include <string>
 
-// Only the plugin needs the RtMidi header; the host itself never names
-// an RtMidi type. Including it here is what tells the compiler to
-// instantiate the vendored template definitions - a host that does not
-// would link nvmidi_static.o against an empty RtMidi and only find out
-// at run time, when the plugin asks for a port.
 namespace {
 
 // The nvgt half of the table. Every one of these is something the engine does
@@ -105,30 +134,17 @@ bool running_on_mobile_standin() { ++nvgt_calls; return false; }
 
 } // namespace
 
-// The entry point the plugin's own translation unit defines. The header only
-// gives the macro that *spells* its name, so the declaration is written out.
-#ifdef NVGT_PLUGIN_STATIC
-#define PROBE_CAT_(a, b) a##b
-#define PROBE_CAT(a, b) PROBE_CAT_(a, b)
-#define PROBE_PLUGIN_MAIN PROBE_CAT(nvgt_plugin_, NVGT_PLUGIN_STATIC)
-#define PROBE_PLUGIN_VERSION PROBE_CAT(nvgt_plugin_version_, NVGT_PLUGIN_STATIC)
-#else
-#define PROBE_PLUGIN_MAIN nvgt_plugin
-#define PROBE_PLUGIN_VERSION nvgt_plugin_version
-#endif
-extern "C" bool PROBE_PLUGIN_MAIN(nvgt_plugin_shared*);
+// The entry point the plugin's own translation unit defines, declared the way
+// the header declares it. plugin_main and plugin_version are macros that
+// *spell* the names, so they are expanded here rather than written out: a
+// hand-written declaration is a second opinion about the symbol's linkage,
+// and the one time this file held one it was the opinion that was wrong.
+plugin_main(nvgt_plugin_shared*);
+plugin_version();
 
 int main() {
-	// The header's own accessors, not hand-written symbol names: in
-	// NVGT_PLUGIN_STATIC mode the entry point is nvgt_plugin_<NVGT_PLUGIN_STATIC>,
-	// and spelling that out here is how a host ends up declaring a symbol
-	// nothing defines. plugin_version() is defined by the header in this same
-	// translation unit.
-	// The version function is a definition, not a callable name, in this
-	// translation unit - the header's own definition lives in whichever file it
-	// is expanded in. The plugin's file defines it, so it is declared and called
-	// by its composed name.
-	std::printf("the plugin's api version is %d\n", PROBE_PLUGIN_VERSION());
+
+	std::printf("the plugin's api version is %d\n", nvgt_plugin_version_1());
 
 	nvgt_plugin_shared shared{};
 	shared.version = NVGT_PLUGIN_API_VERSION;
@@ -164,7 +180,7 @@ int main() {
 	// stack trace would say so.
 	std::printf("calling the entry point, with a real engine and no stub table...\n");
 	std::fflush(stdout);
-	const bool accepted = PROBE_PLUGIN_MAIN(&shared);
+	const bool accepted = nvgt_plugin_1(&shared);
 	std::printf("the entry point returned %s\n", accepted ? "true" : "false");
 
 	if (accepted) {
@@ -173,7 +189,29 @@ int main() {
 		std::printf("registration path never reached for the engine at all\n");
 	}
 
+	// asALREADY_REGISTERED is -10 (angelscript.h:655) and it has two readings.
+	// "This declaration is already in the engine" is what a second pass looks
+	// like; "the registration that would have introduced the type this belongs
+	// to did not survive" is what a rolled-back type looks like, and that one
+	// is the fault this harness exists to find, because a script that then
+	// writes `midi_output@ out;` is told the type does not exist. The two are
+	// told apart by the names in the log, not by the code: a fresh name cannot
+	// be already registered, so a -10 against one means the plugin went round
+	// twice. Counting the first-time registrations is therefore part of
+	// reading the output, and neither the count nor the exit status is a pass
+	// on its own.
+	std::printf("NOTE: registration refusals above carry code -10 (asALREADY_REGISTERED). Count the\n");
+	std::printf("first-time registrations in the log above: a fresh name cannot be already\n");
+	std::printf("registered, so any -10 on one means the plugin registered twice instead.\n");
+
 	shared.script_engine->Release();
-	asUnprepareMultithread();
+
+	// asUnprepareMultithread aborts (as_thread.cpp:193) when the engine was
+	// never multithreaded to begin with - the host leaves script_thread_manager
+	// null and asPrepareMultithread is only reached on the shared-library path,
+	// so on this one there is nothing to unprepare and asserting about it is
+	// the harness's fault, not the plugin's. The engine is released above,
+	// which is the cleanup that actually applies here, and the exit status is
+	// the result of the probe rather than of the teardown.
 	return accepted ? 0 : 1;
 }
