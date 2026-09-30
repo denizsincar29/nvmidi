@@ -152,13 +152,46 @@ after it with no complaint). So the engine already knows `array<T>` before the
 plugin loads. NVGT's own loader has installed an array add-on already. The
 plugin's call is the second one over an existing registration.
 
-### What this does not yet say
+### Settled: the vtable is sound, so the fault is the registration itself
 
-Whether the crash is the duplicate registration itself or the call's landing
-in the engine — the plugin's `asIScriptEngine*` arrives from outside the
-process, so its vtable is worth reading. Print
-`engine->GetVersion()` through the raw pointer and compare it to 2.39.0 WIP
-before the call, and keep the vtable dump.
+Run 36721024269, control build, locations 1 and 2:
+
+    exit 0  stdout=[QE_PROBE=10QE_PORTS=1QE_OK]
+
+`midi_engine_probe()` is a global function the plugin registers, and it does
+nothing but call `GetEngineProperty((asEEngineProp)30)` through `g_engine` —
+the same pointer, of the same type, through which the add-on makes its call.
+It answers **10**, a legitimate value of `asEP_INIT_CALL_STACK_SIZE`, and the
+same process then calls `midi_output_port_count()` and gets **1**.
+
+So the plugin's `asIScriptEngine*` resolves its vtable correctly and the
+property slot this header assigns really is that engine's property slot. The
+plugin's engine calls work. The fault is not at the call boundary.
+
+The same cell settles the second half: the control build registers
+`midi_engine_probe` at line 2117 and keeps going to 2138, so the plugin
+called nothing of the add-on's and lived. The ordinary build calls
+`RegisterScriptArray` at the same point and dies. The difference between the
+two builds is exactly that call.
+
+**The duplicate array-addon registration is what kills the build** — not the
+vtable, not the load location, not the pragma.
+
+### It is the second registration, and a second one is the fault
+
+`RegisterScriptArray_Native`'s first statement is the cleanup-callback call
+above; the add-on registers `array<T>` and a cleanup callback over a type the
+engine already has. The control build proves the engine has it: every nvmidi
+function taking `array<midi_note>` registers with no complaint there. What
+the process refuses is the *second* registration, not the type name being
+known twice — `SetTypeInfoUserDataCleanupCallback` on an already-populated
+cache is where it goes.
+
+The fix that follows: the plugin must not call the add-on at all when the
+engine already has the arrays. `NVGT_SKIP_ARRAY_ADDON` is the control build;
+that path works end to end. The unsolved half is detection — deciding at
+runtime whether the engine already has `array<T>`, since the add-on call
+cannot be made twice and cannot be made speculatively.
 
 ## Retracted
 
