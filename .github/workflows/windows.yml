@@ -725,13 +725,37 @@ jobs:
             Write-Host 'the engine shipped no nvmidi.dll of its own'
           }
 
-          Copy-Item nvmidi.dll -Destination (Join-Path $lib 'nvmidi.dll') -Force
+          # EXPERIMENT (run 7f43a0e was the last before this line changed).
+          # Until now this step copied the loopback DRIVER - built by the
+          # winmm_loopback script with completely different flags, exporting
+          # ModMessage and no NVGT plugin ABI at all - over the engine's own
+          # lib\nvmidi.dll, and named it nvmidi.dll. The engine imports
+          # neither winmm nor nvmidi (read out of its import table with
+          # pefile), so this file is the only reason it would ever touch
+          # either. If the e2e stops dying in the loader once this copy is
+          # gone, the crash was this substitution, not winmm and not the
+          # driver's entry point.
+          #
+          # Kept as a named switch rather than a deletion so the old shape can
+          # be restored by flipping one value, and so the log says which shape
+          # ran.
+          $installDriver = $false
+          if ($installDriver) {
+            Copy-Item nvmidi.dll -Destination (Join-Path $lib 'nvmidi.dll') -Force
+            Write-Host 'the loopback driver is installed as lib\nvmidi.dll'
+          } else {
+            Write-Host 'EXPERIMENT: leaving lib\nvmidi.dll alone; the engine keeps its own plugin'
+          }
           $dll = Join-Path $lib 'nvmidi.dll'
-          Write-Host "${dll}: $((Get-Item $dll).Length) bytes"
+          if (Test-Path $dll) {
+            Write-Host "${dll}: $((Get-Item $dll).Length) bytes"
+          } else {
+            Write-Host "${dll}: absent (this is the point of the experiment)"
+          }
           # A zero byte file here would make the whole job meaningless and
           # silent - the loader says "failed to load plugin" for an empty file
           # exactly as it does for a missing dependency.
-          if ((Get-Item $dll).Length -eq 0) { throw 'the built dll is empty' }
+          if ((Test-Path $dll) -and (Get-Item $dll).Length -eq 0) { throw 'the built dll is empty' }
           Get-ChildItem $lib | Select-Object Name, Length
 
       # A loopback driver is what makes two windows processes meet over midi.
