@@ -1368,11 +1368,7 @@ jobs:
           $src = Join-Path $env:GITHUB_WORKSPACE 'scripts\windows\e2e_winmm.nvgt'
           $log = Join-Path $env:GITHUB_WORKSPACE 'logs_e2e.txt'
           # Where the plugin's own heartbeat writes, and it is emptied here
-          # rather than read and hoped about. The heartbeat is a thread inside
-          # the library and it runs BEFORE the script's first statement, which
-          # is the only region left: every script that loads the plugin dies at
-          # 0xC0000005 after 1.1 seconds with a 0 byte stdout, and a script
-          # cannot be the instrument for a death that precedes it. Appending is
+          # rather than read and hoped about. Appending is
           # what the heartbeat does, so a stale file from an earlier step would
           # read as this run's progress - and a stale file is exactly what would
           # be mistaken for a live process.
@@ -1408,14 +1404,31 @@ jobs:
           # 36729333733: "--- compile pass finished, exit  ---". A file, a
           # second read of it and the process's own code fix both.
           Write-Host '--- compiling the e2e script first ---'
-          # The compile pass runs the same script with the same stdout file as
-          # the real run below, so it overwrites the evidence it was added to
-          # explain. Measured on run 36775764009: this step, launching $src with
-          # -RedirectStandardOutput $log, left "--- logs_e2e.txt: 0 bytes ---"
-          # where the real run's transcript had been, and every reader after it
-          # then reported "the script printed no E2E_API_NUMBERS line" about a
-          # file the compile pass had just truncated. The crash and the compile
-          # pass are two runs and they need two files.
+          # The compile pass gets its own stdout file, and the reason is
+          # thinner than the one first written here. That first reason said
+          # this step truncated the real run's transcript; the run it produced
+          # says otherwise - 36776804229, on this very revision, still reports
+          # "--- logs_e2e.txt: 0 bytes ---", which a compile pass cannot leave
+          # behind on a file it no longer touches. The zero bytes have a
+          # measured cause of their own and it is not this step:
+          #
+          #   the engine's print() buffers, and it flushes the buffer when the
+          #   process exits cleanly. scripts/windows/e2e_min.nvgt - a pragma and
+          #   two prints - leaves "MIN_BEGINMIN_END" in its stdout, sixteen
+          #   bytes, no trailing newline, and exits 0 in 1.3 seconds. Run the
+          #   same runner with e2e_winmm.nvgt and the process dies at 1.9
+          #   seconds with 0xC0000005, and a process that dies does not run the
+          #   flush: its stdout file stays 0 bytes while its stderr file carries
+          #   all 4783 bytes, because stderr was never buffered in the first
+          #   place.
+          #
+          # So a 0 byte logs_e2e.txt IS the crash's fingerprint, and that is
+          # worth more than the truncation story was. It is also why reading
+          # this file for content cannot work while the crash stands: the
+          # transcript is in the process's memory at the moment it dies, not on
+          # disk. The two files stay split anyway - two runs should not share
+          # one output file - but nothing should be read into the split beyond
+          # tidiness.
           $log = Join-Path $env:GITHUB_WORKSPACE 'logs_e2e_compile.txt'
           $clog = Join-Path $env:GITHUB_WORKSPACE 'compile_e2e.txt'
           $p0 = Start-Process -FilePath $exe -ArgumentList @($src) -Wait -PassThru `
@@ -1469,6 +1482,11 @@ jobs:
           # block further down reports the last started process's stream as the
           # script's own speech, and left at logs_e2e_compile.txt it would
           # report the compile pass for the run.
+          #
+          # Expect this file to be 0 bytes while the crash stands, and read the
+          # .err file instead: the engine buffers stdout and loses the buffer
+          # when the process dies at 1.9 seconds, while stderr reaches the file
+          # unbuffered. See the compile step above for the measurement.
           $log = Join-Path $env:GITHUB_WORKSPACE 'logs_e2e.txt'
           $p = Start-Process -FilePath $exe `
             -ArgumentList @($src) `
