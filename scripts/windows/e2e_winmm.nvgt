@@ -265,12 +265,16 @@ string bytes_of_object_port_name(midi_output@ o) {
 
 void main() {
 	print("E2E_BEGIN");
-	// The first of several flushes. This script has no fflush anywhere else,
-	// and that is why logs_e2e.txt has been 0 bytes on every failing run: the
-	// death it is written to report happens with E2E_BEGIN still sitting in
-	// the buffer, so the log says nothing rather than saying where. Flushing
-	// here costs one call and turns "no output" into "output up to here".
-	fflush();
+	// This script used to flush after this line, on the reading that print()
+	// buffers and a death before the buffer drains would leave logs_e2e.txt
+	// empty. The intent was right and the call was not: nvgt has no fflush
+	// symbol, so the script never compiled - exit 65, "ERROR: No matching
+	// symbol 'fflush'" - and exit 65 is the code the e2e reads as "no plugin".
+	// Measured, run 36710433374: every probe script failed that way, so the
+	// e2e's verdict on the plugin came from scripts that never ran. Nothing
+	// here is replaced by a different flush: the scripts are now run through
+	// the engine's own exit code and the harness reads what reached the log,
+	// and a script that cannot compile is reported as itself.
 
 	// The two lists have to describe the same run, and a mismatch would be
 	// read as a timing fault further down, so it is named here where it is.

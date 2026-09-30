@@ -20,14 +20,13 @@
 // stdout and "ERROR: failed to load plugin". Absent gives 65 with a name;
 // present-but-dying gives 70 with nothing. So the engine does find nvmidi.dll.
 //
-// fflush is not decoration. print() buffers, and the failure this file exists
-// to observe kills the process before the buffer reaches the log - the same
-// way logs_e2e.txt is 0 bytes in the e2e step (E2E_BEGIN is written and never
-// flushed). Without the flush below, LOC_OK on a run that later dies would be
-// indistinguishable from no LOC_OK at all.
+// This file used to flush after its print, for the reason the e2e script did -
+// and the call did not exist. nvgt has no fflush, so the script exited 65 at
+// compile with "ERROR: No matching symbol 'fflush'", which is the engine's
+// "no plugin" code: the probe answered the question it was written to ask with
+// the one answer that means "nothing was measured". Measured, run 36710433374.
 #pragma plugin nvmidi
 
 void main() {
 	print("LOC_OK");
-	fflush();
 }
