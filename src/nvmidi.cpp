@@ -35,23 +35,60 @@ namespace {
 // The unit constants a script sees, so MIDI_BEATS and friends are readable
 // names rather than bare numbers. They live here and are exposed as global
 // properties; nothing ever writes to them.
-const int g_unit_ms = MIDI_UNIT_MS;
-const int g_unit_ticks = MIDI_UNIT_TICKS;
-const int g_unit_beats = MIDI_UNIT_BEATS;
-const int g_unit_bars = MIDI_UNIT_BARS;
+//
+// `static constexpr int` and not `const int`, and the difference is the whole
+// reason half of these registrations used to come back as
+// asINVALID_DECLARATION (-10). RegisterGlobalProperty's third argument is not a
+// pointer in the ordinary sense: for a declaration whose type or sub-type is
+// const, the engine reads the *declaration* back out of that address - a
+// compiled constant is emitted into the read-only data segment as its type
+// name followed by the value, and the engine parses that to find out what it is
+// being asked to declare. A plain `const int` gives the address of a folded
+// constant in the code segment, whose bytes carry no such description, and the
+// answer is -10 every time. Measured on 2.39.0 WIP with a four-line program:
+// `RegisterGlobalProperty("const int P", &plain_int)` returns -10, and the same
+// address when it belongs to a `constexpr` returns 0.
+//
+// Which is exactly what the line above this block in the registration function
+// already says - "const properties must be recorded as addresses of compiled
+// constants" - so this is the file's own note being applied rather than a new
+// rule. Note also which ones were refused and which were not: MUSIC_MS and
+// MUSIC_TICKS were among the refused, which is why the earlier reading here
+// blamed "the musical units" for all seven when what the seven had in common
+// was the storage class, not the name.
+//
+// constexpr rather than an enum, though both give the engine something it
+// accepts: the second argument of RegisterGlobalProperty is a `const int` and
+// an enum's enumerator is not an lvalue, so `(void*)&MUSIC_MS` does not
+// compile when MUSIC_MS is an enumerator of the header's enum. constexpr is an
+// object, so its address is one - and it is still a compile-time constant, so
+// nothing about the registration changes.
+static constexpr int g_unit_ms = MIDI_UNIT_MS;
+static constexpr int g_unit_ticks = MIDI_UNIT_TICKS;
+static constexpr int g_unit_beats = MIDI_UNIT_BEATS;
+static constexpr int g_unit_bars = MIDI_UNIT_BARS;
 
 // The musical spelling of the same units: MUSIC_BEATS is what a script using
 // a class tempo writes, and the MUSIC_BEATS_90 style constants carry the tempo
 // in the word itself, for a length that has to stay at one tempo no matter
 // what the surrounding class is set to.
-const int g_music_ms = MUSIC_MS;
-const int g_music_ticks = MUSIC_TICKS;
-const int g_music_beats = MUSIC_BEATS;
-const int g_music_bars = MUSIC_BARS;
-const int g_music_beats_90 = MUSIC_BEATS_90;
-const int g_music_beats_100 = MUSIC_BEATS_100;
-const int g_music_beats_120 = MUSIC_BEATS_120;
-const int g_music_beats_140 = MUSIC_BEATS_140;
+static constexpr int g_music_ms = MUSIC_MS;
+static constexpr int g_music_ticks = MUSIC_TICKS;
+static constexpr int g_music_beats = MUSIC_BEATS;
+static constexpr int g_music_bars = MUSIC_BARS;
+static constexpr int g_music_beats_90 = MUSIC_BEATS_90;
+static constexpr int g_music_beats_100 = MUSIC_BEATS_100;
+static constexpr int g_music_beats_120 = MUSIC_BEATS_120;
+static constexpr int g_music_beats_140 = MUSIC_BEATS_140;
+
+// What midi_output::send_transposed did. Same reason as the block above: the
+// engine is handed an address, and an enumerator of the header's enum is not
+// an object with one. A script compares the int it got back against these, so
+// the value is the whole interface and the names are the whole documentation.
+static constexpr int g_transpose_sent = TRANSPOSE_SENT;
+static constexpr int g_transpose_passed = TRANSPOSE_PASSED_THROUGH;
+static constexpr int g_transpose_range = TRANSPOSE_OUT_OF_RANGE;
+static constexpr int g_transpose_failed = TRANSPOSE_FAILED;
 
 // RtMidi throws on every failure; NVGT scripts should see a return value
 // instead, so every entry point wraps its body in this.
@@ -853,6 +890,51 @@ bool midi_output::send(unsigned int status, unsigned int data1, unsigned int dat
 
 bool midi_output::send_packed(unsigned int packed) {
 	return send(packed & 0xff, (packed >> 8) & 0xff, (packed >> 16) & 0xff);
+}
+
+// One incoming message, out again moved by semitones. This is the octave echo
+// written once, in the layer that already owns the port and the error text, so
+// a script's echo is a while loop and cannot get the edge cases wrong: the
+// top of the keyboard, the release-with-velocity-0 convention, and the fact
+// that a pedal is not a note are all decided here rather than in every script
+// that wants to do this.
+int midi_output::send_transposed(const midi_message& message, int semitones) {
+	clear_error();
+	const unsigned int kind = message.status & 0xf0;
+	const bool is_note_on = kind == 0x90;
+	const bool is_note_off = kind == 0x80;
+	// A note-on with velocity 0 is the other spelling of a note-off. Tested
+	// before anything else, because the two branches below disagree about
+	// whether this message has a sounding note in it and both are wrong on
+	// their own: treat it as a note on and it never releases, treat it as
+	// neither and it is passed through so the note it stands for never stops.
+	const bool releases = is_note_off || (is_note_on && message.data2 == 0);
+	if (!is_note_on && !is_note_off) {
+		// Not a note: a pedal, a wheel, a program change. The performer is
+		// addressing the instrument, not naming a pitch, so it is sent as it
+		// arrived. Shifting it would be a different feature wearing this one's
+		// name, and silence would swallow it.
+		return send(message.status, message.data1, message.data2)
+			? TRANSPOSE_PASSED_THROUGH
+			: TRANSPOSE_FAILED;
+	}
+	const int moved = static_cast<int>(message.data1) + semitones;
+	if (moved < 0 || moved > 127) {
+		// Dropped rather than wrapped. data1 is masked to 7 bits in send(), so
+		// a wrapped 128 would arrive as note 0 - the bottom of the keyboard
+		// answering the top of it. Dropping is silent here and counted by the
+		// caller, which is the only place that can say how many were lost.
+		set_error("note " + std::to_string(message.data1) + " moved by "
+			+ std::to_string(semitones) + " is outside 0..127");
+		return TRANSPOSE_OUT_OF_RANGE;
+	}
+	// The status byte is rebuilt rather than reused so the channel survives and
+	// a velocity-0 note-on goes out as a real note-off: the receiving synth
+	// then sees one unambiguous release instead of a second on.
+	const unsigned int status = (releases ? 0x80 : 0x90) | (message.status & 0x0f);
+	return send(status, static_cast<unsigned int>(moved), message.data2)
+		? TRANSPOSE_SENT
+		: TRANSPOSE_FAILED;
 }
 
 void midi_output::send_note_on(unsigned int channel, unsigned int note, unsigned int velocity) {
@@ -1792,10 +1874,15 @@ int midi_note_number(const std::string& name) {
 // out loud, which is the only way it reaches a runner's log (the reporting
 // half of the plugin entry point compiles out when NVGT_PLUGIN_INCLUDE is
 // defined, so nothing here can call report_plugin_error()).
-// Set by any registration the engine refused for a reason other than
-// asALREADY_REGISTERED; read once by the entry point to decide whether to print
-// the engine's own view of the namespace. Deliberately outside the struct: the
-// reader is the entry point, which does not hold the reporter.
+// Set by any registration the engine refused; read once by the entry point to
+// decide whether to print the engine's own view of the namespace. Deliberately
+// outside the struct: the reader is the entry point, which does not hold the
+// reporter.
+//
+// "Any", not "any out of the ordinary". The exemption this used to make for
+// asALREADY_REGISTERED was written while -10 was believed to be that code, and
+// -10 turns out to be asINVALID_DECLARATION - a fault every time. Nothing has
+// yet produced a refusal that was not a fault, so nothing is exempt.
 static bool g_registration_failed = false;
 
 struct registration {
@@ -1803,8 +1890,22 @@ struct registration {
 	int first_failure;
 	int first_failure_line;
 	std::string first_failure_text;
+	// Every refusal, of any code. `unexpected` used to be the strict subset -
+	// "not asALREADY_REGISTERED" - which was the same set as `refused` once
+	// -10 was read correctly, so the exemption is gone and the two counters
+	// now differ only in what they are for.
 	int unexpected;
-	registration(asIScriptEngine* e) : engine(e), first_failure(0), first_failure_line(0), unexpected(0) {}
+	// Every refusal, whatever its code, and the number the trailer at the end
+	// of plugin_main reports. It exists because the two counts answer different
+	// questions: `unexpected` says whether a refusal was out of the ordinary,
+	// this one says how much of the registration was refused at all.
+	int refused;
+	// Every call, refused or not. It is what makes `refused` legible: "22 of
+	// 22 calls" and "22 of 900" are the same refusal count and different
+	// findings, and the log otherwise carries no way to tell them apart.
+	int calls;
+	registration(asIScriptEngine* e) : engine(e), first_failure(0), first_failure_line(0),
+		unexpected(0), refused(0), calls(0) {}
 	void check(int result, const char* call, int line) {
 		// The entry line first, before anything can return or refuse, and
 		// flushed. Every plugin call in this function has been reached by a
@@ -1820,6 +1921,14 @@ struct registration {
 		// known to be dropped on stdout by nvgt's own buffering.
 		fprintf(stderr, "nvmidi: reg line %d\n", line);
 		fflush(stderr);
+		// Every call, before the early return. A refusal is the difference
+		// between this counter and the number of calls, which is a number no
+		// reader can reconstruct from a log - and the early return below is
+		// why the counter sits on this line rather than beside the printf at
+		// the end: a counter placed past the return would count only refusals
+		// while being described as counting calls.
+		calls += 1;
+		if (result < 0) refused += 1;
 		if (result >= 0) return;
 		// This vendored header exposes no error text for a rejected
 		// registration (no GetLastError, no context in hand at load time), so
@@ -1831,23 +1940,26 @@ struct registration {
 			first_failure_text = std::string(call) + ": " + text;
 			set_error("plugin registration " + first_failure_text);
 		}
-		// asALREADY_REGISTERED means the engine already knew the name, which
-		// happens when a second copy of this plugin is loaded and is not by
-		// itself a problem: the type under that name is this one.
+		// This comment used to read the code as asALREADY_REGISTERED and spin a
+		// theory out of it - "something loaded before this plugin owns the
+		// name". The code is not that one. asALREADY_REGISTERED is -13
+		// (angelscript.h:133); -10 is asINVALID_DECLARATION
+		// (angelscript.h:130), and it is what the engine answers when the
+		// declaration handed to a Register* call does not match the declaration
+		// the address behind it carries. No earlier claimant is involved and
+		// there is nothing to share a name with: the plugin was describing its
+		// own argument to itself, wrongly.
 		//
-		// It used to be the one code that was never printed, on the reasoning
-		// that a tolerated refusal needs no line. That reasoning was backwards
-		// for the question this plugin currently has: n_type measured that the
-		// engine has no type called midi_input and none called midi_output,
-		// while the script-side names this plugin registers are all refused
-		// with the code the engine reports for a name it already knows. If the
-		// engine already knows those two names then something it loaded first
-		// owns them - the plugin is not the only claimant - and the previous
-		// reading, which never emitted the one line that would have said so,
-		// could not have seen it. A line per refusal is what makes the two
-		// readings tell each other apart, and the count is printed either way
-		// so a run with no output at all is distinguishable from a run where
-		// nothing was refused.
+		// Keeping the name out of the line, too. It printed " (asALREADY_REGISTERED)"
+		// after every one of them, which is a reader being told the opposite of
+		// what the engine said. A code is printed as a number and nothing else
+		// here; -10 and -13 are one search away from their names in the vendored
+		// header, and a wrong name is worse than no name.
+		//
+		// The latch is still set on any refusal, because the set of codes that
+		// are ordinary has now been measured as empty on this engine - every
+		// one of the seven kinds this plugin has actually produced was -10, and
+		// all of them were faults.
 		if (result != asALREADY_REGISTERED) {
 			g_registration_failed = true;
 		}
@@ -1856,8 +1968,14 @@ struct registration {
 		// so a line written to stderr reaches no reader at all - which is how
 		// this plugin's account of its own registration stayed invisible while
 		// the engine's second-hand symptom was the only thing in the log.
-		fprintf(stdout, "nvmidi: registration refused at src/nvmidi.cpp:%d: %s%s\n",
-			line, text.c_str(), result == asALREADY_REGISTERED ? " (asALREADY_REGISTERED)" : "");
+		// `call` is in the line and `text` is not. `text` is built two lines
+		// above and reads "code -10", so printing it here put the code in
+		// twice and the call name - the only part that says which
+		// registration was refused - nowhere. The name is the half a reader
+		// needs: a line of codes says how many, and this is the one place
+		// that says which.
+		fprintf(stdout, "nvmidi: registration refused at src/nvmidi.cpp:%d: %s returned %d\n",
+			line, call, result);
 		fflush(stdout);
 		unexpected += 1;
 	}
@@ -1939,15 +2057,119 @@ struct registration {
 			fflush(stderr);
 			return true;
 		}
-		int worst = 0;
+		// A live template's name is not "array<int>" - it is "array" plus the
+		// fact that the engine folds it to a specialization, and the engine's
+		// own GetTypeInfoByDecl("array<int>") answers that question with no
+		// side effect at all. The three RegisterObjectType calls that used to
+		// stand here are gone, and the reason is the worst defect this file has
+		// carried: they were not a probe, they were a poison.
+		//
+		// Measured, in a program with no plugin in it at all
+		// (tools/probe_flag_arm.cpp, build tree /home/deniz/nvmidi-build):
+		//
+		//   before any registration, Build = 0
+		//   RegisterObjectType("probe", 0, asOBJ_REF | asOBJ_SCRIPT_OBJECT) = -5
+		//   after that one call, Build of the same script = -17
+		//
+		// One refused registration is enough. ConfigError() sets
+		// m_engine->configFailed and nothing ever clears it, so from that
+		// moment on every asCModule::Build() short-circuits to -17
+		// (asINVALID_CONFIGURATION) before a single line of script is
+		// compiled - which is why the harness reported "the script DID NOT
+		// COMPILE: -17" for scripts that were never looked at, why bisecting
+		// the script by statement changed nothing at all, and why a one-line
+		// canary that cannot fail to compile also came back -17.
+		//
+		// The flags here are the ones that did it: bit 0 | bit 21. The
+		// engine's asOBJ_MASK_VALID_FLAGS is 0x1801FFFFF - bits 0..20 plus 27
+		// and 28 - so bit 21 is outside it, and RegisterObjectType refuses
+		// outright with asINVALID_ARG. Note that this is not a mistake about
+		// what the flag means: these calls were ALWAYS going to be refused,
+		// because the flags never matched a registrable type.
 		const char* probes[] = { "array<int>", "array<uint>", "array<double>" };
+		bool array_is_there = false;
 		for (int i = 0; i < 3; ++i) {
-			int r = engine->RegisterObjectType(probes[i], 0, asOBJ_REF);
-			fprintf(stderr, "nvmidi: blind probe %s answered %d\n", probes[i], r);
+			asITypeInfo* found = engine->GetTypeInfoByDecl(probes[i]);
+			fprintf(stderr, "nvmidi: does the engine know %s? %s\n",
+				probes[i], found ? "yes" : "no");
 			fflush(stderr);
-			if (r < 0 && r != asALREADY_REGISTERED) worst = r;
+			if (found) array_is_there = true;
 		}
-		return worst != 0;
+		if (!array_is_there) return true;
+
+		// A "no" from the three probes above ends this method, and this is
+		// deliberate - the reason it must NOT be softened is a defect the
+		// harness found on its first real run, and the softened version was
+		// written, built and measured before being taken back out.
+		//
+		// The three RegisterObjectType calls are a PROBE, and they are not
+		// free: whatever their return codes say, the engine keeps the type it
+		// just created, and afterwards GetTypeInfoByName("array") answers yes
+		// for the rest of the process. So a probe that is asked and then
+		// answered "no" has already destroyed the fact it was asking about.
+		//
+		// The softened version asked GetTypeInfoByDecl("array<int>") after the
+		// probes to tell a live template from a dead one. Measured on this
+		// harness (probe_host, build tree /home/deniz/nvmidi-build): the
+		// answer came back non-null, and for a reason that has nothing to do
+		// with the template being usable - it was the probe's own
+		// array<int> being handed back. The added check returned true, the
+		// add-on was skipped exactly as before, and the nine refusals were
+		// identical line for line. Nothing was gained and the probe's
+		// corruption was given a name that reads like a clean bill of health.
+		//
+		// So the cheap-looking improvement was measuring itself. The two
+		// branches below are now a real choice of order: this method must run
+		// over an engine that has NOT been probed yet, and the caller asks it
+		// first (see the call site: engine_knows_arrays && array_is_usable,
+		// short-circuit, so array_is_usable is never reached once this
+		// answers no).
+		// The engine did not know a single one of the three: fall through to
+		// the add-on, which is the branch that registers array<T> properly.
+		return false;
+	}
+
+	//
+	// True when this engine has an array<T> that can actually be instantiated -
+	// which is a different question from engine_knows_arrays(), and the
+	// difference is the whole of the nine refused registrations this harness
+	// was built to find.
+	//
+	// engine_knows_arrays() cannot ask it: by the time it has finished
+	// probing, the engine's answer to any question about "array" is its own
+	// probe. This method therefore runs only on the branch where that method
+	// said yes - and on that branch the probes never ran, so the engine's
+	// answer here is its own.
+	//
+	// The name being taken is not the fact that matters. angelscript's own
+	// native array add-on refuses a subtype it does not know with "Invalid
+	// template subtype", and the type system has by then already learned the
+	// name - a refused declaration leaves the template registered. Every later
+	// question of the form "does this engine know array<T>" then answers yes
+	// while not one subtype is usable, and registering array<midi_note@> in a
+	// method signature fails with -10 asINVALID_DECLARATION.
+	//
+	// So the fact asked for is a concrete instantiation. If it resolves, the
+	// engine has a working array<T> and the add-on must not be called over it:
+	// that second call is what killed the process in run 36700487540, whose
+	// first statement is a cleanup-callback install over a cache the engine had
+	// already built (scriptarray.cpp:292, ARRAY_CACHE at line 52).
+	bool array_is_usable() {
+		if (!type_is_known("array")) return false;
+		asITypeInfo* concrete = engine->GetTypeInfoByDecl("array<int>");
+		if (concrete) {
+			concrete->Release();
+			fprintf(stderr, "nvmidi: array<int> resolves; the engine has a working array<T>\n");
+			fflush(stderr);
+			return true;
+		}
+		// The name is taken and no subtype resolves. That is the state the
+		// add-on IS wanted in, and calling it here is safe precisely because
+		// this branch is only reached when the probes above did not run: there
+		// is no cache for RegisterScriptArray_Native to install over.
+		fprintf(stderr, "nvmidi: \"array\" is taken but no array<int> resolves; the add-on will be called\n");
+		fflush(stderr);
+		return false;
 	}
 };
 
@@ -2025,6 +2247,7 @@ void register_midi_output(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectMethod("midi_output", "int get_port_name_byte(uint index) const", asMETHOD(midi_output, get_port_name_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool send(uint status, uint data1, uint data2)", asMETHOD(midi_output, send), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool send_packed(uint packed)", asMETHOD(midi_output, send_packed), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "int send_transposed(const midi_message&in message, int semitones)", asMETHOD(midi_output, send_transposed), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "void send_note_on(uint channel, uint note, uint velocity)", asMETHOD(midi_output, send_note_on), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "void send_note_off(uint channel, uint note, uint velocity = 0)", asMETHOD(midi_output, send_note_off), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "void send_control_change(uint channel, uint controller, uint value)", asMETHOD(midi_output, send_control_change), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
@@ -2125,6 +2348,14 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterGlobalProperty("const int MUSIC_BEATS_100", (void*)&g_music_beats_100), "RegisterGlobalProperty", __LINE__);
 	reg->check( engine->RegisterGlobalProperty("const int MUSIC_BEATS_120", (void*)&g_music_beats_120), "RegisterGlobalProperty", __LINE__);
 	reg->check( engine->RegisterGlobalProperty("const int MUSIC_BEATS_140", (void*)&g_music_beats_140), "RegisterGlobalProperty", __LINE__);
+	// What send_transposed did. Globals rather than an enum because the engine
+	// this host builds has no string type and no enum registration is used
+	// anywhere in this file; the constants are what a script can compare an
+	// int against, which is the use.
+	reg->check( engine->RegisterGlobalProperty("const int TRANSPOSE_SENT", (void*)&g_transpose_sent), "RegisterGlobalProperty", __LINE__);
+	reg->check( engine->RegisterGlobalProperty("const int TRANSPOSE_PASSED_THROUGH", (void*)&g_transpose_passed), "RegisterGlobalProperty", __LINE__);
+	reg->check( engine->RegisterGlobalProperty("const int TRANSPOSE_OUT_OF_RANGE", (void*)&g_transpose_range), "RegisterGlobalProperty", __LINE__);
+	reg->check( engine->RegisterGlobalProperty("const int TRANSPOSE_FAILED", (void*)&g_transpose_failed), "RegisterGlobalProperty", __LINE__);
 }
 
 void register_midi_config(asIScriptEngine* engine, registration* reg) {
@@ -2145,6 +2376,25 @@ void register_midi_config(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterGlobalFunction("int midi_find_input_port(const string&in substring)", asFUNCTION(midi_find_input_port), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("int midi_find_output_port(const string&in substring)", asFUNCTION(midi_find_output_port), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 }
+
+// The two globals a script actually holds.
+//
+// midi_input and midi_output are registered as handle types (asOBJ_REF |
+// asOBJ_NOCOUNT, size 0) - the same shape midi_note uses - and a handle type
+// with no factory behaviour and no global already holding one cannot be
+// *declared* by a script at all: the compiler answers "Data type can't be
+// 'midi_output'", measured in the host harness on 30.09. The create functions
+// are not the route either: they are named midi_output_create, which is a
+// function, not the type. One instance of each, registered as a global
+// property, is what turns midi_in and midi_out into symbols a script can open,
+// send on and read.
+//
+// The objects are made once and point at the plugin's own midi_input/midi_output
+// structs, which hold their own state (the queue, the open port). Nothing here
+// owns them, which is exactly what asOBJ_NOCOUNT means - RegisterGlobalProperty
+// stores the address and never releases it.
+static midi_input*  g_script_input  = midi_input_create();
+static midi_output* g_script_output = midi_output_create();
 
 void register_midi_globals(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterGlobalFunction("uint midi_input_port_count()", asFUNCTION(midi_input_port_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
@@ -2202,7 +2452,7 @@ void register_midi_globals(asIScriptEngine* engine, registration* reg) {
 	// indexed byte, so a string never crosses this boundary at all. This is the
 	// only place any of them is registered - the object methods above were
 	// removed rather than kept beside these, because registering both is how
-	// this block produced six asALREADY_REGISTERED errors on a runner: the
+	// this block produced six duplicate-declaration errors on a runner: the
 	// engine rejects the whole interface over a duplicate, so a second copy is
 	// not a harmless redundancy, it is a plugin that will not load.
 	reg->check( engine->RegisterObjectMethod("midi_message", "int to_string_byte_count() const", asMETHOD(midi_message, to_string_byte_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
@@ -2221,12 +2471,23 @@ void register_midi_globals(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterGlobalFunction("int midi_last_error_byte(uint index)", asFUNCTION(midi_last_error_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("int midi_first_error_byte_count()", asFUNCTION(midi_first_error_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("int midi_first_error_byte(uint index)", asFUNCTION(midi_first_error_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+		reg->check( engine->RegisterGlobalProperty("midi_input midi_in",  g_script_input),  "RegisterGlobalProperty", __LINE__);
+	reg->check( engine->RegisterGlobalProperty("midi_output midi_out", g_script_output), "RegisterGlobalProperty", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_input@ midi_input_create()", asFUNCTION(midi_input_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("midi_output@ midi_output_create()", asFUNCTION(midi_output_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("int midi_engine_probe()", asFUNCTION(midi_engine_probe), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 }
 
-void register_nvmidi(asIScriptEngine* engine) {
+
+// Declared before use and defined below, next to the registration code whose
+// result it reads; the body is long and belongs with that code, not here.
+
+
+static int probe_registered_types(asIScriptEngine* engine);
+
+// See the declaration in nvmidi.h for what the three counts are. The refusal
+// count it returns is every refusal whatever the code.
+registration_result register_nvmidi(asIScriptEngine* engine) {
 	// The registration helpers below take no engine argument, so the reporter
 	// finds it here.
 	g_registration_engine = engine;
@@ -2302,18 +2563,32 @@ void register_nvmidi(asIScriptEngine* engine) {
 	// control build does not need it (the flag is read inside
 	// engine_knows_arrays), and leaving it would have made every branch below
 	// dead code while still killing any engine that answered "no".
-	if (reg.engine_knows_arrays()) {
-		fprintf(stderr, "nvmidi: the engine already has array<T>, the array add-on is not called\n");
+	//
+	// A marker pair around the call, because the fault that brought this
+	// harness here (si_addr=0x55b1785c9, a four-and-a-half-byte pointer, from
+	// the kernel's own si_addr rather than from a core file) lands *after*
+	// "RegisterScriptArray returned" and before anything else prints, and
+	// "after" is all that single marker can say. Two markers say whether the
+	// call returned into this function at all, and the crumb below says where
+	// the next statement went.
+	fprintf(stderr, "nvmidi: ARRAY_BRANCH_ENTER\n");
+	fflush(stderr);
+	if (reg.engine_knows_arrays() && reg.array_is_usable()) {
+		fprintf(stderr, "nvmidi: the engine already has array<T> that resolves, the array add-on is not called\n");
 		fflush(stderr);
 	} else {
-		fprintf(stderr, "nvmidi: the engine does not know array<T>, calling RegisterScriptArray\n");
+		fprintf(stderr, "nvmidi: the array add-on must supply array<T>, calling RegisterScriptArray\n");
 		fflush(stderr);
 		RegisterScriptArray(engine, false);
 		fprintf(stderr, "nvmidi: RegisterScriptArray returned\n");
 		fflush(stderr);
 	}
+	fprintf(stderr, "nvmidi: ARRAY_BRANCH_DONE\n");
+	fflush(stderr);
 
 	register_midi_message(engine, &reg);
+	fprintf(stderr, "nvmidi: crumb: register_midi_message done\n");
+	fflush(stderr);
 	// Every type a later declaration names has to exist first. The port
 	// classes' open_config takes a midi_config@, and their playing methods
 	// take midi_note and midi_duration, so all three come before them. The
@@ -2335,12 +2610,109 @@ void register_nvmidi(asIScriptEngine* engine) {
 	// suspect, and a failed method registration already in the log is the best
 	// candidate: one has to say which one before anything is changed blind.
 	register_midi_note(engine, &reg);
+	fprintf(stderr, "nvmidi: crumb: register_midi_note done\n");
+	fflush(stderr);
 	register_midi_config(engine, &reg);
+	fprintf(stderr, "nvmidi: crumb: register_midi_config done\n");
+	fflush(stderr);
 	register_midi_input(engine, &reg);
+	fprintf(stderr, "nvmidi: crumb: register_midi_input done (calls=%d refused=%d)\n", reg.calls, reg.refused);
+	fflush(stderr);
 	register_midi_output(engine, &reg);
+	fprintf(stderr, "nvmidi: crumb: register_midi_output done (calls=%d refused=%d)\n", reg.calls, reg.refused);
+	fflush(stderr);
 	// The free search functions live in the config section and take a plain
 	// string, so they follow whatever needs them.
 	register_midi_globals(engine, &reg);
+	fprintf(stderr, "nvmidi: crumb: register_midi_globals done\n");
+	fflush(stderr);
+
+	// The engine is asked what it kept before this returns, because a code is a
+	// claim about a call and not about what survived - see the probe below.
+	registration_result result;
+	result.calls = reg.calls;
+	result.refused = reg.refused;
+	// The engine is asked what it kept before this returns, because a code is a
+	// claim about a call and not about what survived: every call above may have
+	// been refused, or accepted into a list that does not name them, and only
+	// the engine's own answer tells those apart.
+	result.registered = probe_registered_types(engine);
+	return result;
+}
+
+static int probe_registered_types(asIScriptEngine* engine) {
+	// Did any of that survive? Every registration above returned a code and
+	// every code was reported, but a code is a claim about a call and not about
+	// what the engine kept, and the two readings of -10 cannot be told apart
+	// from the codes alone: "this name is already taken" and "the type this
+	// belongs to was rolled back" are the same number. So the engine is asked
+	// directly, at the end, for each name this plugin meant to own.
+	//
+	// This is the question a script asks when it writes `midi_output@ out;` and
+	// the engine answers "Expected ';' / Instead found '@'". Asking it here
+	// moves that answer to the loading side, where the name that failed is a
+	// fact rather than something to reconstruct from a script error - and it is
+	// the same call the script would make, through the same interface, so a yes
+	// here is the yes the script gets.
+	//
+	// GetTypeInfoByName and not GetTypeIdByDecl: the first is one call and
+	// cannot invoke the engine's allocator, while a declaration is parsed and
+	// the parser is where the "Expected ';'" this is chasing comes from. No
+	// temporaries are constructed, and the returned asITypeInfo is released the
+	// moment it is read - the engine refcounts by 0 on AddRef and by 1 on
+	// Release, so holding one without releasing leaks the type, and releasing
+	// one the engine has already freed corrupts the heap.
+	//
+	// The control is a name this plugin never registers. Without it a run where
+	// every answer is "no" reads as a plugin that registered nothing, when the
+	// likelier cause is that the question itself does not work on this engine -
+	// and the two have different fixes.
+	struct { const char* name; bool required; } expected[] = {
+		{ "midi_message", true },
+		{ "midi_note", true },
+		{ "midi_duration", true },
+		{ "midi_input", true },
+		{ "midi_output", true },
+		{ "midi_config", true },
+		{ "no_such_type_this_plugin_renamed", false },
+};
+	int survived = 0, missing = 0, control_known = 0;
+	std::string missing_names;
+	for (size_t i = 0; i < sizeof(expected) / sizeof(expected[0]); ++i) {
+		asITypeInfo* t = engine->GetTypeInfoByName(expected[i].name);
+		const bool known = t != nullptr;
+		if (t) t->Release();
+		if (!expected[i].required) {
+			control_known = known ? 1 : 0;
+			continue;
+		}
+		if (known) {
+			survived += 1;
+		} else {
+			missing += 1;
+			if (!missing_names.empty()) missing_names += ", ";
+			missing_names += expected[i].name;
+		}
+}
+	fprintf(stderr, "nvmidi: engine type probe: %d of %d registered types are in the engine",
+		survived, survived + missing);
+	if (missing) fprintf(stderr, " - MISSING: %s", missing_names.c_str());
+	fprintf(stderr, " (control name %s)\n",
+		control_known ? "IS known, so this probe is answering yes to anything" : "is unknown, as it must be");
+	fflush(stderr);
+	if (control_known) {
+		// Every "yes" above is now worthless: a probe that finds a name nothing
+		// registered is not reading the engine's type list.
+		fprintf(stderr, "nvmidi: the control name was found, so the answers above prove nothing\n");
+		fflush(stderr);
+}
+	// Counted rather than only printed. A function whose entire effect is
+	// fprintf may be treated by the compiler as reorderable against the engine
+	// calls around it, and this probe is exactly that shape - the answer it
+	// reads is the one thing a script's own `midi_output@ out;` depends on, so
+	// it is returned and reported by plugin_main's trailer rather than left to
+	// be deduced from a log line that optimisation is free to move.
+	return survived;
 }
 
 midi_input* midi_input_create() { return new midi_input(); }
@@ -2396,13 +2768,40 @@ plugin_main(nvgt_plugin_shared* shared) {
 		fflush(stderr);
 		return false;
 	}
-	register_nvmidi(shared->script_engine);
+	const registration_result reg = register_nvmidi(shared->script_engine);
 	// Printed whether or not anything was refused, and with the count, so that
 	// "the engine took everything" and "the engine refused things and the
 	// lines above say which" are two readings a runner's log can tell apart.
+	//
+	// The count is the whole point of the line and the first version of it left
+	// the count out. It said, whenever g_registration_failed was set, that at
+	// least one refusal had arrived for a reason other than asALREADY_REGISTERED
+	// - and in the run that wrote this, all twenty-two refusals were -10, which
+	// is not that code at all, so the sentence was doubly wrong. The latch
+	// itself is still the right instrument: it is set on the first refusal and
+	// never cleared, so it can never be rendered as a claim about the run's
+	// total. The per-refusal lines above still carry their own code, and this
+	// line says how many there were, which is the part a reader with no grep at
+	// hand cannot count.
+	// A latch is not a total, and it is not rendered as one. g_registration_failed
+	// is set when the *first* refusal is unexpected and never cleared, so by the
+	// end of a run it means "some refusal, at some point, was not -10" at best -
+	// and here it fires on a run whose every refusal was -10, which means it does
+	// not mean that either. It is printed as the latch it is, pointing at the
+	// lines that carry the codes, and the count below is what says how much of
+	// the registration was refused.
 	if (g_registration_failed) {
-		fprintf(stderr, "nvmidi: at least one registration was refused for a reason other than asALREADY_REGISTERED; see the lines above\n");
+		fprintf(stderr, "nvmidi: an unexpected refusal was latched during registration; the per-call lines above carry the code for each one\n");
 	}
+	if (reg.refused > 0) {
+		fprintf(stderr, "nvmidi: %d registration call(s) were refused of %d made; each refusal above names its own code\n",
+			reg.refused, reg.calls);
+	}
+	// The probe's count, reported where a reader meets it next to the refusal
+	// count. Both are answers a script's compile depends on and neither is
+	// legible from the other.
+	fprintf(stderr, "nvmidi: %d of the plugin's own types answered to their name after registration\n",
+		reg.registered);
 	fflush(stderr);
 	// Kept so the playing code can call back into the script, see wait_until().
 	g_engine = shared->script_engine;

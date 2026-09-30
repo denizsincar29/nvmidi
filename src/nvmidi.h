@@ -77,6 +77,21 @@ enum midi_music_unit {
 	MUSIC_BEATS_140 = 7
 };
 
+// What midi_output::send_transposed did with the message it was handed. A
+// plain bool would not carry the difference between "sent, and it was a note"
+// and "sent, but note numbers are not what this message has", and a script
+// counting what came back from an echo needs that difference.
+enum midi_transpose_result {
+	// Sent with its note number moved.
+	TRANSPOSE_SENT = 0,
+	// Sent unchanged: a message with no note number in it.
+	TRANSPOSE_PASSED_THROUGH = 1,
+	// Not sent: moving the note would put it outside 0..127.
+	TRANSPOSE_OUT_OF_RANGE = 2,
+	// Not sent: no output port is open, or the driver refused the message.
+	TRANSPOSE_FAILED = 3
+};
+
 // The tempo an explicit MUSIC_BEATS_* constant carries, 0 for the constants
 // that simply mean "the unit, at whatever tempo the class is set to".
 double music_unit_tempo(int unit);
@@ -356,6 +371,22 @@ public:
 	void send_aftertouch(unsigned int channel, unsigned int note, unsigned int pressure);
 	void send_channel_pressure(unsigned int channel, unsigned int pressure);
 	void send_sysex(const std::string& data);
+	// Sends one message the way it arrived, moved by `semitones`, and returns
+	// what it did. Only note numbers move: every other kind of message is sent
+	// unchanged, because a pedal or a wheel is the performer telling the
+	// instrument something and shifting it would be a different feature.
+	//
+	// A note that would land outside 0..127 is dropped rather than wrapped, and
+	// reported as TRANSPOSE_OUT_OF_RANGE. Wrapping would turn the top of the
+	// keyboard into the bottom, which sounds like a fault because it is one.
+	//
+	// The message is the one midi_input::next_message fills, so the shape of an
+	// echo is: while (in.next_message(m)) out.send_transposed(m, 12);
+	//
+	// A note-on with velocity 0 goes out as a note-off: a keyboard that
+	// releases its keys that way would otherwise leave every one of them
+	// sounding for the rest of the session.
+	int send_transposed(const midi_message& message, int semitones);
 	// Stops every sounding note on all 16 channels.
 	void all_notes_off();
 	void reset();
@@ -484,7 +515,18 @@ int midi_note_number(const std::string& name);
 // Trampoline handed to RtMidi; defined in nvmidi.cpp.
 void midi_input_callback(double delta, std::vector<unsigned char>* message, void* user_data);
 
-void register_nvmidi(asIScriptEngine* engine);
+// What one pass of registration did, returned rather than logged: the two
+// numbers answer questions a log line cannot be counted for by a caller, and
+// plugin_main prints them. `calls` is every registration call made and
+// `refused` is how many the engine rejected, whatever the code - a refusal
+// count with no denominator reads as "22 of everything was refused" and as
+// "22 of 900 was", which are different findings.
+struct registration_result {
+	int calls;
+	int refused;
+	int registered;	// plugin types the engine answered to their own name afterwards
+};
+registration_result register_nvmidi(asIScriptEngine* engine);
 
 
 

@@ -1,0 +1,124 @@
+name: python
+
+# One test file, two operating systems, and the point of the pair is the
+# difference between them rather than the agreement.
+#
+# On Linux the plugin can carry a real MIDI backend and a port can be opened
+# for real, so the run says whether the registration survived and whether a
+# port answers. On Windows the same library is a dll and the same Python loads
+# it with a different loader, which is where a build that only works on one
+# platform stops working.
+#
+# What this job is NOT: it cannot answer whether a sound came out of the
+# instrument. Nothing in a container can. That question is the interactive
+# run's, on the machine with the Nord plugged into it, and the workflow says so
+# in its own log so a green node is never read as "the sound works".
+#
+# A job here is not allowed to skip quietly. Every step that could be skipped
+# on a missing file instead fails and names the file, because a test that
+# reports success while measuring nothing is worse than a test that is absent -
+# the green node is the thing someone will trust at 2am.
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            library: nvmidi.so
+            backend: dummy
+          - os: windows-latest
+            library: nvmidi.dll
+            backend: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # The engine source is cached, not the built archive: a cache of the
+      # archive would survive a change to the headers the plugin compiles
+      # against, which is exactly the case the version rule exists for. The key
+      # carries the vendored header's own commit, so a header change misses.
+      - name: the vendored Angelscript version
+        id: asver
+        shell: bash
+        run: |
+          ver=$(sed -n 's/^#define ANGELSCRIPT_VERSION  *\([0-9]*\).*/\1/p' \
+                third_party/angelscript/angelscript.h | head -1)
+          if [ -z "$ver" ]; then
+            echo "the vendored header declares no ANGELSCRIPT_VERSION; the test"
+            echo "cannot know which engine to build and will not guess."
+            exit 1
+          fi
+          echo "vendored header says $ver"
+          echo "ver=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: get the engine source
+        id: angels
+        shell: bash
+        run: |
+          dir="$RUNNER_TEMP/angelscript"
+          if [ ! -d "$dir/sdk/angelscript/source" ]; then
+            git clone --depth 1 https://github.com/anjo76/angelscript "$dir"
+          fi
+          # The clone is checked rather than trusted: a fork that has moved on
+          # from the vendored number produces an engine the plugin's headers
+          # cannot talk to, and the failure then appears three steps later as a
+          # null engine pointer.
+          got=$(sed -n 's/^#define ANGELSCRIPT_VERSION  *\([0-9]*\).*/\1/p' \
+                "$dir/sdk/angelscript/include/angelscript.h" | head -1)
+          echo "upstream says $got, this tree vendors ${{ steps.asver.outputs.ver }}"
+          if [ "$got" != "${{ steps.asver.outputs.ver }}" ]; then
+            echo "MISMATCH: the engine upstream and the headers here disagree."
+            echo "Building a 2.38 library against a 2.39 header is not a warning:"
+            echo "asCreateScriptEngine returns 0 for a major.minor it does not match,"
+            echo "and the test would report a null engine as if it were a plugin fault."
+            exit 1
+          fi
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+
+      - name: build the plugin and the engine
+        shell: bash
+        env:
+          ANGELS_SRC_DIR: ${{ steps.angels.outputs.dir }}
+        run: |
+          chmod +x scripts/ci/build_plugin.sh
+          scripts/ci/build_plugin.sh ${{ matrix.library }} \
+            ${{ matrix.backend && format('MIDI_BACKEND={0}', matrix.backend) || '' }}
+
+      - name: the file says what the plugin says
+        shell: bash
+        # Three questions in one run, and each one is a value rather than a
+        # diagnostic:
+        #   * does the library load at all under this platform's loader;
+        #   * does the api version the library reports equal the one in
+        #     src/nvgt_plugin.h - a mismatch is the "failed to load plugin"
+        #     wall v0.8.0 hit, and here it is a line of output;
+        #   * what does the plugin do when handed an engine table of zeroes.
+        #
+        # The third is the one this file was written for. A host that passes a
+        # struct with nothing in it is testing the plugin's own promises, and
+        # the answer is printed with a verdict sentence rather than an exit
+        # code alone, because a zero exit from a probe that measured nothing is
+        # the failure mode this repository keeps meeting.
+        run: python scripts/test_nvmidi.py ${{ matrix.library }}
+
+      - name: keep the library and the log
+        uses: actions/upload-artifact@v4
+        with:
+          name: nvmidi-${{ matrix.os }}
+          path: |
+            ${{ matrix.library }}
+            scripts/test_nvmidi.py
+            scripts/ci/build_plugin.sh
+          if-no-files-found: error
