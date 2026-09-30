@@ -383,6 +383,8 @@ jobs:
                 print('    resolves to -> %s' % buf.value)
           '@
 
+          $py2 | Set-Content -Encoding utf8 "$env:RUNNER_TEMP\case6.py"
+
             python -c "import ast,sys; ast.parse(open(sys.argv[1],encoding='utf-8').read())" "$env:RUNNER_TEMP\case6.py"
             if ($LASTEXITCODE -ne 0) { Write-Host '  the case6 probe does not parse' }
             else {
