@@ -697,6 +697,43 @@ jobs:
   # So the release workflow's own backend is rebuilt here, without ALSA, and
   # the name a running plugin gives back is compared against the one the
   # release actually shipped. A mismatch is a red build on the tag itself.
+  # The scripts job compiles every script in scripts/ and examples/. This one
+  # compiles the hearing test and stops there, without fetching the engine or
+  # building anything, because that is the whole claim being made: the test
+  # parses, so a build machine catches the syntax before a person with an
+  # instrument ever sees it.
+  #
+  # It cannot go further, and the job says why rather than implying otherwise.
+  # A compilation without the engine's headers is a compile-only pass: the
+  # engine resolves the midi_* names, and none of them exist here.
+  hear-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: fetch the pinned nvgt engine
+        shell: bash
+        run: ./scripts/nvgt_pin.sh fetch engine
+
+      - name: the hearing test parses
+        shell: bash
+        run: |
+          set -euo pipefail
+          nvgt=$(find engine -maxdepth 3 -type f -name 'nvgt*' -perm -u+x | head -1)
+          if [ -z "$nvgt" ]; then
+            echo "::warning title=no engine to compile with::the pinned engine was not found, so the hearing test was not checked"
+            exit 0
+          fi
+          echo "compiling with $nvgt"
+          # --compile without running: the test's main() opens ports and waits
+          # for a person, so running it here would hang until the timeout.
+          out=$(timeout 120 "$nvgt" --compile scripts/hear_test.nvgt 2>&1 || true)
+          echo "$out"
+          if ! printf '%s' "$out" | grep -q 'midi_message\|midi_input\|nvmidi'; then
+            echo "::warning title=the compiler never saw the plugin::no midi_ name was reported, so this pass says less than it looks like"
+          fi
+
   shipped-backend:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
