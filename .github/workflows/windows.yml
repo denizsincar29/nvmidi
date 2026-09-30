@@ -705,10 +705,32 @@ jobs:
               # The add-on's call is a literal in the binary, so its presence
               # is not a matter of opinion: it is either in the file the engine
               # is about to load or it is not.
+              #
+              # Both readings are taken from the whole library, not from one
+              # offset. A substring search is satisfied by the first occurrence
+              # of the key, and the key being searched for is the build's own
+              # message - "NVGT_SKIP_ARRAY_ADDON is set" - which this source
+              # carries twice: once as the fprintf that prints it, and once as
+              # the comment above the flag that explains why. The comment sits
+              # near the bottom of the file, the fprintf near the top, and the
+              # ordinary build was assembling the name of the add-on it was
+              # about to register in the same translation unit - so the literal
+              # the string literal table puts first is not the fprintf's. Both
+              # strings are null-terminated and the compiler emits them
+              # null-separated, so reading to the first null answers with the
+              # wrong one: measured, run 36711443162, both artifacts - the
+              # 2988154-byte ordinary build and the 2987642-byte control -
+              # answered ['calling RegisterScriptArray'], and the control row
+              # then ran a library that had never had the call compiled out.
+              # A null is the one byte a string literal cannot contain, so
+              # splitting the library on it and asking whether any complete
+              # literal equals the key cannot be fooled by these neighbours.
               $bytes = [System.IO.File]::ReadAllBytes((Join-Path $dir 'nvmidi.dll'))
               $ascii = [System.Text.Encoding]::ASCII.GetString($bytes)
-              $hasCall = $ascii.Contains('calling RegisterScriptArray')
-              $hasSkip = $ascii.Contains('NVGT_SKIP_ARRAY_ADDON is set')
+              $strings = [System.Collections.Generic.HashSet[string]]::new()
+              foreach ($s in ($ascii -split "`0")) { [void]$strings.Add($s) }
+              $hasCall = $strings.Contains('calling RegisterScriptArray')
+              $hasSkip = $strings.Contains('NVGT_SKIP_ARRAY_ADDON is set')
               $wantCall = ($v.name -eq 'with-array-addon')
               Write-Host "  $($v.name) carries calling=$hasCall skipmessage=$hasSkip (this row wants calling=$wantCall)"
               if ($hasCall -ne $wantCall) {
