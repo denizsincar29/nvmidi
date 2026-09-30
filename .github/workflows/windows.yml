@@ -136,7 +136,7 @@ jobs:
           move /Y nvmidi.dll withaddon\nvmidi.dll
           if not exist withaddon\nvmidi.dll exit /b 1
           if exist nvmidi.dll exit /b 1
-          mingw32-make -f Makefile -o noaddon\nvmidi.dll nvmidi-noarr.dll
+          mingw32-make --print-directory -f Makefile -o noaddon\nvmidi.dll nvmidi-noarr.dll
           if errorlevel 1 echo FAILED-IN-THE-MAKE-RECIPE
           if not exist noaddon\nvmidi.dll echo NOMIDI-NO-DLL-WAS-WRITTEN
           if not exist noaddon\nvmidi.dll powershell -NoProfile -Command "$os=Get-CimInstance Win32_OperatingSystem; Write-Host ('free-mb={0} commit-limit-mb={1} commit-used-mb={2} z{3}' -f [int]($os.FreePhysicalMemory/1KB), [int]($os.TotalVirtualMemorySize/1KB), [int](($os.TotalVirtualMemorySize-$os.FreeVirtualMemory)/1KB), $os.SizeStoredInPagingFiles)"
