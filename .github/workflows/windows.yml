@@ -766,19 +766,65 @@ jobs:
               ($probe -replace '#pragma plugin \S+', "#pragma plugin $($v.pragma)") |
                 Set-Content -Path $script -Encoding ASCII
 
-              # Run from the directory under test, because "the working directory"
-              # is one of the candidates and a run from $ws would collapse cases
-              # 3 and 4 into whatever $ws happens to be.
+              # Run from a directory that holds the probe and this one library
+              # and nothing else.
+              #
+              # Not from $dir, which is what this step used to do. The probe's
+              # script lives in $dir, so $dir is also the script directory, and
+              # the engine searches the script directory, the working directory
+              # and the install root. For locations 3 and 4 - $ws\pluginloc and
+              # $ws\pluginloc-script - the script directory and its parent are
+              # both inside the workspace, and the workspace root holds the
+              # ordinary build at nvmidi.dll from the build step. Measured, run
+              # 36716212059: the ordinary build loaded, printed LOC_OK and
+              # reported addon_skipped=True in both those locations - the
+              # control's answer, read from a directory that held the ordinary
+              # build.
+              #
+              # A directory of its own cannot reach the workspace at all, so
+              # "the working directory" stays a distinct candidate and no file
+              # the build step left behind can answer for a row.
+              $run = Join-Path $env:RUNNER_TEMP "$($c.name)-$($v.name)"
+              New-Item -ItemType Directory -Force -Path $run | Out-Null
+              Get-ChildItem -Path $run -File | Remove-Item -Force
+              Copy-Item (Join-Path $dir 'nvmidi.dll') -Destination (Join-Path $run 'nvmidi.dll') -Force
+              Copy-Item $script -Destination $run -Force
               $log = Join-Path $env:RUNNER_TEMP "$($c.name).$($v.name).out"
-              Push-Location $dir
+              $loaded = Join-Path $run 'nvmidi.dll'
+              Write-Host "  running from $run with $((Get-Item $loaded).Length) bytes of nvmidi.dll in it"
+              Push-Location $run
               $p = Start-Process -FilePath $exe -ArgumentList @($script) -Wait -PassThru -NoNewWindow `
                    -RedirectStandardOutput $log -RedirectStandardError "$log.err"
               Pop-Location
               $text = if (Test-Path $log) { (Get-Content $log -Raw) } else { '' }
               $err  = if (Test-Path "$log.err") { (Get-Content "$log.err" -Raw) } else { '' }
-              Write-Host "=== $($c.name) / $($v.name): nvmidi.dll from $($v.src), script in $dir, run from $dir ==="
+              Write-Host "=== $($c.name) / $($v.name): nvmidi.dll from $($v.src), script and run in $run ==="
               Write-Host "  exit $($p.ExitCode)  stdout=[$($text -replace "`r?`n", ' | ')]  stderr=[$($err -replace "`r?`n", ' | ')]"
-              if ($text -match 'LOC_OK') { Write-Host "  >>> LOCATION ACCEPTED: $($c.name) / $($v.name) ($dir)" }
+              #
+              # Which file the engine opened, said outright. Everything above
+              # names the file that was copied to, and the difference between
+              # those two is the bug this step spent three runs on: a copy into
+              # $dir is not the copy the engine reads when a nearer search path
+              # holds one too. Every nvmidi.dll within reach of the engine's
+              # four search paths is listed with its size, so the reading below
+              # can be read against the library it actually describes.
+              $reach = @(
+                (Join-Path $run 'nvmidi.dll'),
+                (Join-Path $dir 'nvmidi.dll'),
+                (Join-Path $ws  'nvmidi.dll'),
+                (Join-Path $root 'nvmidi.dll'),
+                (Join-Path $root 'lib
+vmidi.dll')
+              )
+              foreach ($r in ($reach | Select-Object -Unique)) {
+                if (Test-Path $r) {
+                  Write-Host "  in reach: $r $((Get-Item $r).Length) bytes"
+                } else {
+                  Write-Host "  in reach: $r (absent)"
+                }
+              }
+              Write-Host "  the row placed $loaded $((Get-Item $loaded).Length) bytes"
+              if ($text -match 'LOC_OK') { Write-Host "  >>> LOCATION ACCEPTED: $($c.name) / $($v.name) ($run)" }
 
               # The reading this step was rebuilt for. The add-on is called
               # first thing inside register_nvmidi, before any type is
