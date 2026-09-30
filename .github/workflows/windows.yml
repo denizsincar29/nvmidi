@@ -80,32 +80,6 @@ jobs:
             $flags tools/winmm_loopback/nvmidi_loopback.c 2>&1 |
             grep -E "warning:" || echo "(none)"
 
-      # The control build's compiler stops after nvmidi.cpp:2093 with no
-      # diagnostic. Two questions, both answerable with cmd's own built-ins and
-      # neither answerable from inside an echo: does make forward a command-line
-      # variable at all, and does `-D` on the make command line kill it.
-      - name: ask make what it does with a variable and a flag
-        shell: cmd
-        continue-on-error: true
-        run: |
-          if exist noaddon rmdir /S /Q noaddon
-          mkdir noaddon
-          copy /Y nvmidi.dll noaddon\nvmidi.dll
-          if not exist noaddon\nvmidi.dll exit /b 1
-          echo --- the variable alone, no flag on the command line ---
-          mingw32-make --print-directory -f Makefile -o noaddon\nvmidi.dll EDGE=nvmidi-noarr.dll
-          echo MAKE-EDGE-EXITED-WITH=%ERRORLEVEL%
-          if exist nvmidi.dll (echo ORDINARY-DLL-IS-INTACT) else (echo ORDINARY-DLL-IS-GONE)
-          if exist noaddon\nvmidi.dll echo EDGE-NO-DLL
-          echo --- the control build, forced ---
-          if exist nvmidi-noarr.dll del /Q nvmidi-noarr.dll
-          mingw32-make --print-directory -f Makefile -B nvmidi-noarr.dll > probe.out 2>&1
-          echo MAKE-FORCED-EXITED-WITH=%ERRORLEVEL%
-          if exist nvmidi-noarr.dll (echo FORCED-WROTE-THE-DLL) else (echo FORCED-WROTE-NOTHING)
-          echo --- what make said, from a file and not from the pipe ---
-          findstr /N /C:"error" /C:"Error" /C:"warning" /C:"Entering" /C:"Nothing" probe.out
-          echo --- how much of it there was ---
-          for %%F in (probe.out) do echo PROBE-OUT-BYTES=%%~zF
 
       - name: keep the driver next to the dll
         uses: actions/upload-artifact@v4
@@ -127,15 +101,6 @@ jobs:
       # downstream then measures one build against itself and reports a clean
       # pair of results.
       #
-      # So the second build never takes the first one's name, and by now that
-      # is a measurement rather than a preference. cmd's own `move /y` does not
-      # replace a name that already exists: run 36706131852, an isolated job
-      # whose only purpose was this question, moved a file onto an existing
-      # name and got "1 file(s) moved." with the source gone, exit 0, and the
-      # destination still holding the OLD bytes. Silent in both directions - a
-      # build that trusts it ships the first library twice, and every reading
-      # downstream then compares one build to itself and reports a clean pair.
-      #
       # So no step of this workflow renames anything. Both builds live in
       # directories of their own, each holding one library under the name the
       # engine actually asks for, and the difference between them is the
@@ -148,16 +113,32 @@ jobs:
       # The first build is moved out of the root rather than deleted, because
       # the e2e job has steps that read it there.
       #
-      # The flag goes in through DEFS, a make variable the file reads (see the
-      # no-addon target in the Makefile), and not as -DNVGT_SKIP_ARRAY_ADDON on
-      # this command line. make parses every word after its own options as a
-      # switch: run 36706922550 printed "invalid option -- D", "invalid option
-      # -- N" and a whole line per letter before refusing the target, so a bare
-      # -D here is make syntax and not a compiler flag. It is also why the flag
-      # could never have been a command-line CXXFLAGS= - that replaces the
-      # variable the windows branch uses to add -D__WINDOWS_MM__, and the build
-      # then takes the Linux RtMidi branch and produces no dll while exiting 0
-      # (run 36702495507).
+      # The flag lives in the Makefile's own recipe for this target and nowhere
+      # else, because every way of passing it from here was tried and each one
+      # failed for a different reason. A bare -DNVGT_SKIP_ARRAY_ADDON after the
+      # target is make syntax, not a compiler flag: run 36706922550 printed
+      # "invalid option -- D" and a line per letter before refusing the target.
+      # A command-line CXXFLAGS= replaces the variable the windows branch uses
+      # to add -D__WINDOWS_MM__, so the build silently takes the Linux RtMidi
+      # branch and writes no dll while exiting 0 (run 36702495507). And a
+      # command-line variable that is merely read by the recipe does not arrive
+      # there at all: run 36708862123 asked for this target with
+      # EDGE=nvmidi-noarr.dll on the command line and make answered with
+      # nothing but its own Entering and Leaving lines.
+      #
+      # What made the earlier attempts invisible was `-o`, and that is the
+      # measurement this step is now built around. Asking for a target with
+      # `-o <file>` tells make to treat that file's rule as already done, so
+      # run 36709257500 compiled nothing at all and said so in the one line the
+      # step had been throwing away - "Nothing to be done for 'all'" - while
+      # exiting 0. The step had been reading that as a library quietly missing
+      # its export table, and then as a compiler that dies after nvmidi.cpp:2093
+      # with no diagnostic. Neither existed: the compile was simply never
+      # started. The target's prerequisite is the dll that the ordinary build
+      # wrote moments earlier, which is what makes -B necessary here, and the
+      # recipe's own output goes to this step's stdout rather than into a file,
+      # because a cmd step's write to a file goes into the process stdout buffer
+      # and never reaches the disk.
       - name: build the library without the array add-on
         shell: cmd
         run: |
@@ -169,10 +150,11 @@ jobs:
           move /Y nvmidi.dll withaddon\nvmidi.dll
           if not exist withaddon\nvmidi.dll exit /b 1
           if exist nvmidi.dll exit /b 1
-          mingw32-make --print-directory -f Makefile -o noaddon\nvmidi.dll nvmidi-noarr.dll
+          mingw32-make --print-directory -f Makefile -B nvmidi-noarr.dll
           if errorlevel 1 echo FAILED-IN-THE-MAKE-RECIPE
           if not exist noaddon\nvmidi.dll echo NOMIDI-NO-DLL-WAS-WRITTEN
           if not exist noaddon\nvmidi.dll powershell -NoProfile -Command "$os=Get-CimInstance Win32_OperatingSystem; Write-Host ('free-mb={0} commit-limit-mb={1} commit-used-mb={2} z{3}' -f [int]($os.FreePhysicalMemory/1KB), [int]($os.TotalVirtualMemorySize/1KB), [int](($os.TotalVirtualMemorySize-$os.FreeVirtualMemory)/1KB), $os.SizeStoredInPagingFiles)"
+          if exist nvmidi.dll del /Q nvmidi.dll
           if not exist noaddon\nvmidi.dll exit /b 1
           dir /B withaddon\nvmidi.dll noaddon\nvmidi.dll
       # One artifact per build, and the artifact's own name is what carries the
