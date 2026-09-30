@@ -2236,84 +2236,31 @@ void register_nvmidi(asIScriptEngine* engine) {
 	// between the entry marker and the first check() is this call. It is the
 	// last thing that runs before the death.
 	//
-	// The flag makes one dll serve both readings: built without
-	// NVGT_SKIP_ARRAY_ADDON it is the current behaviour, built with it the
-	// call is gone and everything after it either runs or is proven not to.
-	// A hypothesis that cannot be turned off cannot be tested.
-#ifndef NVGT_SKIP_ARRAY_ADDON
-	fprintf(stderr, "nvmidi: calling RegisterScriptArray\n");
-	fflush(stderr);
-	// What must hold before the call, printed before it is made.
-	//
-	// The call dies on a runner and not locally, so either the engine is not
-	// what this build assumes or one of these is not what it should be. The
-	// three lines below are the whole of what the call needs, and each of them
-	// is a yes or no:
-	//
-	//   asGetLibraryVersion and asGetLibraryOptions come from the shared struct
-	//   prepare_plugin fills (nvgt_plugin.h:157). If prepare_plugin refused, a
-	//   line above says so and neither pointer was ever assigned - but the
-	//   print before it already showed the version matching, so the only way
-	//   they can be null here is if the engine left a field unset.
-	//
-	//   RegisterScriptArray chooses its native or generic path by
-	//   asGetLibraryOptions(), and the native path calls
-	//   engine->RegisterObjectBehaviour. asIScriptEngine is a pure interface -
-	//   the vtable is the engine's, and every call the add-on makes is through
-	//   it. A vtable that does not match what this header was compiled against
-	//   is exactly the shape of "enters the call, never returns, no message":
-	//   the call jumps through a pointer that is not the function it thinks.
-	//
-	// So print the version, the options, and the first entries of the
-	// interface's vtable. The add-on's first engine call is
-	// SetTypeInfoUserDataCleanupCallback; its index in the vtable is what a
-	// mismatched header would change.
-	{
-		const char* as_version = asGetLibraryVersion ? asGetLibraryVersion() : nullptr;
-		const char* as_options = asGetLibraryOptions ? asGetLibraryOptions() : nullptr;
-		fprintf(stderr, "nvmidi: asGetLibraryVersion=%s asGetLibraryOptions=%s f_asGetActiveContext=%p f_asAllocMem=%p\n",
-			as_version ? as_version : "(null)",
-			as_options ? as_options : "(null)",
-			(void*)asGetActiveContext, (void*)asAllocMem);
-		fflush(stderr);
-		if (engine) {
-			void** vt = *reinterpret_cast<void***>(engine);
-			fprintf(stderr, "nvmidi: engine vtable[0..3]=%p %p %p %p\n",
-				vt ? vt[0] : nullptr, vt ? vt[1] : nullptr,
-				vt ? vt[2] : nullptr, vt ? vt[3] : nullptr);
-		} else {
-			fprintf(stderr, "nvmidi: the engine pointer handed to register_nvmidi is null\n");
-		}
-		fflush(stderr);
-	}
-	RegisterScriptArray(engine, false);
-	fprintf(stderr, "nvmidi: RegisterScriptArray returned\n");
-	fflush(stderr);
-#else
-	fprintf(stderr, "nvmidi: NVGT_SKIP_ARRAY_ADDON is set, the array add-on is not registered\n");
-	fflush(stderr);
-#endif
-
 	// Does this engine already know array<T>?
 	//
-	// The add-on call above kills the process when the engine has the type
-	// already, and it cannot be made speculatively, so the plugin has to ask
-	// without calling the add-on. Four blind calls through the engine's own
-	// pointer, each a string or a null handle - no object is constructed and
-	// the answers are discarded, so a refusal costs one line of stderr and a
-	// release.
+	// This is the only call site of the add-on, and it is conditional because
+	// the unconditional one this replaces was what killed the process.
 	//
-	// The first asks the template by name. If the engine has any array<T>
-	// at all it has the template, and nvgt's own loader installs one - that
-	// is what makes this plugin's call a second registration and fatal.
+	// Settled: the add-on must not run over an engine that already has the
+	// type. Run 36721024269 pinned the death to the call itself - the same
+	// build with the call removed registered every function this plugin has
+	// and lived, and the same process answered a property read through the
+	// plugin's own engine pointer, so the engine and its vtable are sound.
+	// NVGT's own loader installs an array add-on before any plugin loads; the
+	// plugin's call was therefore the second registration, and
+	// RegisterScriptArray_Native's first statement is a cleanup-callback
+	// install over a cache the engine had already built
+	// (scriptarray.cpp:292, ARRAY_CACHE at line 52).
 	//
-	// The other three are the second signal: they ask for concrete
-	// instantiations, and a refusal is itself the evidence - the code says
-	// the shape was wrong, which it can only say about a template it holds.
+	// Run 36721884305 is the measurement that closes it: with the condition
+	// below in place the ordinary build exits 0 and prints its markers at all
+	// four load locations, where before it exited 70 with an empty stdout.
 	//
-	// Nothing here distinguishes "the engine has arrays" from "this build is
-	// told to behave as if it did"; both answer the same way, and both take
-	// the same branch, which is what the branch is for.
+	// A second copy of the unconditional call used to sit just above this
+	// comment, behind the same flag the control build uses. It is gone: the
+	// control build does not need it (the flag is read inside
+	// engine_knows_arrays), and leaving it would have made every branch below
+	// dead code while still killing any engine that answered "no".
 	if (reg.engine_knows_arrays()) {
 		fprintf(stderr, "nvmidi: the engine already has array<T>, the array add-on is not called\n");
 		fflush(stderr);
