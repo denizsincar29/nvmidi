@@ -1774,6 +1774,20 @@ struct registration {
 	int unexpected;
 	registration(asIScriptEngine* e) : engine(e), first_failure(0), first_failure_line(0), unexpected(0) {}
 	void check(int result, const char* call, int line) {
+		// The entry line first, before anything can return or refuse, and
+		// flushed. Every plugin call in this function has been reached by a
+		// plugin that then died with nothing on stdout, so the last line
+		// printed here is the call that killed it - the one thing the runner
+		// has never been able to say. The count is unconditional: a refusal
+		// and a crash both leave the trace, and only the trace tells them
+		// apart.
+		//
+		// stderr because that is where plugin_main's own line already reaches
+		// the log on this engine (measured, run 36699918927: 84 bytes of
+		// stderr carrying the api version), while a registration refusal is
+		// known to be dropped on stdout by nvgt's own buffering.
+		fprintf(stderr, "nvmidi: reg line %d\n", line);
+		fflush(stderr);
 		if (result >= 0) return;
 		// This vendored header exposes no error text for a rejected
 		// registration (no GetLastError, no context in hand at load time), so
@@ -2095,6 +2109,14 @@ void register_nvmidi(asIScriptEngine* engine) {
 	// The registration helpers below take no engine argument, so the reporter
 	// finds it here.
 	g_registration_engine = engine;
+	// Before the first registration call. This line proves the function was
+	// entered at all, which is the branch between "the fault is in the
+	// registration chain" and "the fault is before it, in prepare_plugin or
+	// the handover of the script engine". Measured need, not symmetry: the
+	// whole reason the load looked like a version mismatch for so long is
+	// that nothing in this window ever reached a log.
+	fprintf(stderr, "nvmidi: entering register_nvmidi\n");
+	fflush(stderr);
 	registration reg(engine);
 
 	// The array add-on, before any type that names array<> in a signature.
