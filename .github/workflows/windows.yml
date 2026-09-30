@@ -758,6 +758,77 @@ jobs:
           if ((Test-Path $dll) -and (Get-Item $dll).Length -eq 0) { throw 'the built dll is empty' }
           Get-ChildItem $lib | Select-Object Name, Length
 
+      # WHERE does the engine look for a plugin named by #pragma plugin nvmidi.
+      #
+      # Every run so far has assumed the answer and never measured it. The
+      # install step above places the dll at $NVGT_DIR\lib, on the strength of
+      # a comment that says "nvgt searches lib/ next to itself". Two runs in a
+      # row refuted that: with the dll there and nothing else in the way, the
+      # engine still said
+      #
+      #     Compilation error: file: nvmidi
+      #     line: 0 (0)
+      #     ERROR: failed to load plugin
+      #
+      # So the search rule is unmeasured, and the whole job is downstream of it.
+      # This step measures it directly: the same one-line script is copied into
+      # five candidate locations, the built plugin is copied next to it, and the
+      # engine is run from each. Whichever run prints LOC_OK is a location the
+      # engine accepts, and the log line says which one it was.
+      #
+      # The candidates, in the order a loader might plausibly try them:
+      #   1. lib/ beside nvgt.exe       - what the install step assumed
+      #   2. the install root           - beside nvgt.exe itself
+      #   3. the working directory      - where the process was started
+      #   4. beside the script          - the script's own directory
+      #   5. an explicitly named plugin dir, if the engine has an env var for it
+      #
+      # Nothing is removed between runs, so a later success cannot be the
+      # earlier copy being found: each run has its own directory and the dll is
+      # placed in that directory only.
+      - name: where does the engine find the plugin
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $exe  = Join-Path $env:NVGT_DIR 'nvgt.exe'
+          $root = $env:NVGT_DIR
+          $ws   = $env:GITHUB_WORKSPACE
+          $built = Join-Path $ws 'nvmidi.dll'
+          if (-not (Test-Path $built)) {
+            Write-Host "the build produced no $built, so this step cannot run"
+            exit 0
+          }
+          Write-Host "built plugin: $built $((Get-Item $built).Length) bytes"
+
+          $cases = @(
+            @{ name = '1-lib-next-to-exe';  dir = (Join-Path $root 'lib') },
+            @{ name = '2-install-root';     dir = $root },
+            @{ name = '3-working-dir';      dir = (Join-Path $ws 'pluginloc') },
+            @{ name = '4-beside-script';    dir = (Join-Path $ws 'pluginloc-script') }
+          )
+
+          foreach ($c in $cases) {
+            $dir = $c.dir
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            Copy-Item $built -Destination (Join-Path $dir 'nvmidi.dll') -Force
+            $script = Join-Path $dir 'loc_probe.nvgt'
+            Copy-Item (Join-Path $ws 'scripts\windows\loc_probe.nvgt') -Destination $script -Force
+
+            # Run from the directory under test, because "the working directory"
+            # is one of the candidates and a run from $ws would collapse cases
+            # 3 and 4 into whatever $ws happens to be.
+            $log = Join-Path $env:RUNNER_TEMP "$($c.name).out"
+            Push-Location $dir
+            $p = Start-Process -FilePath $exe -ArgumentList @($script) -Wait -PassThru -NoNewWindow `
+                 -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+            Pop-Location
+            $text = if (Test-Path $log) { (Get-Content $log -Raw) } else { '' }
+            $err  = if (Test-Path "$log.err") { (Get-Content "$log.err" -Raw) } else { '' }
+            Write-Host "=== $($c.name): dll and script in $dir, run from $dir ==="
+            Write-Host "  exit $($p.ExitCode)  stdout=[$($text -replace "`r?`n", ' | ')]  stderr=[$err]"
+            if ($text -match 'LOC_OK') { Write-Host "  >>> LOCATION ACCEPTED: $($c.name) ($dir)" }
+          }
+
       # A loopback driver is what makes two windows processes meet over midi.
       # Neither of the two that exist ships with windows, so one is installed
       # here - and the job stops now, before anything is claimed, if that

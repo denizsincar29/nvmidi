@@ -1,0 +1,11 @@
+// probe: where does the engine find a plugin named by #pragma plugin nvmidi
+//
+// One line of script, one marker. This file is copied into each candidate
+// location and run from there; whichever run prints LOC_OK is a location the
+// engine accepts. Nothing else is in the file, so an exit code here is a
+// statement about the pragma resolution and nothing about the plugin's API.
+#pragma plugin nvmidi
+
+void main() {
+	print("LOC_OK");
+}
