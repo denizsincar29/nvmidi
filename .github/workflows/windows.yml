@@ -91,45 +91,15 @@ jobs:
           echo MAKE-EDGE-EXITED-WITH=%ERRORLEVEL%
           if exist nvmidi.dll (echo ORDINARY-DLL-IS-INTACT) else (echo ORDINARY-DLL-IS-GONE)
           if exist noaddon\nvmidi.dll echo EDGE-NO-DLL
-          echo --print-directory
-          echo -f
-          echo Makefile
-          echo -o
-          echo noaddon\nvmidi.dll
-          echo nvmidi-noarr.dll
-          echo -D
-          echo --
-          echo 1
-          echo file(s)
-          echo moved.
-          echo DELETED
-          echo SRC
-          echo STILL
-          echo THERE
-          echo 2:
-          echo the
-          echo system
-          echo cannot
-          echo find
-          echo the
-          echo path
-          echo specified
-          echo 0:
-          echo MOVED
-          echo 3:
-          echo D
-          echo ORIGIN-DLL-IS-INTACT
-          echo A
-          echo -D2
-          echo -D3
-          echo ---ECHOS
-          echo DONE
-          echo A3
-          echo -D2
-          echo DONE
-          echo A3
-          echo -D3
-          echo COMBINED
+          echo --- the control build, forced ---
+          if exist nvmidi-noarr.dll del /Q nvmidi-noarr.dll
+          mingw32-make --print-directory -f Makefile -B nvmidi-noarr.dll > probe.out 2>&1
+          echo MAKE-FORCED-EXITED-WITH=%ERRORLEVEL%
+          if exist nvmidi-noarr.dll (echo FORCED-WROTE-THE-DLL) else (echo FORCED-WROTE-NOTHING)
+          echo --- what make said, from a file and not from the pipe ---
+          findstr /N /C:"error" /C:"warning" /C:"nvmidi.cpp" /C:"scriptarray.cpp" probe.out
+          echo --- how much of it there was ---
+          for %%F in (probe.out) do echo PROBE-OUT-BYTES=%%~zF
 
       - name: keep the driver next to the dll
         uses: actions/upload-artifact@v4
