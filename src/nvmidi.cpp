@@ -12,6 +12,62 @@
 #include "nvmidi.h"
 #include "nvgt_plugin.h"
 
+// ---------------------------------------------------------------------------
+// The load probe
+// ---------------------------------------------------------------------------
+//
+// WHY THIS EXISTS. On windows the engine dies while loading this library: exit
+// 0xC0000005 after 1.1 seconds, the script's own stdout is a 0 byte file, and
+// the engine's compile diagnostics land in a 4372 byte stderr file that this
+// repository never prints. Every script that loads the plugin dies the same
+// way, so the fault is between the engine calling nvgt_plugin and the engine
+// reaching the script's first statement - a region that currently has no
+// instrument inside it at all. Every probe in scripts/windows is a script, and
+// a script cannot report on the load it did not survive.
+//
+// So this is a C++ probe and it is FIRST. It runs before this file's own
+// globals exist, before any static constructor anywhere in this translation
+// unit, and before the plugin touches the engine table - which is the whole
+// point, because all three are candidates and none of them can speak for
+// itself once the process is gone.
+//
+// It prints one line naming the stage reached, and it flushes, because the
+// buffer is what dies with the process. A silent -i.log means the death was
+// before this file's first statement: a static initialiser (there is one: the
+// music pattern tables), or a missing dependency, or the loader. A log that
+// ends at a named stage puts the fault between that stage and the next one.
+//
+// Its own includes come first, above the rest of the file's, because <cstdio>
+// and <cstdlib> are pulled in at line 73 and this block is the first thing in
+// the file: a probe that needs a declaration from a header included below it
+// would not compile where it stands, and moving it down to suit the includes
+// would put it after the static constructors it exists to bracket.
+#include <cstdio>
+#include <cstdlib>
+
+static char g_load_probe_path[512];
+
+static void load_probe(const char* stage) {
+	if (g_load_probe_path[0] == '\0') {
+		const char* directory = std::getenv("NVGT_MIDI_LOAD_PROBE_DIR");
+		if (!directory) directory = ".";
+		std::snprintf(g_load_probe_path, sizeof(g_load_probe_path), "%s/nvmidi-load.log", directory);
+	}
+	std::FILE* log = std::fopen(g_load_probe_path, "a");
+	if (!log) return;
+	std::fprintf(log, "stage %s\n", stage);
+	std::fclose(log);
+}
+
+// The first statement in the file. Constructed before main, before any other
+// object in this translation unit, and it opens the log by itself: if the
+// loader is what fails, this is the last line anyone ever sees, and if it runs
+// the file's static constructors are innocent.
+struct load_probe_static_constructor_probe {
+	load_probe_static_constructor_probe() { load_probe("static constructor"); }
+};
+static load_probe_static_constructor_probe g_load_probe_first;
+
 #include <RtMidi.h>
 #include <angelscript.h>
 #include <scriptarray.h>
@@ -2878,6 +2934,10 @@ std::string midi_first_error() {
 // ---------------------------------------------------------------------------
 
 plugin_main(nvgt_plugin_shared* shared) {
+	// The probe's first entry point inside the engine's call. Reaching it says
+	// the loader resolved this symbol and the engine called it, which splits
+	// "the plugin never got control" from "it got control and died inside".
+	load_probe("plugin_main entered");
 	// A null table is refused before anything is read out of it.
 	//
 	// This line exists because the ci probe calls the entry point with a table
@@ -2921,6 +2981,7 @@ plugin_main(nvgt_plugin_shared* shared) {
 		return false;
 	}
 	const registration_result reg = register_nvmidi(shared->script_engine);
+	load_probe("register_nvmidi returned");
 	// Printed whether or not anything was refused, and with the count, so that
 	// "the engine took everything" and "the engine refused things and the
 	// lines above say which" are two readings a runner's log can tell apart.
@@ -2957,5 +3018,6 @@ plugin_main(nvgt_plugin_shared* shared) {
 	fflush(stderr);
 	// Kept so the playing code can call back into the script, see wait_until().
 	g_engine = shared->script_engine;
+	load_probe("plugin_main returned");
 	return true;
 }

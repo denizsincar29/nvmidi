@@ -1367,6 +1367,18 @@ jobs:
           $exe = Join-Path $env:NVGT_DIR 'nvgt.exe'
           $src = Join-Path $env:GITHUB_WORKSPACE 'scripts\windows\e2e_winmm.nvgt'
           $log = Join-Path $env:GITHUB_WORKSPACE 'logs_e2e.txt'
+          # Where the plugin's own load probe writes, and it is emptied here
+          # rather than read and hoped about. The probe is C++ inside the
+          # library and it runs BEFORE the script's first statement, which is
+          # the only region left: every script that loads the plugin dies at
+          # 0xC0000005 after 1.1 seconds with a 0 byte stdout, and a script
+          # cannot be the instrument for a death that precedes it. Appending
+          # is what the probe does, so a stale file from an earlier step would
+          # read as this run's progress.
+          $probeDir = Join-Path $env:GITHUB_WORKSPACE 'loadprobe'
+          New-Item -ItemType Directory -Force -Path $probeDir | Out-Null
+          Remove-Item (Join-Path $probeDir 'nvmidi-load.log') -ErrorAction SilentlyContinue
+          "NVGT_MIDI_LOAD_PROBE_DIR=$probeDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           # Compile the same script before running it, and report the compiler's
           # own lines. The job has been reading a process that died with an exit
           # code and an empty log, and the step below has been turning that into
@@ -1644,6 +1656,27 @@ jobs:
           $realErrBytes = -1
           if (Test-Path $realErr) { $realErrBytes = (Get-Item $realErr).Length }
           Write-Host ("--- logs_e2e.txt.err: {0} bytes ---" -f $realErrBytes)
+          # The engine's stderr is where a script's compile diagnostics land,
+          # and 4372 bytes of it have been sitting in the artifact unread for
+          # every run of this job: the line above states the size and nothing
+          # states the content. Printed whole and verbatim, because the one
+          # thing known about it is that a reader has never seen inside it.
+          if ($realErrBytes -gt 0) {
+            Write-Host '--- logs_e2e.txt.err, verbatim ---'
+            Write-Host (Get-Content $realErr -Raw)
+            Write-Host '--- end of logs_e2e.txt.err ---'
+          }
+          # And the plugin's own load probe, which is the only thing in this
+          # job that runs on the plugin's side of the load. A file that does
+          # not exist means the library's first statement never ran, and that
+          # is a different answer from a file whose last line names a stage.
+          $probeLog = Join-Path $env:GITHUB_WORKSPACE 'loadprobe\nvmidi-load.log'
+          if (Test-Path $probeLog) {
+            Write-Host ("--- nvmidi-load.log: {0} bytes ---" -f (Get-Item $probeLog).Length)
+            Write-Host (Get-Content $probeLog -Raw)
+          } else {
+            Write-Host '--- nvmidi-load.log: the file does not exist, so the plugin never reached its first statement ---'
+          }
           # One source per fact, and every branch named.
           #
           # Three runs printed 30039 bytes for a 29438 byte file. The blob in
