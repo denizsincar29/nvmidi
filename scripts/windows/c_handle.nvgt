@@ -1,7 +1,23 @@
+// probe: c_handle - what does this engine let a plugin's own type be
+// declared as, and where does it say no.
+//
+// What is measured here, column-exact, from the e2e launch on run
+// 36726960949: "line: 5 (13) ERROR: Expected ';'" and "ERROR: Instead found
+// '@'" - column 13 is the '@' itself, and line 5 was a handle declaration of
+// this plugin's type. The bare spelling is refused too, and not by the
+// parser: the e2e's own script, whose declaration was bare, reported
+// "Parameter type can't be 'midi_output', because the type cannot be
+// instantiated." and "Data type can't be 'midi_output'" (run 36730213750).
+// The two refusals are different machines - a token the parser will not
+// take, and a type the compiler is told not to instantiate - so each gets
+// its own question, and each is still asked in isolation. Nothing runs: the
+// whole question is the declaration.
 #pragma plugin nvmidi
 
 void main() {
+	print("C0");
+	midi_output@ a = null;
 	print("C1");
-	midi_output@ out = null;
+	midi_output b;
 	print("C2");
 }

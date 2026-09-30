@@ -238,27 +238,33 @@ string bytes_of_last_error_as_numbers() {
 	}
 	return s;
 }
-// Why this parameter has no `@`, corrected by measurement.
+// Why this parameter carries a `@`.
 //
-// The comment here used to say the engine rejects the bare value spelling -
-// `midi_output o` - in the same breath as the handle spelling. That half is
-// the opposite of what the runner says, and the two probes that say it are
-// b_decl and a_bare.
+// This comment has now been wrong in both directions, so what follows is only
+// what the runner said, with the run it said it in.
 //
-// What run 36726960949 measures on the runner, by column, is one rule and not
-// two: a `@` after a plugin type is a parse error, and the bare name is the
-// only form the engine takes. `c_handle.nvgt:5 (13)` and
-// `e2e_types.nvgt:14 (13)` both report "Expected ';' / Instead found '@'"
-// with the column sitting exactly on the `@`; the same files without it
-// compile and run. probe_pragma_only.nvgt exits 0 because it declares
-// nothing, so it says a pragma resolves and nothing about declarations.
+// The first reading, from run 36730213750, was that the bare spelling is the
+// one the engine takes: the e2e's own declaration was bare and no `@` rule
+// looked responsible. The launch on that run reported "Parameter type can't be
+// 'midi_output', because the type cannot be instantiated.", "Data type can't
+// be 'midi_output'", ten "No matching symbol 'port'", "Attempting to
+// instantiate invalid template 'array<midi_note>'" and "Data type can't be
+// 'midi_note'" - 28 ERROR: lines in all. The bare form does not compile: the
+// type is refused as a type, every name declared with it goes with it, and
+// the handle is what the engine wants after all. c_handle.nvgt still asks
+// both spellings in one file, so the reading stays measured rather than
+// remembered.
 //
-// A handle the factory returned still exists - what the factory returns is a
-// handle, and the compiler infers it: `midi_output port = midi_output_create();`
-// is a handle-typed variable with no `@` written down. That is the spelling
-// this parameter and every declaration in this file now use, and the two call
-// sites pass the handle they already hold.
-string bytes_of_object_port_name(midi_output o) {
+// The `@` rule was separately measured, column-exact, on run 36726960949:
+// a `@` after a plugin type is refused by the parser, with the column landing
+// on the `@` itself (`c_handle.nvgt:5 (13)`, `e2e_types.nvgt:14 (13)`,
+// "ERROR: Expected ';'" and "ERROR: Instead found '@'"). That reading stands
+// on its own and is not in question; it just was not the whole rule.
+//
+// So: a handle, spelled with a `@`, and the factory that returns it is what
+// fills it. This is the spelling this parameter and every declaration of a
+// plugin type in this file use.
+string bytes_of_object_port_name(midi_output@ o) {
 	string s = "";
 	for (int i = 0; i < o.get_port_name_byte_count(); i++) {
 		int b = o.get_port_name_byte(i);
@@ -511,14 +517,13 @@ void main() {
 	ok("CHOSEN " + chosen_name);
 
 	// --- open it ------------------------------------------------------------
-	// No `@` here, and the factory still fills a handle: the declaration is
-	// bare and the compiler infers the handle from what the factory returns.
-	// A written `@` is the parse error this file has been failing on, at the
-	// column the `@` sits in - see the note on bytes_of_object_port_name
-	// above, and c_handle.nvgt, which is this same line reduced to two lines
-	// and measured.
+	// The handle and the factory that fills it, which is the spelling run
+	// 36730213750 settled: the bare form was tried, and the compiler refused
+	// the type outright ("Data type can't be 'midi_output'"), taking the name
+	// declared with it. See the note on bytes_of_object_port_name above for
+	// both readings and the run each came from.
 	print("E2E_BEFORE_CREATE");
-	midi_output port = midi_output_create();
+	midi_output@ port = midi_output_create();
 	print("E2E_AFTER_CREATE");
 	if (!port.open(chosen, "nvmidi e2e windows")) {
 		// The numbers first, then the text, because the text is the half that
@@ -608,10 +613,10 @@ void main() {
 		// carries the handle anyway. The array is passed to the chord methods
 		// by reference, so its own type, not a handle to it, is what they
 		// want.
-		array<midi_note> chord = array<midi_note>();
+		array<midi_note@> chord = array<midi_note@>();
 		uint[]@ chord_pitches = {60, 64, 67};
 		for (uint i = 0; i < 3; i++) {
-			midi_note n = nvmidi_note_create(chord_pitches[i]);
+			midi_note@ n = nvmidi_note_create(chord_pitches[i]);
 			n.velocity = 100;
 			n.length = midi_duration(100, MIDI_MS);
 			chord.insert_last(n);
