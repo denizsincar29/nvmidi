@@ -1919,8 +1919,19 @@ struct registration {
 		// array<T", and only the ordinary build carries "calling
 		// RegisterScriptArray" and "RegisterScriptArray returned". This
 		// literal is here so the two agree in name as well as in count.
-		const char* skip_mark = "nvmidi: NVGT_SKIP_ARRAY_ADDON is set, the engine is not asked\n";
-		(void)skip_mark;
+		//
+		// It is printed and not merely named, because a named string that
+		// is never used is not in the artifact at all. Measured, run
+		// 36725638696: with the literal held by a local pointer and voided
+		// - "the same shape an assert compiles to" - the control dll was
+		// built (2988213 bytes, compiled with -DNVGT_SKIP_ARRAY_ADDON) and
+		// contained the string zero times, so the probe went on finding no
+		// marker and the run died at the same throw. The optimizer is
+		// entitled to that: a pointer read by nothing is not a use. A
+		// fprintf is a use, and this stream is one the workflow already
+		// reads.
+		fprintf(stderr, "nvmidi: NVGT_SKIP_ARRAY_ADDON is set, the engine is not asked\n");
+		fflush(stderr);
 		return true;
 #endif
 		if (type_is_known("array")) {
