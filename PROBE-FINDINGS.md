@@ -124,6 +124,42 @@ registration that should have made `midi_output` a type name did not take
 effect in this script, while the calls that need no such name
 (`midi_api_name_byte_count()`, exit 0, `api_bytes=25`) still resolve.
 
+## The array add-on takes the native path, and that is what kills the build
+
+Measured, run 36719278988, in both directories that reach the call:
+
+    nvmidi: asGetLibraryVersion=2.39.0 WIP
+    nvmidi: asGetLibraryOptions= AS_64BIT_PTR AS_WIN AS_X64_MSVC
+
+The options carry no `AS_MAX_PORTABILITY`. So the branch test in
+`RegisterScriptArray` — `strstr(asGetLibraryOptions(), "AS_MAX_PORTABILITY") == 0`
+(scriptarray.cpp:274) — is true and `RegisterScriptArray_Native` runs.
+
+That function's first statement is
+
+    engine->SetTypeInfoUserDataCleanupCallback(CleanupTypeInfoArrayCache, ARRAY_CACHE);
+
+(scriptarray.cpp:292). It is the add-on's first call into the engine, and the
+process dies inside it: stderr shows `calling RegisterScriptArray` then
+`system exception`, with no `RegisterScriptArray returned`.
+
+### It is a second registration, not a first
+
+The control build never calls the add-on at all, yet it registers every
+function `nvmidi` has — and those that take an `array<midi_note>` succeed
+(reg lines 1836..1841 are the `midi_message` set, and `play_chord` registers
+after it with no complaint). So the engine already knows `array<T>` before the
+plugin loads. NVGT's own loader has installed an array add-on already. The
+plugin's call is the second one over an existing registration.
+
+### What this does not yet say
+
+Whether the crash is the duplicate registration itself or the call's landing
+in the engine — the plugin's `asIScriptEngine*` arrives from outside the
+process, so its vtable is worth reading. Print
+`engine->GetVersion()` through the raw pointer and compare it to 2.39.0 WIP
+before the call, and keep the vtable dump.
+
 ## Retracted
 
 - **A "60.4 s hang" of the real script.** There was no hang. The step above
