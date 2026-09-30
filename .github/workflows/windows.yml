@@ -670,18 +670,18 @@ jobs:
             @{ name = 'with-array-addon'; src = 'builds\nvmidi-with-addon\nvmidi.dll'; pragma = 'nvmidi' },
             @{ name = 'no-array-addon';   src = 'builds\nvmidi-no-addon\nvmidi.dll';   pragma = 'nvmidi' }
           )
-          # The tool that answers what a dll imports. Named once here because
-          # the step below uses it and no step should guess where it lives.
-          $env:NM = Resolve-Tool 'x86_64-w64-mingw32-nm.exe'
-          if (-not $env:NM) { $env:NM = Resolve-Tool 'nm.exe' }
-          if (-not $env:NM) { $env:NM = Resolve-Tool 'nm' }
+          # The tool that answers what a dll imports. Resolved inline rather
+          # than through a helper function, because powershell runs the script
+          # front to back: at this line the helper is defined further down and
+          # the call answers "not recognized as a name of a cmdlet".
+          $env:NM = (Get-Command x86_64-w64-mingw32-nm.exe -ErrorAction SilentlyContinue |
+                     Select-Object -First 1).Source
+          if (-not $env:NM) {
+            $env:NM = (Get-Command nm.exe -ErrorAction SilentlyContinue |
+                       Select-Object -First 1).Source
+          }
           if (-not $env:NM) { throw 'nm is not on PATH; the import check needs it' }
           Write-Host "NM: $env:NM"
-          function Resolve-Tool([string] $name) {
-            $c = Get-Command $name -ErrorAction SilentlyContinue
-            if ($c) { return $c.Source }
-            return $null
-          }
 
 
           $probe = Get-Content (Join-Path $ws 'scripts\windows\loc_probe.nvgt') -Raw
