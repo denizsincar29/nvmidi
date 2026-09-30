@@ -56,9 +56,22 @@
 // will call.
 #include "nvgt_plugin.h"
 
+// Load-bearing, and not an oversight: the vendored RtMidi keeps its template
+// definitions in RtMidi.cpp instead of the header, so the header alone only
+// gives declarations. Including it here is what makes this translation unit
+// instantiate them; drop it and every RtMidi call in the plugin object becomes
+// an undefined reference at link time.
+#include <RtMidi.h>
+
 #include <cstdio>
+#include <cstdint>
 #include <string>
 
+// Only the plugin needs the RtMidi header; the host itself never names
+// an RtMidi type. Including it here is what tells the compiler to
+// instantiate the vendored template definitions - a host that does not
+// would link nvmidi_static.o against an empty RtMidi and only find out
+// at run time, when the plugin asks for a port.
 namespace {
 
 // The nvgt half of the table. Every one of these is something the engine does
@@ -75,25 +88,47 @@ int nvgt_calls = 0;
 		return ret(); \
 	}
 
-void* nvgt_datastream_create(std::ios*, const std::string&, int) { ++nvgt_calls; std::fprintf(stderr, "  nvgt call: nvgt_datastream_create\n"); return nullptr; }
-std::ios* nvgt_datastream_get_ios(void*) { ++nvgt_calls; std::fprintf(stderr, "  nvgt call: nvgt_datastream_get_ios\n"); return nullptr; }
-void nvgt_bundle_shared_library(const std::string&) { ++nvgt_calls; std::fprintf(stderr, "  nvgt call: nvgt_bundle_shared_library\n"); }
-bool find_embedded_pack(std::string&, uint64_t&, uint64_t&) { ++nvgt_calls; std::fprintf(stderr, "  nvgt call: find_embedded_pack\n"); return false; }
-void nvgt_wait(int) { ++nvgt_calls; std::fprintf(stderr, "  nvgt call: nvgt_wait\n"); }
-void refresh_window() { ++nvgt_calls; std::fprintf(stderr, "  nvgt call: refresh_window\n"); }
-uint64_t ticks(bool) { ++nvgt_calls; return 0; }
-uint64_t microticks(bool) { ++nvgt_calls; return 0; }
-std::string string_aes_encrypt(const std::string&, std::string) { ++nvgt_calls; return ""; }
-std::string string_aes_decrypt(const std::string&, std::string) { ++nvgt_calls; return ""; }
-void nvgt_audio_plugin_node_register(const std::string&) { ++nvgt_calls; }
-void* nvgt_audio_plugin_node_create(void*, unsigned char, unsigned char, unsigned int, void*) { ++nvgt_calls; return nullptr; }
-void* nvgt_audio_plugin_node_get(void*) { ++nvgt_calls; return nullptr; }
-bool running_on_mobile() { ++nvgt_calls; return false; }
+void* nvgt_datastream_create_standin(std::ios*, const std::string&, int) { ++nvgt_calls; std::fprintf(stderr, "  nvgt call: nvgt_datastream_create\n"); return nullptr; }
+std::ios* nvgt_datastream_get_ios_standin(void*) { ++nvgt_calls; std::fprintf(stderr, "  nvgt call: nvgt_datastream_get_ios\n"); return nullptr; }
+void nvgt_bundle_shared_library_standin(const std::string&) { ++nvgt_calls; std::fprintf(stderr, "  nvgt call: nvgt_bundle_shared_library\n"); }
+bool find_embedded_pack_standin(std::string&, uint64_t&, uint64_t&) { ++nvgt_calls; std::fprintf(stderr, "  nvgt call: find_embedded_pack\n"); return false; }
+void nvgt_wait_standin(int) { ++nvgt_calls; std::fprintf(stderr, "  nvgt call: nvgt_wait\n"); }
+void refresh_window_standin() { ++nvgt_calls; std::fprintf(stderr, "  nvgt call: refresh_window\n"); }
+uint64_t ticks_standin(bool) { ++nvgt_calls; return 0; }
+uint64_t microticks_standin(bool) { ++nvgt_calls; return 0; }
+std::string string_aes_encrypt_standin(const std::string&, std::string) { ++nvgt_calls; return ""; }
+std::string string_aes_decrypt_standin(const std::string&, std::string) { ++nvgt_calls; return ""; }
+void nvgt_audio_plugin_node_register_standin(const std::string&) { ++nvgt_calls; }
+plugin_node* nvgt_audio_plugin_node_create_standin(audio_plugin_node_interface*, unsigned char, unsigned char, unsigned int, audio_engine*) { ++nvgt_calls; return nullptr; }
+audio_plugin_node_interface* nvgt_audio_plugin_node_get_standin(plugin_node*) { ++nvgt_calls; return nullptr; }
+bool running_on_mobile_standin() { ++nvgt_calls; return false; }
 
 } // namespace
 
+// The entry point the plugin's own translation unit defines. The header only
+// gives the macro that *spells* its name, so the declaration is written out.
+#ifdef NVGT_PLUGIN_STATIC
+#define PROBE_CAT_(a, b) a##b
+#define PROBE_CAT(a, b) PROBE_CAT_(a, b)
+#define PROBE_PLUGIN_MAIN PROBE_CAT(nvgt_plugin_, NVGT_PLUGIN_STATIC)
+#define PROBE_PLUGIN_VERSION PROBE_CAT(nvgt_plugin_version_, NVGT_PLUGIN_STATIC)
+#else
+#define PROBE_PLUGIN_MAIN nvgt_plugin
+#define PROBE_PLUGIN_VERSION nvgt_plugin_version
+#endif
+extern "C" bool PROBE_PLUGIN_MAIN(nvgt_plugin_shared*);
+
 int main() {
-	std::printf("the plugin's api version is %d\n", nvgt_plugin_version());
+	// The header's own accessors, not hand-written symbol names: in
+	// NVGT_PLUGIN_STATIC mode the entry point is nvgt_plugin_<NVGT_PLUGIN_STATIC>,
+	// and spelling that out here is how a host ends up declaring a symbol
+	// nothing defines. plugin_version() is defined by the header in this same
+	// translation unit.
+	// The version function is a definition, not a callable name, in this
+	// translation unit - the header's own definition lives in whichever file it
+	// is expanded in. The plugin's file defines it, so it is declared and called
+	// by its composed name.
+	std::printf("the plugin's api version is %d\n", PROBE_PLUGIN_VERSION());
 
 	nvgt_plugin_shared shared{};
 	shared.version = NVGT_PLUGIN_API_VERSION;
@@ -108,20 +143,20 @@ int main() {
 	std::printf("a real Angelscript engine was created (version %s)\n", asGetLibraryVersion());
 
 	// The nvgt half, stand-ins that report if they are ever called.
-	shared.f_nvgt_datastream_create = &nvgt_datastream_create;
-	shared.f_nvgt_datastream_get_ios = &nvgt_datastream_get_ios;
-	shared.f_nvgt_bundle_shared_library = &nvgt_bundle_shared_library;
-	shared.f_find_embedded_pack = &find_embedded_pack;
-	shared.f_nvgt_wait = &nvgt_wait;
-	shared.f_refresh_window = &refresh_window;
-	shared.f_ticks = &ticks;
-	shared.f_microticks = &microticks;
-	shared.f_string_aes_encrypt = &string_aes_encrypt;
-	shared.f_string_aes_decrypt = &string_aes_decrypt;
-	shared.f_nvgt_audio_plugin_node_register = &nvgt_audio_plugin_node_register;
-	shared.f_nvgt_audio_plugin_node_create = &nvgt_audio_plugin_node_create;
-	shared.f_nvgt_audio_plugin_node_get = &nvgt_audio_plugin_node_get;
-	shared.f_running_on_mobile = &running_on_mobile;
+	shared.f_nvgt_datastream_create = &nvgt_datastream_create_standin;
+	shared.f_nvgt_datastream_get_ios = &nvgt_datastream_get_ios_standin;
+	shared.f_nvgt_bundle_shared_library = &nvgt_bundle_shared_library_standin;
+	shared.f_find_embedded_pack = &find_embedded_pack_standin;
+	shared.f_nvgt_wait = &nvgt_wait_standin;
+	shared.f_refresh_window = &refresh_window_standin;
+	shared.f_ticks = &ticks_standin;
+	shared.f_microticks = &microticks_standin;
+	shared.f_string_aes_encrypt = &string_aes_encrypt_standin;
+	shared.f_string_aes_decrypt = &string_aes_decrypt_standin;
+	shared.f_nvgt_audio_plugin_node_register = &nvgt_audio_plugin_node_register_standin;
+	shared.f_nvgt_audio_plugin_node_create = &nvgt_audio_plugin_node_create_standin;
+	shared.f_nvgt_audio_plugin_node_get = &nvgt_audio_plugin_node_get_standin;
+	shared.f_running_on_mobile = &running_on_mobile_standin;
 
 	// script_thread_manager is deliberately left null: asPrepareMultithread
 	// treats null as "make me a default thread manager", which is a supported
@@ -129,7 +164,7 @@ int main() {
 	// stack trace would say so.
 	std::printf("calling the entry point, with a real engine and no stub table...\n");
 	std::fflush(stdout);
-	const bool accepted = nvgt_plugin(&shared);
+	const bool accepted = PROBE_PLUGIN_MAIN(&shared);
 	std::printf("the entry point returned %s\n", accepted ? "true" : "false");
 
 	if (accepted) {
