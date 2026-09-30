@@ -440,6 +440,15 @@ def pump_winmm(m, in_index, out_index, args):
     print("press a key - the same key comes back an octave higher")
     print("a control change is passed through as it is")
     print("Ctrl+C exits and silences the output")
+    if args.watch:
+        # The flag exists because "silence" has two causes a person cannot
+        # tell apart from where they sit: nothing arrived, or something
+        # arrived and the sound is elsewhere. Counting the events that
+        # arrived separates those two, and counting is all this does - the
+        # printed lines below are the same ones the loop always printed, on
+        # purpose, so a reading taken with --watch is a reading of the same
+        # program.
+        print("watch is on: every event is printed as it arrives")
     print("")
 
     deadline = time.time() + args.seconds if args.seconds > 0 else None
@@ -504,6 +513,39 @@ def pump_winmm(m, in_index, out_index, args):
 
 
 # ---------------------------------------------------------------------------
+# what the person at the instrument is asked to do
+# ---------------------------------------------------------------------------
+
+def instructions():
+    """The part of this program that is meant for a person, not a log.
+
+    Written to be read out loud, and phrased for someone who cannot see the
+    screen: every line says what to DO before it says what it means, and
+    nothing here needs a mouse or a window. The exit is said in the same
+    breath as the first instruction, because a test that cannot be stopped
+    without knowing the secret is not a test a person will run twice.
+    """
+    print("---")
+    print("What to do")
+    print("")
+    print("  Press any key on the Nord. Listen.")
+    print("  The same note comes back one octave higher -")
+    print("  press the C in the middle, hear the C above it.")
+    print("  A pedal or a wheel is passed through unchanged.")
+    print("")
+    print("  If you hear nothing, press a key on ANY controller")
+    print("  (the Nord, the piano, whatever is plugged in) and hold it.")
+    print("  Every event that arrives is printed below as it arrives,")
+    print("  so the question 'is my controller being heard at all'")
+    print("  is answered on the screen even when nothing sounds.")
+    print("")
+    print("  To stop: press Ctrl+C. Nothing is saved and nothing is left")
+    print("  running. If the ports look wrong, rerun with --list first,")
+    print("  then --input N --output N to pick a different pair.")
+    print("---")
+    print("")
+
+# ---------------------------------------------------------------------------
 # entry
 # ---------------------------------------------------------------------------
 
@@ -522,11 +564,15 @@ def main(argv=None):
     parser.add_argument("--seconds", type=float, default=0.0,
                         help="stop on its own after this long; 0 waits for Ctrl+C")
     parser.add_argument("--list", action="store_true", help="print the ports and exit")
+    parser.add_argument("--watch", action="store_true",
+                        help="print every event as it arrives, so a port that is "
+                             "open but silent can be told from one that is not")
     args = parser.parse_args(argv)
 
     print("octave echo - midi in, the same note out %d semitones up" % OCTAVE)
     print("platform    %s %s" % (platform.system(), platform.machine()))
     print("")
+    instructions()
 
     if platform.system() == "Windows":
         return run_windows(args)
