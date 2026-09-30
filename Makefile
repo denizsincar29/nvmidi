@@ -133,5 +133,14 @@ clean:
 # resolves to `nvmidi.dll` - so the target was its own prerequisite and make
 # refused it ("Circular dependency dropped"), which it does without failing, so
 # the step went green having built nothing.
+# SECOND NAME. The pragma does not name a file: the engine asks the operating
+# system for a library whose name is what follows `plugin` - `nvmidi`. This
+# target therefore also builds that same library under the name `nvmidi-noarr`,
+# and the workflow writes a second probe carrying `#pragma plugin nvmidi-noarr`
+# so the engine asks for a different bare name. Without it the copy is inert:
+# nvgt resolves the pragma name, finds `nvmidi.dll` first, and the second file
+# is never opened (measured, run 36703189281 - all four locations exited 65 with
+# `failed to load plugin` while the no-addon library sat in the same folder).
 nvmidi-noarr.dll: $(SOURCES) src/nvmidi.h
-	$(CXX) $(CXXFLAGS) -DNVGT_SKIP_ARRAY_ADDON $(INCLUDES) $(SOURCES) -o $@ $(LDFLAGS) $(LIBS)
+	$(CXX) $(CXXFLAGS) -DNVGT_SKIP_ARRAY_ADDON $(INCLUDES) $(SOURCES) -o nvmidi.dll $(LDFLAGS) $(LIBS)
+	copy /Y nvmidi.dll $@
