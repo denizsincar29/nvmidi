@@ -539,30 +539,72 @@ jobs:
             exit /b 1
           )
 
+      # `move` cannot do this job at all, and now that is a measurement rather
+      # than a suspicion.
+      #
+      # The isolated `rename` job promotes a file onto a name that already
+      # exists and asks cmd to move onto it. Run 36706131852: cmd printed
+      # "1 file(s) moved.", removed the source, exited 0, and left the
+      # destination holding the OLD bytes. No error, no warning, no non-zero
+      # exit. Two builds of one source cannot be obtained by renaming in this
+      # shell, because the failure is silent in both directions - a build job
+      # that trusts it ships the first library twice, and every comparison
+      # downstream then measures one build against itself and reports a clean
+      # pair of results.
+      #
+      # So the second build never takes the first one's name, and by now that
+      # is a measurement rather than a preference. cmd's own `move /y` does not
+      # replace a name that already exists: run 36706131852, an isolated job
+      # whose only purpose was this question, moved a file onto an existing
+      # name and got "1 file(s) moved." with the source gone, exit 0, and the
+      # destination still holding the OLD bytes. Silent in both directions - a
+      # build that trusts it ships the first library twice, and every reading
+      # downstream then compares one build to itself and reports a clean pair.
+      #
+      # So no step of this workflow renames anything. Both builds live in
+      # directories of their own, each holding one library under the name the
+      # engine actually asks for, and the difference between them is the
+      # directory. That also closes the trap the probe kept falling into: two
+      # rows labelled differently stopped being two files the moment one
+      # directory had to hold both, and a name is not evidence of contents.
+      #
+      # make runs from the root through -f, with a relative -o: make's own
+      # directory is the root either way, and the write lands where -o points.
+      # The first build is moved out of the root rather than deleted, because
+      # the e2e job has steps that read it there.
       - name: build the library without the array add-on
         shell: cmd
         run: |
           if not exist nvmidi.dll exit /b 1
-          move /y nvmidi.dll nvmidi-noarr.dll
-          if not exist nvmidi-noarr.dll exit /b 1
-          mingw32-make nvmidi.dll
-          if not exist nvmidi.dll exit /b 1
-          dir /B nvmidi.dll nvmidi-noarr.dll
-
-      # Both builds go in, under distinct names. Two files cannot share
-      # nvmidi.dll on one filesystem, and the e2e downloads these without
-      # knowing they came off a case-insensitive volume, so the distinction has
-      # to be carried by something a filesystem does not get to collapse: the
-      # name of the download destination. Uploading one file and hoping the
-      # other name survives the round trip is how a measurement quietly becomes
-      # two copies of whichever library happened to be listed second.
-      - name: keep the dlls
+          if exist withaddon rmdir /S /Q withaddon
+          if exist noaddon rmdir /S /Q noaddon
+          mkdir withaddon
+          mkdir noaddon
+          move /Y nvmidi.dll withaddon\nvmidi.dll
+          if not exist withaddon\nvmidi.dll exit /b 1
+          if exist nvmidi.dll exit /b 1
+          mingw32-make -f Makefile -o noaddon\nvmidi.dll -DNVGT_SKIP_ARRAY_ADDON nvmidi.dll
+          if not exist noaddon\nvmidi.dll exit /b 1
+          dir /B withaddon\nvmidi.dll noaddon\nvmidi.dll
+      # One artifact per build, and the artifact's own name is what carries the
+      # distinction. Two files cannot share nvmidi.dll on one filesystem, and an
+      # artifact is one byte stream under one destination name, so packing a
+      # directory into a single artifact means its contents have to be told
+      # apart again on the far side - which is the very step that has been wrong
+      # every time it was attempted. Two artifacts cannot be confused for one
+      # another by any filesystem.
+      - name: keep the dll with the array add-on
         uses: actions/upload-artifact@v4
         with:
-          name: nvmidi-dlls
-          path: |
-            nvmidi.dll
-            nvmidi-noarr.dll
+          name: nvmidi-with-addon
+          path: withaddon/nvmidi.dll
+          if-no-files-found: error
+
+      - name: keep the dll without the array add-on
+        uses: actions/upload-artifact@v4
+        with:
+          name: nvmidi-no-addon
+          path: noaddon/nvmidi.dll
           if-no-files-found: error
 
   e2e:
@@ -800,11 +842,18 @@ jobs:
       # it goes green having compared the library to itself (measured, run
       # 36704138343 - the location probe found no nvmidi-noarr.dll and skipped
       # every no-addon case without a word of complaint).
+      #
+      # Each build arrives in a directory named for it, and each directory holds
+      # exactly one library - nvmidi.dll, the name the engine asks for. The e2e
+      # already builds its own nvmidi.dll for the other steps, so this step
+      # leaves that one where it is and stages the delivery copy the location
+      # matrix reads. `path:` here is an extraction destination, not cmd's move,
+      # so a file keeps its name and gains a folder; that is the whole reason
+      # the two builds no longer need to be told apart by a filename.
       - name: fetch the plugin builds
         uses: actions/download-artifact@v4
         with:
-          name: nvmidi-dlls
-          path: .
+          path: builds
 
       - name: check the build without the array add-on landed
         shell: cmd
@@ -825,8 +874,9 @@ jobs:
         # repeated `bisection=no` four times without a word about why.
         run: |
           if not exist nvmidi.dll goto :missing
-          if not exist nvmidi-noarr.dll goto :missing
-          dir /B nvmidi.dll nvmidi-noarr.dll
+          if not exist builds\nvmidi-with-addon\nvmidi.dll goto :missing
+          if not exist builds\nvmidi-no-addon\nvmidi.dll goto :missing
+          dir /B nvmidi.dll builds\nvmidi-with-addon builds\nvmidi-no-addon
           goto :eof
           :missing
           echo one of the two plugin builds is missing, so the comparison cannot run
@@ -958,32 +1008,29 @@ jobs:
           # two builds of one source that differ by a single call say whether
           # that call is the cause.
           #
-          # nvmidi-noarr.dll is not named "nvmidi.dll" because a directory holds
-          # a single file of a given name, and both readings have to run against
-          # the same folder and the same script. Each location gets a fresh
-          # directory holding exactly one build, so each copy of the probe below
-          # is byte-identical: `#pragma plugin nvmidi` resolves to whichever
-          # library that directory contains.
           # The two builds are indistinguishable from inside the engine: the
           # probe's one real line asks for a library called nvmidi either way,
-          # so a copied nvmidi-noarr.dll is a file the engine never opens while
-          # the nvmidi.dll sitting next to it answers.
+          # so a build sitting beside another library is a file the engine never
+          # opens. So one directory, one library, and both rows run against the
+          # same script - the only difference between the rows is which file
+          # that directory holds.
           #
-          # So one library per directory, and the trap this loop has to close is
-          # that the two rows measured the same file three times before anyone
-          # noticed. Run 36704808356: both variants printed the add-on's three
-          # stderr lines, because a nvmidi.dll was already in each $dir. Run
-          # 36705417971: the stray copy was gone and both rows died at load with
-          # exit 65, because by then nvmidi-noarr.dll was itself a file renamed
-          # by a `move` that had quietly refused to overwrite - the same
-          # original library, under a name the engine does ask for.
+          # This is the part that was wrong the longest, because two rows
+          # labelled differently look like a comparison. Run 36704808356: both
+          # variants printed the add-on's three stderr lines, because a
+          # nvmidi.dll was already in each $dir and answered for both. Run
+          # 36705417971: both rows died at load with exit 65, because by then
+          # nvmidi-noarr.dll was itself the same original library under a name a
+          # `move` had refused to overwrite. Run 36706131852 settled why: cmd's
+          # `move /y` onto an existing name prints success, removes the source
+          # and leaves the destination untouched.
           #
           # The check below is therefore about the *contents*, not the name: a
           # build is the control only if the add-on's call is not in it, and no
           # arrangement of filenames can fake that.
           $variants = @(
-            @{ name = 'with-array-addon'; dll = 'nvmidi-noarr.dll';   pragma = 'nvmidi' },
-            @{ name = 'no-array-addon';   dll = 'nvmidi-noarr.dll';   pragma = 'nvmidi' }
+            @{ name = 'with-array-addon'; src = 'builds\nvmidi-with-addon\nvmidi.dll'; pragma = 'nvmidi' },
+            @{ name = 'no-array-addon';   src = 'builds\nvmidi-no-addon\nvmidi.dll';   pragma = 'nvmidi' }
           )
           $probe = Get-Content (Join-Path $ws 'scripts\windows\loc_probe.nvgt') -Raw
 
@@ -992,12 +1039,15 @@ jobs:
             New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
             foreach ($v in $variants) {
-              $dll = Join-Path $ws $v.dll
+              $dll = Join-Path $ws $v.src
               if (-not (Test-Path $dll)) {
                 Write-Host "=== $($c.name) / $($v.name): no $dll, skipped ==="
                 continue
               }
-              Copy-Item $dll -Destination (Join-Path $dir $v.dll) -Force
+              # The library keeps the name the engine asks for; only the folder
+              # changes. Nothing here renames anything, which is what makes the
+              # rows distinguishable at all.
+              Copy-Item $dll -Destination (Join-Path $dir 'nvmidi.dll') -Force
 
               # A directory holds one library under this name. If something
               # else in it answers to nvmidi, the engine may open that instead
@@ -1005,7 +1055,7 @@ jobs:
               # exactly what the previous table did, by leaving nvmidi.dll in
               # place beside the copy. Fail loudly rather than measure it.
               $strays = @(Get-ChildItem -Path $dir -Filter 'nvmidi*.dll' |
-                          Where-Object { $_.Name -ne $v.dll })
+                          Where-Object { $_.Name -ne 'nvmidi.dll' })
               if ($strays.Count -gt 0) {
                 Write-Host "  >>> $($c.name) / $($v.name): $dir also holds $(($strays | ForEach-Object Name) -join ', '), so this reading would be of the wrong library"
                 continue
@@ -1017,12 +1067,12 @@ jobs:
               # The add-on's call is a literal in the binary, so its presence
               # is not a matter of opinion: it is either in the file the engine
               # is about to load or it is not.
-              $bytes = [System.IO.File]::ReadAllBytes((Join-Path $dir $v.dll))
+              $bytes = [System.IO.File]::ReadAllBytes((Join-Path $dir 'nvmidi.dll'))
               $ascii = [System.Text.Encoding]::ASCII.GetString($bytes)
               $hasCall = $ascii.Contains('calling RegisterScriptArray')
               $hasSkip = $ascii.Contains('NVGT_SKIP_ARRAY_ADDON is set')
               $wantCall = ($v.name -eq 'with-array-addon')
-              Write-Host "  $($v.dll) carries calling=$hasCall skipmessage=$hasSkip (this row wants calling=$wantCall)"
+              Write-Host "  $($v.name) carries calling=$hasCall skipmessage=$hasSkip (this row wants calling=$wantCall)"
               if ($hasCall -ne $wantCall) {
                 Write-Host "  >>> $($c.name) / $($v.name): the library is the other build, so this row would answer for the wrong library"
                 continue
@@ -1043,7 +1093,7 @@ jobs:
               Pop-Location
               $text = if (Test-Path $log) { (Get-Content $log -Raw) } else { '' }
               $err  = if (Test-Path "$log.err") { (Get-Content "$log.err" -Raw) } else { '' }
-              Write-Host "=== $($c.name) / $($v.name): $($v.dll) and script in $dir, run from $dir ==="
+              Write-Host "=== $($c.name) / $($v.name): nvmidi.dll from $($v.src), script in $dir, run from $dir ==="
               Write-Host "  exit $($p.ExitCode)  stdout=[$($text -replace "`r?`n", ' | ')]  stderr=[$($err -replace "`r?`n", ' | ')]"
               if ($text -match 'LOC_OK') { Write-Host "  >>> LOCATION ACCEPTED: $($c.name) / $($v.name) ($dir)" }
 
