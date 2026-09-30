@@ -712,15 +712,16 @@ jobs:
       # the engine pointer itself - a larger finding, and one worth having.
       - name: build the plugin without the array add-on
         shell: cmd
-        # `mingw32-make clean` and not `del`: the jar's clean recipe is
-        # `RM ?= rm -f` and the windows branch appends `RM = del /Q`, but once
-        # `RM` is set in an earlier branch the append never wins, so the recipe
-        # runs a POSIX `rm` that cmd.exe cannot start at all - `process_begin:
-        # CreateProcess(NULL, del /Q nvmidi.dll, ...) failed`, then `make (e=2)`
-        # and a dead step. Measured, run 36702218450. So the jar is removed by
-        # the shell here rather than by make, and the recipe is not edited for a
-        # reason that only exists on this runner.
-        run: if exist nvmidi.dll del /Q nvmidi.dll && if exist nvmidi-noarr.dll del /Q nvmidi-noarr.dll && mingw32-make CXXFLAGS="-std=c++17 -O2 -fPIC -Wall -Wextra -D__WINDOWS_MM__ -DNVGT_SKIP_ARRAY_ADDON" && copy /Y nvmidi.dll nvmidi-noarr.dll
+        # The build is a target now, not a second invocation with a rewritten
+        # CXXFLAGS. Measured, run 36702495507: `mingw32-make CXXFLAGS="..."` goes
+        # green in eight seconds having built nothing, because a command-line
+        # CXXFLAGS replaces the variable the windows branch uses to add
+        # -D__WINDOWS_MM__, and a MinGW build without that define takes the Linux
+        # RtMidi branch and then includes a file in the checkout root called
+        # Windows.h on a case-insensitive filesystem. The recipe in the Makefile
+        # appends the one flag to the local CXXFLAGS instead, so the windows
+        # defines survive.
+        run: mingw32-make nvmidi-noarr.dll
 
       # Where did we put it. nvgt searches lib/ next to itself for a plugin
       # named by #pragma plugin, so nvmidi.dll has to be there and not in the

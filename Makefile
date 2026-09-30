@@ -25,7 +25,10 @@ INCLUDES  = -Isrc -Ithird_party/rtmidi -Ithird_party/angelscript
 SOURCES   = src/nvmidi.cpp third_party/rtmidi/RtMidi.cpp \
             third_party/angelscript/scriptarray.cpp
 
-# Backend selection. RtMidi compiles exactly one of these in.
+# The default name. A variable and not a literal, because the no-addon target
+# below would otherwise be the same file spelled differently - see the comment
+# there for what that cost.
+TARGET      ?= nvmidi.dll
 ifeq ($(OS),Windows_NT)
     TARGET    = nvmidi.dll
     CXXFLAGS += -D__WINDOWS_MM__
@@ -106,3 +109,29 @@ check:
 
 clean:
 	$(RM) $(TARGET)
+
+# The same source, built with the array add-on's registration left out.
+#
+# Why a separate target and not one jar built twice: nvgt loads a plugin by
+# name through #pragma, and running one script against two different nvmidi.dll
+# files in turn answers nothing, because a build is a fact and not a
+# comparison. The comparison needs both modules present at once, which means
+# both files in one directory, which means the second one cannot be called
+# nvmidi.dll. This target is therefore dead code for any ordinary user and
+# exists for exactly one measurement.
+#
+# The flag. NVGT_SKIP_ARRAY_ADDON is read in src/nvmidi.cpp; it is added to a
+# copy of the local CXXFLAGS rather than passed on the make command line,
+# because a command-line CXXFLAGS= replaces the whole variable and silently
+# drops -D__WINDOWS_MM__ with it - and a MinGW build without that define takes
+# the Linux RtMidi branch and then includes a source file in the checkout root
+# called Windows.h on a case-insensitive filesystem. That build produces no dll
+# at all and exits 0 while doing it (measured, run 36702495507).
+#
+# The header prerequisite is load-bearing. This file's own target used to be
+# listed in SOURCES, and on a case-insensitive filesystem `nvmidi-noarr.dll`
+# resolves to `nvmidi.dll` - so the target was its own prerequisite and make
+# refused it ("Circular dependency dropped"), which it does without failing, so
+# the step went green having built nothing.
+nvmidi-noarr.dll: $(SOURCES) src/nvmidi.h
+	$(CXX) $(CXXFLAGS) -DNVGT_SKIP_ARRAY_ADDON $(INCLUDES) $(SOURCES) -o $@ $(LDFLAGS) $(LIBS)
