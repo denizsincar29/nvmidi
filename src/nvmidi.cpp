@@ -102,7 +102,7 @@ static void heartbeat_write(const char* what, long long ms) {
 	// written, up to the instant the process stopped.
 	std::FILE* log = std::fopen(path, "a");
 	if (!log) return;
-	std::fprintf(log, "%s pid=%ld ms=%lld tid=%lu\n", what, (long)std::getpid(), ms,
+	std::fprintf(log, "%s pid=%ld ms=%lld tid=%lu\n", what, (long)::getpid(), ms,
 	             (unsigned long)std::hash<std::thread::id>{}(std::this_thread::get_id()));
 	std::fclose(log);
 }
