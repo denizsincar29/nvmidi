@@ -129,13 +129,30 @@ def name_of(ports, index):
     return ""
 
 
+def write_config(in_name, out_name):
+    """Hand the chosen ports over as a config file, not as arguments.
+
+    The script cannot read a command line: it has no accessor for one. Two runs
+    measured that - "No matching symbol 'get_argc'" and then "No matching symbol
+    'application'" - so the port names travel the way the plugin's own parser
+    wants them anyway, as a `match` line per direction. Written fresh each run,
+    because the echo half wants the input and the output to be different ports
+    and a stale output line from an earlier run would silently decide this one.
+    """
+    text = ["# written by scripts/hear_test.py",
+            "# match is a substring of the port name, case-insensitive",
+            "match=" + in_name]
+    if out_name and out_name != in_name:
+        text.append("match=" + out_name)
+    with open(CONFIG, "w") as handle:
+        handle.write("\n".join(text) + "\n")
+
+
 def run(nvgt, script, in_name, out_name, echo):
     """Run nvgt, echo its console, and collect the transcript."""
     argv = [nvgt, script]
     if in_name:
-        argv.append(in_name)
-    if out_name:
-        argv.append(out_name)
+        write_config(in_name, out_name if echo else "")
     print("\n$ " + " ".join(argv))
     transcript = []
     try:
@@ -246,18 +263,23 @@ def main():
         return 1
     in_name = name_of(ins, in_name) or in_name
     out_name = name_of(outs, out_name) or out_name
+    want_echo = not args.no_echo
+    if want_echo and out_name == in_name:
+        print("\nNo output port chosen that is different from the input.")
+        print("The echo would go straight back into the reader and the test")
+        print("would measure itself, so the echo half stays off this run.")
+        want_echo = False
 
     print("\nInput  %s" % in_name)
-    print("Output %s" % (out_name if not args.no_echo else "(not used)"))
+    print("Output %s" % (out_name if want_echo else "(not used)"))
     print("\nPlay the instrument when the script asks. Ctrl+C stops the test.")
     time.sleep(1)
 
-    transcript = run(nvgt, SCRIPT, in_name,
-                     out_name if not args.no_echo else "", not args.no_echo)
+    transcript = run(nvgt, SCRIPT, in_name, out_name, want_echo)
     if transcript:
-        verdict(transcript, not args.no_echo)
+        verdict(transcript, want_echo)
     if os.path.exists(CONFIG):
-        print("\nThe port the run used is in %s" % CONFIG)
+        print("\nThe ports this run used are in %s" % CONFIG)
     return 0
 
 

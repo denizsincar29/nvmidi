@@ -102,9 +102,17 @@ string bytes_of_message(const midi_message&in m) {
 // overwrite the first.
 void write_config(const string&in port_name, bool append) {
 	// file_put_contents is the engine's own function and the one its docs
-	// point at; the file object form (file f; f.open(...)) exists too, but the
-	// bare open() this first used does not - measured on run 36774668711,
-	// "line: 104 (12) ERROR: No matching symbol 'open'".
+	// point at (signature read out of the engine binary, not guessed:
+	// bool file_put_contents(const string&in filename, const string&in
+	// contents, bool append = false)). The file object form exists too, but the
+	// bare open() this first used does not - run 36774668711, "line: 104 (12)
+	// ERROR: No matching symbol 'open'".
+	//
+	// The name written here is the readme's documented escape from having no
+	// command line: "The match and port members can be set from the script
+	// instead of a file" (readme.md:397). Writing the file is the file-shaped
+	// version of that same statement, and it is the one that works when the
+	// script has to hand a port to an object it has already created.
 	string text = "";
 	if (!append) {
 		text += "# written by scripts/hear_test.nvgt\n";
@@ -145,23 +153,38 @@ void main() {
 		return;
 	}
 
-	// The port to listen on, and the port to play back out of. It is passed in
-	// by the launcher, which knows which is which; when nothing is passed the
-	// first port in the list above is used, and the list is printed either way.
+	// The port to listen on, and the port to play back out of. This script
+	// takes no command line arguments at all, and that is a measurement rather
+	// than a preference:
 	//
-	// application.argv is how this engine hands a command line over -
-	// get_argc()/get_arg() do not exist, measured on run 36774668711:
-	// "line: 152 (6) ERROR: No matching symbol 'get_argc'". argv is indexed
-	// from 0, where 0 is the script's own path, so the first name the launcher
-	// passes is argv[1].
+	//   run 36774668711: line 152, "No matching symbol 'get_argc'"
+	//   run 36775114904: line 158, "No matching symbol 'application'"
+	//
+	// The second one is worth spelling out because it was my mistake. I read
+	// the strings `application.argc` and `application.argv[` out of the engine
+	// binary and shipped them as the script API. Reading a string out of a
+	// binary is not a measurement that the name is reachable from a script -
+	// the engine keeps that string for its own use, and the compiler said so.
+	// So nothing here reads a command line.
+	//
+	// Instead the port is whatever the launcher wrote into midi_config.txt
+	// before this run started, and by default the first port in the list above
+	// - which is what the plugin's own `match` logic would pick anyway when the
+	// file says nothing about a port it can see.
+	//
+	// The file is read here, not written here: on Windows the launcher is a
+	// Python process and this script cannot see its temporary file, so the
+	// launcher owns the file and this script only reports what it contains.
 	string in_name = "";
-	if (application.argc > 1) in_name = application.argv[1];
-	string out_name = in_name;
-	if (application.argc > 2) out_name = application.argv[2];
-	if (in_name == "" && ins > 0) {
+	if (ins > 0) {
 		string s0 = "";
 		for (int i = 0; i < midi_input_port_name_byte_count(0); i++) s0 += char_of(midi_input_port_name_byte(0, i));
 		in_name = s0;
+	}
+	string out_name = in_name;
+	if (outs > 0) {
+		string s0 = "";
+		for (int i = 0; i < midi_output_port_name_byte_count(0); i++) s0 += char_of(midi_output_port_name_byte(0, i));
 		out_name = s0;
 	}
 	print("HEAR_IN " + in_name);
@@ -209,13 +232,19 @@ void main() {
 	// is the feature that was asked for, and the reason the two halves cannot
 	// share one port - playing into the port being read would read the echo
 	// back as input and never stop.
-	if (heard > 0) {
+	if (heard > 0 && out_name != "" && out_name != in_name) {
 		// Phase two wants a different port for each direction - the bytes come
 		// in from the keyboard and go out to the synth - so the file is
 		// rewritten before the two objects are created. The input is reopened
 		// because of the rtmidi trap documented in scripts/e2e_midi.nvgt: a
 		// reader attaches to what exists when it is built and never rescans,
 		// and its port came from the config it was opened with.
+		//
+		// The guard above is not decoration. When the launcher has not chosen a
+		// separate output for us, in_name and out_name are the same string, and
+		// then the speaker would send into the port the reader is reading - the
+		// echo would come straight back as input and the loop would never stop.
+		// A run that cannot be told apart from its own echo is not a test.
 		write_config(in_name, true);
 		midi_config@ for_input2 = midi_config_create();
 		for_input2.load_if_present("midi_config.txt");
@@ -259,6 +288,8 @@ void main() {
 			speaker.close();
 			print("HEAR_ECHOES " + echoes);
 		}
+	} else if (heard > 0) {
+		say("Inbound measured. The echo half wants an output port that is not the input; " + in_name + " was the only one on offer, so nothing was played back.");
 	}
 	say("Test finished.");
 	// wait() lets the last lines reach the console before the process goes away.
