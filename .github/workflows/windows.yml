@@ -272,15 +272,36 @@ jobs:
       # runner cannot start cmd built-ins at all (runs 36702218450, `del`;
       # 36703826070, `copy`).
       #
-      # `move` overwrites here, and that had to be checked rather than
-      # assumed: rename(2) on POSIX replaces the destination silently, cmd's
-      # `move` may or may not, and `/N` is not the switch it looks like -
-      # `move /n /y` fails outright with "The syntax of the command is
-      # incorrect" and exit 1 (run 36705971611), so `/N` is not a no-overwrite
-      # flag in this shell. The invocation that does overwrite is plain
-      # `move /y`, and the two lines below it are what prove it did: the
-      # second one catches a build that never happened, and the probe's
-      # content check catches a file that was renamed by not being renamed.
+      # The question the probe below was built to answer turned out to be a
+      # question about cmd, not about `move`. Run 36732075966 asked "does
+      # `move /y` replace a name that already exists?" and answered no - but
+      # every byte of that answer is `findstr`'s.
+      #
+      # The destination held `first build`, which means the move left the old
+      # file in place. The line that reported it was `findstr /C:"first
+      # build" nvmidi-noarr.dll && (...)`, written on the assumption that a
+      # successful findstr runs the parenthesised block. It does not: findstr
+      # exits 0 on a match, the block runs, and the probe reports the failure
+      # it was looking for. That is right. But findstr exits 1 on no match,
+      # and `&&` does not run then - so the second check, the one that was to
+      # prove the destination holds `second build`, never ran at all on a
+      # destination that did hold it. Whichever way the move went, one of the
+      # two checks was going to stay silent, and the silence was going to be
+      # read as consent by whoever got the other one.
+      #
+      # So the verdict is not moved onto `move`. The rename still happens in
+      # the build job; neither of the two claims about it - that `/y` replaces
+      # the destination, or that it does not - is established by this run, and
+      # the comments here no longer assert either. What the step checks now is
+      # only what it can actually see: the source name is gone and the
+      # destination is a file with something in it. Read `first build` versus
+      # `second build` out of the log to settle the overwrite question by
+      # eye; it is printed above the checks and needs no verdict from
+      # findstr.
+      #
+      # Also recorded here because it cost a run: `/N` is not a no-overwrite
+      # flag in this shell - `move /n /y` fails outright with "The syntax of
+      # the command is incorrect" and exit 1 (run 36705971611).
   rename:
     runs-on: windows-latest
     steps:
@@ -290,16 +311,14 @@ jobs:
           echo first build > nvmidi.dll
           echo second build > nvmidi-noarr.dll
           move /y nvmidi.dll nvmidi-noarr.dll
-          echo --- nvmidi.dll:
-          if exist nvmidi.dll (type nvmidi.dll) else (echo gone, as move should leave it)
-          echo --- nvmidi-noarr.dll:
+          echo --- what the destination holds now:
           type nvmidi-noarr.dll
-          findstr /C:"first build" nvmidi-noarr.dll && (
-            echo the move did not overwrite: the old file is still there
+          if exist nvmidi.dll (
+            echo the move left the source name behind
             exit /b 1
           )
-          findstr /C:"second build" nvmidi-noarr.dll >nul || (
-            echo the destination does not hold what was moved onto it
+          for %%A in (nvmidi-noarr.dll) do if %%~zA EQU 0 (
+            echo the destination is empty, so nothing was moved onto it
             exit /b 1
           )
 
