@@ -47,18 +47,26 @@ struct midi_message;
 // cannot say this without including angelscript.h for asBEHAVE_*, and it
 // deliberately does not: the engine headers belong to nvmidi.cpp, which
 // includes this file from inside that world.
+bool midi_message_read_out(const midi_message& src, midi_message& out);
 void midi_message_default_construct(midi_message* self);
 void midi_message_copy_construct(midi_message* self, const midi_message& other);
 void midi_message_default_destruct(midi_message* self);
 
-// midi_input reads a message out of its queue and has to write every member of
-// it, including buffer, which is private. The alternative is an opAssign
-// behaviour, and that is the thing being avoided here rather than the thing
-// being built: `out = queue.front()` in next_message was refused by the engine
+// The copy, as a free function, and the reason it is not `out = src`.
+//
+// This reads a message out of midi_input's queue and has to write every member
+// of the destination, including buffer, which is private - and a private
+// member is what ruled out doing it from midi_input::next_message directly:
+// measured on run 36772647291, a qualified friend declaration there was
+// "invalid use of incomplete type 'class midi_input'", because midi_message
+// is defined long before midi_input is and a qualified friend needs the class
+// complete.
+//
+// A function that belongs to midi_message has no such problem, and neither
+// does it need an opAssign behaviour, which is the thing being avoided rather
+// than the thing being built: `out = queue.front()` was refused by the engine
 // on run 36769749314 - "ERROR: No appropriate opAssign method found in
-// 'midi_message' for value assignment" - and registering one would put the
-// assignment back on the hot path for the sake of a friend declaration.
-class midi_input;
+// 'midi_message' for value assignment".
 
 // A single MIDI message as received from or sent to a device.
 // status is the command byte (note on/off, control change, ...), data1 and
@@ -97,9 +105,8 @@ struct midi_message {
 	int to_string_byte_count() const;
 	int to_string_byte(unsigned int index) const;
 private:
-	// midi_input writes this one on the way out of its queue; see the note
-	// above the forward declaration of midi_input.
-	friend bool midi_input::next_message(midi_message& out);
+	// The free function above writes this one; see the note there.
+	friend bool midi_message_read_out(const midi_message& src, midi_message& out);
 	mutable std::string buffer; // holds the text the returned pointer points at
 };
 // ---------------------------------------------------------------------------
