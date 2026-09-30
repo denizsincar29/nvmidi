@@ -154,7 +154,7 @@ void main() {
 	}
 
 	while (true) {
-		midi_message@ m;
+		midi_message m;
 		while (in.next_message(m)) {
 			// m is a midi_message; bytes_of_message(m) reads like
 			// "note on, channel 1, note 60, velocity 100"

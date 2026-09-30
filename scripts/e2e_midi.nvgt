@@ -222,21 +222,21 @@ void main() {
 	bool heard = false;
 	while (ticks() < deadline && !heard) {
 		while (reader.has_message()) {
-			// A common variable, handed over by reference. `midi_message` is
-			// registered as a value type carrying asOBJ_POD, and a POD value
-			// assigned to another is what the engine compiles as a plain copy
-			// of its bytes - so a plain object asked to receive one is asked
-			// for an opAssign behaviour the moment the parameter is by value,
-			// which is what line 226 used to be: "No appropriate opAssign
-			// method found in 'midi_message' for value assignment". The same
-			// type assembled through a handle is never copied, and compiling is
-			// all this script is asked to do on this runner - the input half
-			// needs a device.
+			// A common variable, filled by reference. The engine copies the
+			// argument into it through midi_message's opAssign behaviour,
+			// which is why that behaviour is registered; without it this line
+			// is refused with "No appropriate opAssign method found in
+			// 'midi_message' for value assignment" and the script does not
+			// build at all.
 			//
-			// The reader owns the message and hands back a pointer to it that
-			// stays alive until the next message is read, which is exactly this
-			// loop's lifetime. See PROBE-FINDINGS.md at the repo root.
-			midi_message@ m = reader.next_message_handle();
+			// A handle would be the alternative and there is none to have: a
+			// handle exists only for a type carrying asOBJ_REF, asOBJ_ASHANDLE,
+			// asOBJ_FUNCDEF or asOBJ_TEMPLATE_SUBTYPE, and midi_message is a
+			// value type. Registering it as asOBJ_REF is measured worse still -
+			// "Object handle is not supported for this type" on every script
+			// in the repository, including two that never read a message.
+			midi_message m;
+			if (!reader.next_message(m)) break;
 			string text = "";
 			for (int bi = 0; bi < midi_message_name_byte_count(m); bi++) text += char_of(midi_message_name_byte(m, bi));
 			print("E2E_HEARD " + text);

@@ -668,6 +668,21 @@ unsigned int midi_input::get_pending() const {
 	return static_cast<unsigned int>(queue.size());
 }
 
+midi_message& midi_message::opAssign(const midi_message& other) {
+	// Members, not `*this = other`, and the same for buffer: the point of
+	// naming the members here is that this is the one assignment the engine
+	// will compile, and it must not itself ask for an assignment operator it
+	// is in the middle of defining.
+	if (this == &other) return *this;
+	buffer.assign(other.buffer);
+	status = other.status;
+	data1 = other.data1;
+	data2 = other.data2;
+	channel = other.channel;
+	timestamp = other.timestamp;
+	return *this;
+}
+
 bool midi_message_read_out(const midi_message& src, midi_message& out) {
 	// Members, not `out = src`.
 	//
@@ -690,12 +705,6 @@ bool midi_message_read_out(const midi_message& src, midi_message& out) {
 	out.channel = src.channel;
 	out.timestamp = src.timestamp;
 	return true;
-}
-
-midi_message* midi_input::next_message_handle() {
-	std::lock_guard<std::mutex> lock(queue_mutex);
-	if (queue.empty()) return nullptr;
-	return &queue.front();
 }
 
 bool midi_input::next_message(midi_message& out) {
@@ -2477,6 +2486,23 @@ void register_midi_message(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectBehaviour("midi_message", asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(midi_message_default_construct), asCALL_CDECL_OBJLAST), "RegisterObjectBehaviour", __LINE__);
 	reg->check( engine->RegisterObjectBehaviour("midi_message", asBEHAVE_DESTRUCT, "void f()", asFUNCTION(midi_message_default_destruct), asCALL_CDECL_OBJLAST), "RegisterObjectBehaviour", __LINE__);
 	reg->check( engine->RegisterObjectBehaviour("midi_message", asBEHAVE_CONSTRUCT, "void f(const midi_message&in other)", asFUNCTION(midi_message_copy_construct), asCALL_CDECL_OBJLAST), "RegisterObjectBehaviour", __LINE__);
+	// The assignment operator, and this one is not optional for any script that
+	// *reads* a message rather than only receiving one.
+	//
+	// Measured, on run 36772964284: a call to `next_message(midi_message&out)`
+	// compiles to a copy of the argument, and the engine routes that copy
+	// through the type's assignment operator - so the caller's own line was
+	// refused with "No appropriate opAssign method found in 'midi_message' for
+	// value assignment". The reader is the only way into the queue and every
+	// realistic script reads, so without this behaviour the plugin is unusable
+	// from its own documented interface no matter how well it registers.
+	//
+	// This is not the thing the member-wise copy in midi_message_read_out was
+	// there to avoid: that copy exists because the *plugin's own* code writes
+	// private members, and it still does. This behaviour is the engine's own
+	// copy path, and midi_duration already carries two of them for the same
+	// reason.
+	reg->check( engine->RegisterObjectMethod("midi_message", "midi_message& opAssign(const midi_message&in other)", asMETHODPR(midi_message, opAssign, (const midi_message&), midi_message&), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_message", "uint8 status", asOFFSET(midi_message, status)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_message", "uint8 data1", asOFFSET(midi_message, data1)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_message", "uint8 data2", asOFFSET(midi_message, data2)), "RegisterObjectProperty", __LINE__);
@@ -2511,11 +2537,6 @@ void register_midi_input(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool has_message() const", asMETHOD(midi_input, has_message), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "uint get_pending() const", asMETHOD(midi_input, get_pending), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool next_message(midi_message&out) const", asMETHOD(midi_input, next_message), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	// The handle form, and the one every script should read through: the engine
-	// never copies a handle, so this registers no value-assignment question for
-	// the compiler to fail on. Registered with the same return type spelled as
-	// a handle, which is the whole point.
-	reg->check( engine->RegisterObjectMethod("midi_input", "midi_message@ next_message_handle()", asMETHOD(midi_input, next_message_handle), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "void clear()", asMETHOD(midi_input, clear), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "void set_ignore_sysex(bool)", asMETHOD(midi_input, set_ignore_sysex), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool get_ignore_sysex() const", asMETHOD(midi_input, get_ignore_sysex), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);

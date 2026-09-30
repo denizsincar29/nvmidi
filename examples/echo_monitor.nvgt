@@ -130,18 +130,15 @@ void main() {
 	announce("Listening on " + bytes_of_input_port_name(keyboard));
 
 	while (!key_pressed(KEY_ESCAPE)) {
-		// A handle, not a value: the engine turns a value argument into a copy
-		// of a POD type here, and a copy is what it asks for an opAssign
-		// behaviour on - "No appropriate opAssign method found in
-		// 'midi_message' for value assignment" is the engine's own words for
-		// that. A handle is never copied. The pointer is good until the next
-		// call, which is this loop's lifetime.
-		midi_message@ m = keyboard.next_message_handle();
-		while (m !is null) {
+		// A common variable, filled by reference: the engine copies the
+		// argument into it, which is what midi_message's opAssign behaviour is
+		// registered for. A handle cannot stand in for it - this is a value
+		// type, and a handle exists only for a reference type.
+		midi_message m;
+		while (keyboard.next_message(m)) {
 			// One line per message, spoken. bytes_of_message(m) already reads
 			// like "note on, channel 1, note 60, velocity 100".
 			announce(bytes_of_message(m));
-			m = keyboard.next_message_handle();
 		}
 		wait(5);
 	}

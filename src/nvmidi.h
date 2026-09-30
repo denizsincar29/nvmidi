@@ -104,6 +104,13 @@ struct midi_message {
 	// The same text as bytes, and the form that is registered.
 	int to_string_byte_count() const;
 	int to_string_byte(unsigned int index) const;
+
+	// Assignment from another message, and the engine asks for this behaviour
+	// rather than for the copy itself: the reader takes the message by
+	// reference, and the engine copies that reference into the caller's object
+	// through the type's assignment operator. Same shape as midi_duration's,
+	// same reason.
+	midi_message& opAssign(const midi_message& other);
 private:
 	// The free function above writes this one; see the note there.
 	friend bool midi_message_read_out(const midi_message& src, midi_message& out);
@@ -315,28 +322,22 @@ public:
 	// Number of messages waiting to be read.
 	unsigned int get_pending() const;
 	// Takes the oldest message off the queue. Returns false when empty, and
-	// writes every member of out through midi_message_read_out, which is the
-	// only way that copy is expressible without an opAssign behaviour. The
-	// engine refuses this method on the caller's side - it has to copy the
-	// value argument - so a script that only reads should use the handle form
-	// below. See the note there.
+	// writes every member of out through midi_message_read_out.
+	//
+	// The engine copies the argument - it is registered by reference, and this
+	// engine still routes that copy through the type's assignment operator - so
+	// midi_message carries an opAssign behaviour (see register_midi_message).
+	// Measured without one, on run 36772964284, the caller's line was refused
+	// with "No appropriate opAssign method found in 'midi_message' for value
+	// assignment" and every script that read a message failed to build.
+	//
+	// There is no handle form to offer as an alternative: a handle can only be
+	// formed for a type carrying asOBJ_REF, asOBJ_ASHANDLE, asOBJ_FUNCDEF or
+	// asOBJ_TEMPLATE_SUBTYPE (asCDataType::MakeHandle, the SDK), and this type
+	// is asOBJ_VALUE. Registering it as asOBJ_REF was tried and is measured
+	// worse: "Object handle is not supported for this type" on every script in
+	// the repository, including two that never name the reader.
 	bool next_message(midi_message& out);
-	// The same message as next_message, as a pointer the script holds.
-	//
-	// The by-reference form is the one a script writes, and it is the one the
-	// engine refuses: on run 36772964284 the caller's line was refused with
-	// "No appropriate opAssign method found in 'midi_message' for value
-	// assignment". midi_message carries asOBJ_POD, and the engine compiles an
-	// assignment between two POD values as a byte copy - so a plain object
-	// receiving one is asked for an opAssign behaviour that does not exist and
-	// that this plugin will not register, because registering it is what
-	// reintroduced the whole class of faults the member-wise copy was there to
-	// avoid.
-	//
-	// A handle is never copied. The message stays in the queue and the pointer
-	// is good until the next call to either reader, which is the lifetime a
-	// drain loop wants anyway.
-	midi_message* next_message_handle();
 
 	// Discards every queued message.
 	void clear();
