@@ -2099,28 +2099,26 @@ void register_nvmidi(asIScriptEngine* engine) {
 
 	// The array add-on, before any type that names array<> in a signature.
 	//
-	// This is the fault the n_type probe measured and the reason it is the
-	// first line: midi_input and midi_output are the only two registered types
-	// whose methods take array<midi_note@>&in, and they were the only two the
-	// engine refused as declared types - "Expected ';'" / "Instead found '@'"
-	// at midi_input@ and midi_output@, while midi_message, midi_duration,
-	// midi_note@ and midi_config@ declared cleanly.
-	//
 	// The mechanism: RegisterObjectMethod parses the signature it is given, and
-	// a signature naming array<...> cannot be parsed unless the engine already
-	// knows that type. There is no such type until RegisterScriptArray runs,
-	// and the plugin never called it - it linked scriptarray.cpp and included
-	// the header, which is what a reader sees and stops at, but the add-on is
-	// inert without the call. So each of the five array-bearing methods below
-	// returned a negative code, and RegisterObjectType for midi_input itself
-	// returned one too, leaving the name unknown to every script that then
-	// declares it.
+	// a signature naming array<...> fails unless the engine already knows the
+	// type. Nothing registers it - this header includes scriptarray.h and the
+	// Makefile links scriptarray.cpp into the dll, but the call was never made,
+	// so the add-on sat inert. Each array-bearing registration returned a
+	// negative code and, by the rule the comment further down spells out, the
+	// RegisterObjectType that follows went down with it.
 	//
-	// The engine does not provide the add-on to plugins (nvgt_plugin.h offers
-	// no array registration among the functions it hands over), so this is the
-	// plugin's to do. false, not true: the "default array type" spelling would
-	// register array as a keyword rather than a template, and every script
+	// The engine hands plugins no array registration of its own, so this is
+	// the plugin's to do. false, not true: the "default array type" spelling
+	// registers array as a keyword rather than a template, and every script
 	// here writes array<midi_note@>.
+	//
+	// Alive but not sufficient: with this call in place, run 36673402079 still
+	// refused the probe n_noteonly.nvgt with "Identifier 'midi_note' is not a
+	// data type" - and midi_note's registration names no array at all. The
+	// remaining cause is the plugin api version mismatch the entry point
+	// reports: this header says 5, the engine it ran against says 6, and
+	// prepare_plugin returns false on that difference, so no type of this
+	// plugin reaches any script.
 	RegisterScriptArray(engine, false);
 
 	register_midi_message(engine, &reg);
