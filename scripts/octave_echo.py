@@ -528,6 +528,9 @@ def instructions():
     print("---")
     print("What to do")
     print("")
+    print("  This one runs in a terminal: type the command, press Enter,")
+    print("  and it stays open until you stop it. Nothing opens a window.")
+    print("")
     print("  Press any key on the Nord. Listen.")
     print("  The same note comes back one octave higher -")
     print("  press the C in the middle, hear the C above it.")
@@ -544,6 +547,137 @@ def instructions():
     print("  then --input N --output N to pick a different pair.")
     print("---")
     print("")
+
+
+# ---------------------------------------------------------------------------
+# the demonstration inside nvgt - the same feature, asked of the plugin
+# ---------------------------------------------------------------------------
+
+# Why this text is here and not in a .nvgt file beside the other scripts.
+#
+# The midi_in/midi_out pair the script holds are *globals* of the plugin
+# (registered as "midi_input midi_in" / "midi_output midi_out"), and their port
+# has to be chosen before any note can arrive. A .nvgt file cannot do that half:
+# it has no command line and no environment to read a port number from, and the
+# workflow would then have to bake an index into the file per run. So the file
+# is written here, at the moment of the run, with the ports that were just
+# resolved substituted in - and the script that nvgt executes is exactly the
+# script a person would have typed by hand.
+#
+# The '<' and '>' placeholders are not formatting: a literal port number goes
+# in their place, and the file that comes out has nothing left to substitute.
+NVGT_DEMO = """#pragma plugin nvmidi
+
+// press a key on the Nord: it is sent back out one octave higher.
+// This script does not read the input port. The plugin does, on its own
+// thread, and leaves each message in a queue - so the loop below only has to
+// look at it. That is the whole of the contract: has_message() says whether
+// anything is waiting, next_message(m) hands over one message and returns
+// false when there is nothing left.
+//
+// Every method on these two globals is const, and that shapes the loop: a
+// reader has no send, so a note leaves through midi_out and midi_in is only
+// ever asked whether anything arrived. The names are the plugin's own, taken
+// from the registration rather than from memory: open(uint port),
+// has_message(), next_message(midi_message&out), send(uint, uint, uint),
+// all_notes_off().
+void main() {
+	const int OCTAVE = 12;
+	const int SECONDS = <SECONDS>;
+	midi_in.open(<IN_PORT>);
+	midi_out.open(<OUT_PORT>);
+
+	print("NVMIDI_DEMO_READY input port <IN_PORT> output port <OUT_PORT>");
+	print("press a key - the same key comes back an octave higher");
+	print("a control change is passed through as it is");
+	print("Ctrl+C exits and silences the output");
+	print("");
+
+	for (int i = 0; i < SECONDS * 200; i++) {
+		while (midi_in.has_message()) {
+			midi_message m;
+			if (!midi_in.next_message(m)) break;
+			print("in  status " + m.status + " data " + m.data1 + " " + m.data2);
+
+			uint kind = m.status & 0xF0;
+			bool is_note = (kind == 0x90 && m.data2 > 0) || kind == 0x80;
+
+			if (is_note) {
+				int moved = m.data1 + OCTAVE;
+				if (moved <= 127) {
+					uint back = (kind == 0x90) ? 0x90 : 0x80;
+					midi_out.send(back, moved, m.data2);
+					print("out key " + moved + "  (+" + OCTAVE + ")");
+				}
+			} else {
+				midi_out.send(m.status, m.data1, m.data2);
+				print("out unchanged");
+			}
+		}
+		wait(5);
+	}
+
+	midi_out.all_notes_off();
+	print("NVMIDI_DEMO_END");
+}
+"""
+
+
+def write_nvgt_demo(in_port, out_port, seconds, path="nvmidi_octave_echo.nvgt"):
+    """Write the .nvgt demonstration with the ports folded in. Returns the path."""
+    text = NVGT_DEMO.replace("<IN_PORT>", str(in_port))
+    text = text.replace("<OUT_PORT>", str(out_port))
+    text = text.replace("<SECONDS>", str(seconds))
+    with open(path, "w") as fh:
+        fh.write(text)
+    return path
+
+def resolve_ports(args):
+    """(in_port, out_port, sentence) - what --nvgt folds into the script.
+
+    Why this is not run_windows(): that function exists to *demonstrate* the
+    driver, so it loads tools/winmm_loopback/nvmidi.dll into this process when
+    asked and then reads the port list it just created. Here the ports are only
+    being named, and on a machine with the Nord and the GS Wavetable Synth
+    plugged in, the loopback driver is not merely unnecessary - it is wrong.
+    What this program would be sending on is a virtual port nothing is
+    listening to, so the substitution would name ports the person cannot hear.
+
+    The driver path stays accepted, because a machine with no controller at all
+    is exactly the case the loopback was written for, and there the person has
+    no other port to name.
+    """
+    if platform.system() == "Windows":
+        winmm = WinMm()
+        if args.driver:
+            rc = winmm.load_driver(args.driver)
+            why = winmm.driver_status(args.driver) if rc == 0 else \
+                  "could not load %s" % args.driver
+            print(why)
+        ins, outs = winmm.input_count(), winmm.output_count()
+        names_in = [winmm.input_name(i) for i in range(ins)]
+        names_out = [winmm.output_name(i) for i in range(outs)]
+    else:
+        alsa = Alsa("octave-echo")
+        names_in = alsa.port_names("read")
+        names_out = alsa.port_names("write")
+
+    print("")
+    print("inputs:")
+    for i, name in enumerate(names_in):
+        print("  %d  %s" % (i, name))
+    print("outputs:")
+    for i, name in enumerate(names_out):
+        print("  %d  %s" % (i, name))
+
+    in_port = args.input if args.input is not None else 0
+    out_port = args.output if args.output is not None else 0
+    if out_port >= max(len(names_out), 1):
+        out_port = 0
+    sentence = ("using input port %d and output port %d - if that is not the "
+                "instrument, rerun with --input N --output N" % (in_port, out_port))
+    return in_port, out_port, sentence
+
 
 # ---------------------------------------------------------------------------
 # entry
@@ -567,12 +701,37 @@ def main(argv=None):
     parser.add_argument("--watch", action="store_true",
                         help="print every event as it arrives, so a port that is "
                              "open but silent can be told from one that is not")
+    parser.add_argument("--nvgt", metavar="PATH", default=None,
+                        help="write the .nvgt demonstration with the resolved "
+                             "ports folded in, then exit. This is the one that "
+                             "goes through the plugin; it needs nvgt.exe and the "
+                             "plugin dll in the same folder.")
     args = parser.parse_args(argv)
 
     print("octave echo - midi in, the same note out %d semitones up" % OCTAVE)
     print("platform    %s %s" % (platform.system(), platform.machine()))
     print("")
     instructions()
+
+    if args.nvgt:
+        in_port, out_port, why = resolve_ports(args)
+        print(why)
+        path = write_nvgt_demo(in_port, out_port,
+                               args.seconds if args.seconds > 0 else 120,
+                               args.nvgt)
+        print("")
+        print("written: %s" % path)
+        print("input port %d, output port %d" % (in_port, out_port))
+        print("")
+        print("Now, in the folder that holds nvgt.exe and nvmidi.dll:")
+        print("    nvgt.exe %s" % path)
+        print("")
+        print("It runs for %s seconds, then stops by itself. Ctrl+C in the nvgt"
+              % (args.seconds if args.seconds > 0 else 120))
+        print("window stops it sooner. The same test - press a key, hear it an")
+        print("octave up - but the note comes from the plugin this time, not")
+        print("from this program.")
+        return 0
 
     if platform.system() == "Windows":
         return run_windows(args)
