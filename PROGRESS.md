@@ -240,9 +240,12 @@ clean exit flushing. `e2e_winmm.nvgt` on the same runner dies at 1.9 seconds
 and leaves **0 bytes of stdout** beside **4783 bytes of stderr**, and stderr
 was never buffered. So the 0 byte `logs_e2e.txt` is the crash's fingerprint,
 not a defect of the harness, and no line added to that script could have been
-read back while the crash stood. `can_flush = true` at the top of `main()` is
-the attempt to change that; the compile pass will refuse the name if a script
-cannot reach it, and that refusal is itself an answer.
+read back while the crash stood. The engine's own switch for it, `can_flush`, is out of a
+script's reach: `can_flush = true;` on the first line of `main()` was refused
+with "ERROR: No matching symbol 'can_flush'", exit 65, measured on run
+36778136862 - the second repair for this to die at that wall, after `fflush()`
+on run 36710433374. The buffer cannot be turned off from a script, so the
+crash itself stays the only way in, and it stays the thing to fix.
 
 **The plugin is not what dies.** The 4783 byte stderr file from run
 36775764009 carries the whole registration trace on a real Windows runner:
