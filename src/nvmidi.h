@@ -424,6 +424,18 @@ private:
 	std::vector<midi_note> sounding;
 };
 
+// The names nvgt registers with Angelscript, so the script can reach this
+// file's own facts. They are declared here because nvmidi.cpp is one
+// translation unit and defines them far below its first use, and they are
+// deliberately NOT exported: a script reaches them through the engine, which
+// calls them in-process, and nothing outside the library has any use for a
+// mangled std::string-returning name. The byte interface below is what an
+// outside caller such as the ctypes test uses, and `midi_export_api_name_byte`
+// is how it reaches this same string without going through the engine.
+std::string midi_api_name();
+std::string midi_input_port_name(unsigned int port);
+std::string midi_output_port_name(unsigned int port);
+
 // Free functions registered with Angelscript.
 //
 // These carry NVGT_PLUGIN_EXPORT because a script is not the only caller any

@@ -47,7 +47,21 @@ echo "building the plugin: make $* -> $OUT"
 # the other platform's recipe. The environment is overridden by the branch, so
 # the Makefile keeps the last word on names it owns, and the name comes out
 # under this script's control everywhere else.
-TARGET="$OUT" make "$@" 2>&1 | tail -40
+# Not `| tail -40`, which is what this was, and that pipe hid two consecutive
+# build failures. The compile is dominated by -Wcast-function-type warnings
+# from third_party/angelscript, so the last forty lines were all warnings from
+# that one file and the plugin's own `error:` lines had already scrolled past.
+# Tail cut the evidence while sitting between the compiler and the reader, and
+# the failure reached the log with no cause in it.
+#
+# The failure mode that invites is the expensive one: a log that cannot explain
+# itself gets read as "something internal and silent", and the next move becomes
+# a hypothesis about the build system instead of about the line the compiler had
+# already printed.
+#
+# Warnings stay in the log - they are worth reading too - and nothing is dropped.
+# A step that fails shows the reason it failed.
+TARGET="$OUT" make "$@" 2>&1
 
 if [ ! -s "$OUT" ]; then
     echo "FAILED: the build wrote no $OUT"
