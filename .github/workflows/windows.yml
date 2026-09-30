@@ -921,14 +921,23 @@ jobs:
           # directory holding exactly one build, so each copy of the probe below
           # is byte-identical: `#pragma plugin nvmidi` resolves to whichever
           # library that directory contains.
+          # The two builds are indistinguishable from inside the engine: the
+          # probe's one real line asks for a library called nvmidi either way,
+          # so a copied nvmidi-noarr.dll is a file the engine never opens while
+          # the nvmidi.dll sitting next to it answers. Every "no-array-addon"
+          # reading before this one was therefore the ordinary build, run a
+          # second time under a different label - exit 70, `calling
+          # RegisterScriptArray`, the same three stderr lines as its twin, in
+          # all four locations, on run 36704808356. The measurement was two
+          # copies of the control and it read as a clean pair of results.
+          #
+          # So the second build goes in under the name the pragma resolves to
+          # and the ordinary build stays out of that directory entirely: one
+          # library per folder, no file the engine can open but shouldn't.
+          # Copy, not move - $ws has to keep both, because the install step and
+          # the rest of the job run from the ordinary build.
           $variants = @(
-            @{ name = 'with-array-addon'; dll = 'nvmidi.dll';         pragma = 'nvmidi' },
-            # The pragma stays `nvmidi` in both copies. The engine resolves that
-            # name to a *file*, so in the directory that holds only this build the
-            # name it finds is this build. Asking for `nvmidi-noarr` instead
-            # resolves to nvmidi.dll - measured, run 36703189281: all four
-            # locations exited 65 with `failed to load plugin` while the no-addon
-            # library sat unopened in the same folder.
+            @{ name = 'with-array-addon'; dll = 'nvmidi-noarr.dll';   pragma = 'nvmidi' },
             @{ name = 'no-array-addon';   dll = 'nvmidi-noarr.dll';   pragma = 'nvmidi' }
           )
           $probe = Get-Content (Join-Path $ws 'scripts\windows\loc_probe.nvgt') -Raw
@@ -944,6 +953,18 @@ jobs:
                 continue
               }
               Copy-Item $dll -Destination (Join-Path $dir $v.dll) -Force
+
+              # A directory holds one library under this name. If something
+              # else in it answers to nvmidi, the engine may open that instead
+              # and the reading below describes a file nobody chose - which is
+              # exactly what the previous table did, by leaving nvmidi.dll in
+              # place beside the copy. Fail loudly rather than measure it.
+              $strays = @(Get-ChildItem -Path $dir -Filter 'nvmidi*.dll' |
+                          Where-Object { $_.Name -ne $v.dll })
+              if ($strays.Count -gt 0) {
+                Write-Host "  >>> $($c.name) / $($v.name): $dir also holds $(($strays | ForEach-Object Name) -join ', '), so this reading would be of the wrong library"
+                continue
+              }
 
               # The probe says which plugin it wants on its one real line.
               $script = Join-Path $dir "loc_probe_$($v.name).nvgt"
