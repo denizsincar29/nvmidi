@@ -303,6 +303,33 @@ which is earlier than the `midi_output_create()` call the previous session
 had designated as the control. That is a hypothesis and is marked as one; it
 is not measured yet.
 
+**`detach_probe` is the sharpest instrument this tree has on the crash.**
+Added back to the probe loop in the cut-down list, it reports the engine's own
+exit line for a plugin the engine has *detached*:
+
+    detach_probe  exit -1073741819 (0xC0000005) after 1.2s,
+                  stdout   0 bytes, stderr 4783 bytes   (run 36780860938)
+
+Three things follow from that one line, and they are the first measurements
+the windows job has produced about the death itself:
+
+- The 4783 bytes are present on a run that dies, in a step whose library is
+  the **detached** build. The trace appears whether the process lives or
+  dies, which is the retraction above stated a third way.
+- The death is reproducible with the plugin detached, so it is not the
+  registered plugin's own code running. Whatever dies, dies at load.
+- `stdout 0` against `e2e_min`'s `stdout 16` on the same runner is the
+  measured form of "died before any print reached the file" - not a
+  fingerprint, just an ordering: the death precedes the script's first line,
+  and `e2e_min`'s sixteen bytes are the proof that the harness *can* print
+  when it gets that far.
+
+The rest of the cut-down loop behaved as the retraction describes: `e2e_min`
+exit 0 / 0.4 s / 16 / 4783, `probe_pragma_only` exit 0 / 21 / 4783,
+`n_handle2` exit 0 / 72 / 4783, and the two compiler refusals `n_noteonly`
+(254 / 0) and `n_inputonly` (440 / 0) unchanged. The trim changed the round
+trip, not the answer.
+
 **Superseded claims corrected in the tree.** Commit `6ca957c` said the
 compile pass truncated `logs_e2e.txt`; run 36776804229, on that very
 revision, still reports 0 bytes, which a pass writing elsewhere cannot
