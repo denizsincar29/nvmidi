@@ -1891,6 +1891,36 @@ struct registration {
 	// build which skips the call cannot reach this code with a wrong answer.
 	bool engine_knows_arrays() {
 #ifdef NVGT_SKIP_ARRAY_ADDON
+		// The mark this build is known by.
+		//
+		// The answer this flag exists to force is "yes", so it returns before
+		// the detection below and none of that code's lines are ever reached.
+		// The reading that identifies this build therefore has to be taken
+		// here, in the branch that is only compiled when the flag is set -
+		// and the string is a literal for its own sake, printed to nothing,
+		// so that it also lives in the artifact's bytes for a reader that
+		// has only the file and no run. Undefined behaviour from the
+		// compiler's point of view and harmless in this toolchain: the same
+		// shape an assert compiles to.
+		//
+		// What this replaced: the workflow used to look for the string
+		// "NVGT_SKIP_ARRAY_ADDON is set", from a warning this file printed
+		// when the flag was read at the call site. That warning went away
+		// when the read moved in here, and the workflow went on searching
+		// for it - so from that commit on, every probe row measured the
+		// control as carrying no marker at all, threw "carries neither
+		// marker", and the ordinary build was never run. Measured, run
+		// 36724644733: the run died at the no-array-addon row of the first
+		// location, after the with-array-addon row had passed with
+		// bisection=no.
+		//
+		// The two builds are also told apart by their own bytes without
+		// this string: only the control carries "the engine does not know
+		// array<T", and only the ordinary build carries "calling
+		// RegisterScriptArray" and "RegisterScriptArray returned". This
+		// literal is here so the two agree in name as well as in count.
+		const char* skip_mark = "nvmidi: NVGT_SKIP_ARRAY_ADDON is set, the engine is not asked\n";
+		(void)skip_mark;
 		return true;
 #endif
 		if (type_is_known("array")) {

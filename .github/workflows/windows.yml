@@ -786,6 +786,14 @@ jobs:
               # the ordinary build, 2988154 bytes, contains "calling
               # RegisterScriptArray" and not the skip message.
               #
+              # That reading held only while the flag was read at the call
+              # site. When NVGT_SKIP_ARRAY_ADDON became a return from
+              # engine_knows_arrays(), no build printed it any more and this
+              # check threw on the control every time - run 36724644733, the
+              # step's exception at the no-array-addon row of the first
+              # location. The literal is back in the file now, in the branch
+              # the flag guards, so the name and the count agree again.
+              #
               # Two: an exact whole-literal match, splitting the file on null
               # bytes first. That answers false for both artifacts - measured,
               # run 36712454884, both carrying calling=False skipmessage=False
@@ -810,14 +818,20 @@ jobs:
                                                [System.Text.Encoding]::GetEncoding(28591))
               $hasCall = $raw.Contains('calling RegisterScriptArray')
               $hasSkip = $raw.Contains('NVGT_SKIP_ARRAY_ADDON is set')
+              # Neither name found is not a mystery, it is a named state: the
+              # artifact step ends with a note about what the two builds are
+              # called when nothing asks, and this step ends by quoting the
+              # two literals it searched for, so the next reading starts from
+              # the strings rather than from the word "neither".
+              $hasSkipReason = -not ($raw.Contains('the engine does not know array<T'))
               $wantCall = ($v.name -eq 'with-array-addon')
-              Write-Host "  $($v.name) carries calling=$hasCall skipmessage=$hasSkip (this row wants calling=$wantCall)"
+              Write-Host "  $($v.name) carries calling=$hasCall skipmessage=$hasSkip no-detection-branch=$hasSkipReason (this row wants calling=$wantCall)"
               #
               # A row that is skipped says so in its own line, and a build
               # that carries no marker either way is a build this step cannot
               # identify - not a build to run anyway.
               if (-not $hasCall -and -not $hasSkip) {
-                throw "$($c.name) / $($v.name): the library at $dir carries neither marker, so it is not either of the two builds this step knows how to read"
+                throw "$($c.name) / $($v.name): the library at $dir carries neither marker, so it is not either of the two builds this step knows how to read. The two literals this step searched for were 'calling RegisterScriptArray' and 'NVGT_SKIP_ARRAY_ADDON is set'; the ordinary build is the one whose stderr says 'the engine already has array<T', and the build with the call removed is the one that says neither that nor 'calling'."
               }
               if ($hasCall -ne $wantCall) {
                 Write-Host "  >>> $($c.name) / $($v.name): skipped - the library is the other build, so this row would answer for the wrong library"
