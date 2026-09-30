@@ -721,7 +721,18 @@ jobs:
         # Windows.h on a case-insensitive filesystem. The recipe in the Makefile
         # appends the one flag to the local CXXFLAGS instead, so the windows
         # defines survive.
-        run: mingw32-make nvmidi-noarr.dll
+        #
+        # The target builds nvmidi.dll and stops there. Renaming it is done
+        # here, in cmd, because make on this runner cannot start cmd's built-ins
+        # at all - `copy` is not a program, so make's CreateProcess fails and
+        # the whole target dies with `Error 2` (measured, run 36703826070).
+        # Note that the first command is a real rename and not a copy: a step
+        # that leaves both files behind would let a later `nvmidi.dll` be the
+        # no-addon build, and every measurement after that would be of the
+        # wrong library while looking perfectly healthy.
+        run: |
+          mingw32-make nvmidi-noarr.dll
+          move /Y nvmidi.dll nvmidi-noarr.dll
 
       # Where did we put it. nvgt searches lib/ next to itself for a plugin
       # named by #pragma plugin, so nvmidi.dll has to be there and not in the
@@ -851,12 +862,19 @@ jobs:
           #
           # nvmidi-noarr.dll is not named "nvmidi.dll" because a directory holds
           # a single file of a given name, and both readings have to run against
-          # the same folder and the same script. The pragma names the file, so
-          # the second build is asked for by its own name through a second copy
-          # of the probe - identical except for the line below.
+          # the same folder and the same script. Each location gets a fresh
+          # directory holding exactly one build, so each copy of the probe below
+          # is byte-identical: `#pragma plugin nvmidi` resolves to whichever
+          # library that directory contains.
           $variants = @(
             @{ name = 'with-array-addon'; dll = 'nvmidi.dll';         pragma = 'nvmidi' },
-            @{ name = 'no-array-addon';   dll = 'nvmidi-noarr.dll';   pragma = 'nvmidi-noarr' }
+            # The pragma stays `nvmidi` in both copies. The engine resolves that
+            # name to a *file*, so in the directory that holds only this build the
+            # name it finds is this build. Asking for `nvmidi-noarr` instead
+            # resolves to nvmidi.dll - measured, run 36703189281: all four
+            # locations exited 65 with `failed to load plugin` while the no-addon
+            # library sat unopened in the same folder.
+            @{ name = 'no-array-addon';   dll = 'nvmidi-noarr.dll';   pragma = 'nvmidi' }
           )
           $probe = Get-Content (Join-Path $ws 'scripts\windows\loc_probe.nvgt') -Raw
 

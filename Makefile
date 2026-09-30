@@ -133,14 +133,17 @@ clean:
 # resolves to `nvmidi.dll` - so the target was its own prerequisite and make
 # refused it ("Circular dependency dropped"), which it does without failing, so
 # the step went green having built nothing.
-# SECOND NAME. The pragma does not name a file: the engine asks the operating
-# system for a library whose name is what follows `plugin` - `nvmidi`. This
-# target therefore also builds that same library under the name `nvmidi-noarr`,
-# and the workflow writes a second probe carrying `#pragma plugin nvmidi-noarr`
-# so the engine asks for a different bare name. Without it the copy is inert:
-# nvgt resolves the pragma name, finds `nvmidi.dll` first, and the second file
-# is never opened (measured, run 36703189281 - all four locations exited 65 with
-# `failed to load plugin` while the no-addon library sat in the same folder).
+# SECOND NAME. The engine resolves a plugin name to a *file*: it asks the
+# operating system for the library with that name, so a build of this module
+# has to exist both as `nvmidi.dll` (what a user's `#pragma plugin nvmidi`
+# asks for) and under a different name (what the workflow's second probe asks
+# for, so that the two builds can be tested side by side in one directory).
+#
+# None of this is done in make. On Windows the make on the runner cannot start
+# cmd's built-ins at all: `del` and `copy` are not programs, so make's
+# CreateProcess fails and the target dies - measured twice, runs 36702218450
+# (`make clean`, CreateProcess(NULL, del /Q nvmidi.dll)) and 36703826070
+# (CreateProcess(NULL, copy /Y nvmidi.dll nvmidi-noarr.dll), Makefile:146).
+# The copying is in the workflow, in the shell that owns it.
 nvmidi-noarr.dll: $(SOURCES) src/nvmidi.h
-	$(CXX) $(CXXFLAGS) -DNVGT_SKIP_ARRAY_ADDON $(INCLUDES) $(SOURCES) -o nvmidi.dll $(LDFLAGS) $(LIBS)
-	copy /Y nvmidi.dll $@
+	$(CXX) $(CXXFLAGS) -DNVGT_SKIP_ARRAY_ADDON $(INCLUDES) $(SOURCES) -o $(TARGET) $(LDFLAGS) $(LIBS)
