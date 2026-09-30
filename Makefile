@@ -144,6 +144,13 @@ clean:
 # CreateProcess fails and the target dies - measured twice, runs 36702218450
 # (`make clean`, CreateProcess(NULL, del /Q nvmidi.dll)) and 36703826070
 # (CreateProcess(NULL, copy /Y nvmidi.dll nvmidi-noarr.dll), Makefile:146).
-# The copying is in the workflow, in the shell that owns it.
+#
+# So this is not a target the workflow builds by name. It is the same command
+# the ordinary target runs, with the flag, and by the time the workflow invokes
+# it the ordinary build has already been renamed out of its way: the second
+# make finds no nvmidi.dll and writes this one. That is why the recipe writes
+# $(TARGET) and not a hardcoded second name - make is not being asked for a
+# file called nvmidi-noarr.dll, it is being asked for nvmidi.dll a second time
+# under different -D flags. The name the e2e sees is the workflow's doing.
 nvmidi-noarr.dll: $(SOURCES) src/nvmidi.h
 	$(CXX) $(CXXFLAGS) -DNVGT_SKIP_ARRAY_ADDON $(INCLUDES) $(SOURCES) -o $(TARGET) $(LDFLAGS) $(LIBS)

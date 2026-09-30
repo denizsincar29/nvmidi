@@ -477,6 +477,35 @@ jobs:
       # the file this step built rather than a copy that has to be kept in step
       # by hand.
       #
+      # The second build, and it has to happen here rather than in the e2e.
+      #
+      # An artifact is a byte stream with a destination name, not a tree: the
+      # e2e cannot ask for the same artifact twice under two names, and it
+      # cannot rename what it downloads, because the name it writes is the name
+      # the file had on the uploading side. So the distinction between the two
+      # builds has to exist before the upload - and a filesystem will not hold
+      # two files called nvmidi.dll, which is why this is a rename in the middle
+      # of the job and not a second artifact.
+      #
+      # `move`, not `copy`: with both files present the second make would find
+      # nvmidi.dll up to date, decide there is nothing to do, and the ordinary
+      # build would silently become a second copy of the no-addon one. Every
+      # number after that would be the wrong library's, reported as healthy.
+      #
+      # The rename is spelled out on a line of a `shell: cmd` step because that
+      # is the only place it can run: `move` is a cmd built-in, and make on this
+      # runner cannot start cmd built-ins at all (runs 36702218450, `del`;
+      # 36703826070, `copy`).
+      - name: build the library without the array add-on
+        shell: cmd
+        run: |
+          if not exist nvmidi.dll exit /b 1
+          move /Y nvmidi.dll nvmidi-noarr.dll
+          if not exist nvmidi-noarr.dll exit /b 1
+          mingw32-make nvmidi.dll
+          if not exist nvmidi.dll exit /b 1
+          dir /B nvmidi.dll nvmidi-noarr.dll
+
       # Both builds go in, under distinct names. Two files cannot share
       # nvmidi.dll on one filesystem, and the e2e downloads these without
       # knowing they came off a case-insensitive volume, so the distinction has
