@@ -487,3 +487,4 @@ void midi_input_callback(double delta, std::vector<unsigned char>* message, void
 void register_nvmidi(asIScriptEngine* engine);
 
 
+

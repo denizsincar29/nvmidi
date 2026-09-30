@@ -196,4 +196,5 @@ link: obj
 # exited 0, and wrote no dll. Naming the file as a prerequisite or forcing the
 # recipe with -B is what makes the second build happen.
 nvmidi-noarr.dll: $(SOURCES) src/nvmidi.h $(TARGET)
-	$(CXX) $(CXXFLAGS) -DNVGT_SKIP_ARRAY_ADDON $(INCLUDES) $(SOURCES) -o $(TARGET) $(LDFLAGS) $(LIBS)
+	$(CXX) $(CXXFLAGS) -DNVGT_SKIP_ARRAY_ADDON $(INCLUDES) $(SOURCES) -o nvmidi-noarr.dll $(LDFLAGS) $(LIBS)
+	@echo "nvmidi: control build written to nvmidi-noarr.dll, the ordinary nvmidi.dll is untouched"
