@@ -1533,6 +1533,18 @@ jobs:
               # got to and that is exactly the position worth seeing.
               Write-Host "logs_e2e.txt ends with:"
               Write-Host (($t -split "`n" | Select-Object -Last 3) -join "`n")
+              # And the whole file, because the last three lines are not enough
+              # to answer the question the next step asks. Measured on run
+              # 36775536313: "did the plugin load" reported "the script never
+              # started: nvgt did not run it at all" while this step had a log
+              # to read and printed only its tail, so the transcript that would
+              # have said whether E2E_BEGIN was there - and whether the plugin
+              # loaded before it - was written to the file and never to the job
+              # log. Every script here prints a line per act it completes; the
+              # transcript is the measurement, so it goes into the log whole.
+              Write-Host "logs_e2e.txt, verbatim:"
+              Write-Host $t
+              Write-Host "--- end of logs_e2e.txt ---"
             }
           }
 
