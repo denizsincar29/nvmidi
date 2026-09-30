@@ -410,11 +410,51 @@ private:
 };
 
 // Free functions registered with Angelscript.
-unsigned int midi_input_port_count();
-unsigned int midi_output_port_count();
-std::string midi_input_port_name(unsigned int port);
-std::string midi_output_port_name(unsigned int port);
-std::string midi_api_name();
+//
+// These carry NVGT_PLUGIN_EXPORT because a script is not the only caller any
+// more. nvgt is one host of this file and Python is another: scripts/test.py
+// loads the library with ctypes and drives the same layer nvgt drives, so it
+// can be told "press a key now" and report what arrived, on a machine where
+// nvgt itself is not installed. That halves what has to be true before a
+// listening test means anything.
+//
+// Export is not an earlier idea rejected: on ELF the free functions were
+// already reachable, because only extern "C" declarations give visibility
+// ("default") to a symbol - these are C++ mangled and stayed in .dynsym. The
+// macro is what makes the same call work on Windows, where nothing is exported
+// unless it is named. Without it the compiled .dll exports nvgt_plugin and
+// nvgt_plugin_version and nothing else, and a ctypes test against a real
+// Windows build fails on a missing attribute with every other check passing.
+//
+// The names below are also given a C entry point rather than only a mangled
+// one, so a loader does not have to reproduce the C++ types to name them.
+#define NVGT_PLUGIN_EXPORT extern "C" NVGT_PLUGIN_EXPORT_MACRO
+
+NVGT_PLUGIN_EXPORT unsigned int midi_input_port_count();
+NVGT_PLUGIN_EXPORT unsigned int midi_output_port_count();
+NVGT_PLUGIN_EXPORT bool midi_supports_virtual_ports();
+
+// The same three facts, as bytes, for a caller that cannot receive a
+// std::string across the ABI - a ctypes test, or any other host that was not
+// compiled with the same standard library. The pattern is the one this plugin
+// already uses for script arrays: byte_count() asks the length, byte(i) asks
+// for one character, and a name that does not exist answers count 0 rather
+// than a negative, so a caller never has to distinguish "no such port" from a
+// failure. Both are NUL safe: the count is the real length, so an embedded NUL
+// does not silently truncate what the caller reads.
+NVGT_PLUGIN_EXPORT unsigned int midi_export_output_port_name_byte_count(unsigned int port);
+NVGT_PLUGIN_EXPORT int midi_export_output_port_name_byte(unsigned int port, unsigned int index);
+NVGT_PLUGIN_EXPORT unsigned int midi_export_input_port_name_byte_count(unsigned int port);
+NVGT_PLUGIN_EXPORT int midi_export_input_port_name_byte(unsigned int port, unsigned int index);
+NVGT_PLUGIN_EXPORT unsigned int midi_export_api_name_byte_count();
+NVGT_PLUGIN_EXPORT int midi_export_api_name_byte(unsigned int index);
+
+// This file's own name for its midi backend, "alsa", "winmm" or "dummy".
+// The script sees it through midi_api_name(); this is the same string without
+// going through the engine, so a test can refuse a build that cannot play a
+// note before it opens anything.
+NVGT_PLUGIN_EXPORT unsigned int midi_export_backend_byte_count();
+NVGT_PLUGIN_EXPORT int midi_export_backend_byte(unsigned int index);
 
 // Whether that backend can create a virtual port at all. False on Windows and
 // on the dummy build, where RtMidi's openVirtualPort does nothing at all.

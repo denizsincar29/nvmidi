@@ -152,6 +152,21 @@ typedef int nvgt_plugin_version_func();
 		plugin_version() { return NVGT_PLUGIN_API_VERSION; }
 	#endif
 #endif
+// The same export decision as plugin_export above, under a name that can be
+// used for any symbol - not only the two entry points. A plugin that wants a
+// non-Angelscript caller (a ctypes test, a host that is not nvgt) marks its
+// exported functions with this and gets dllexport on Windows, where nothing is
+// exported unless it is named, and default visibility on ELF.
+#ifdef NVGT_PLUGIN_STATIC
+	#define NVGT_PLUGIN_EXPORT_MACRO
+#elif defined(_WIN32)
+	#define NVGT_PLUGIN_EXPORT_MACRO __declspec(dllexport)
+#elif defined(__GNUC__)
+	#define NVGT_PLUGIN_EXPORT_MACRO __attribute__((visibility ("default")))
+#else
+	#define NVGT_PLUGIN_EXPORT_MACRO
+#endif
+
 // Pass a pointer to an nvgt_plugin_shared structure to this function, making Angelscript available for use in any file that includes nvgt_plugin.h after calling this function.
 inline bool prepare_plugin(nvgt_plugin_shared* shared) {
 	if (shared->version != NVGT_PLUGIN_API_VERSION) return false;

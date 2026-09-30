@@ -1425,7 +1425,7 @@ std::string midi_config::describe() const {
 // Port enumeration
 // ---------------------------------------------------------------------------
 
-unsigned int midi_input_port_count() {
+NVGT_PLUGIN_EXPORT unsigned int midi_input_port_count() {
 	try {
 		return with_port<RtMidiIn>([](RtMidiIn& in) {
 			return in.getPortCount();
@@ -1436,7 +1436,7 @@ unsigned int midi_input_port_count() {
 	}
 }
 
-unsigned int midi_output_port_count() {
+NVGT_PLUGIN_EXPORT unsigned int midi_output_port_count() {
 	try {
 		return with_port<RtMidiOut>([](RtMidiOut& out) {
 			return out.getPortCount();
@@ -1584,12 +1584,7 @@ int midi_note::to_string_byte(unsigned int index) const {
 	return (int)(unsigned char)s[index];
 }
 
-int midi_input_port_name_byte_count(unsigned int port) { return (int)midi_input_port_name(port).size(); }
-int midi_input_port_name_byte(unsigned int port, unsigned int index) {
-	const std::string name = midi_input_port_name(port);
-	if (index >= name.size()) return -1;
-	return (int)(unsigned char)name[index];
-}
+
 
 int midi_api_name_byte_count() { return (int)midi_api_name().size(); }
 int midi_api_name_byte(unsigned int index) {
@@ -1750,6 +1745,85 @@ std::string midi_api_name() {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// The byte-wise export surface
+// ---------------------------------------------------------------------------
+//
+// Three facts, as bytes: the input port list, the output port list, and the
+// backend's name. Same shape as the *[_byte_count] / *[_byte] pair this file
+// already registers for scripts, and for the same reason: a std::string cannot
+// cross a boundary between two runtimes that were not built together.
+//
+// Who is on the other side: scripts/test.py drives this library with ctypes,
+// so the nvgt engine is not needed to test the half a person can hear. A
+// ctypes caller builds no C++ exception tables and no small string buffer, so
+// a std::string returned into it is a struct whose layout the caller guessed,
+// and the classic symptom of a wrong guess is a crash inside free() that
+// points at the test rather than at the boundary. Bytes have no such property.
+//
+// midi_api_name() returns "nvmidi/Windows MultiMedia"; what crosses here is
+// the part that names the backend, without the prefix. A test is looking for
+// "Dummy" - it wants to refuse a build that cannot play a note before it opens
+// a port - and the prefix is noise for that question. The display name rather
+// than the short one, because the short one for winmm reads "winmm", which
+// contains "windows", and a test searching for the Windows backend would match
+// the wrong column. That trap is written down under midi_api_name() already.
+//
+// A port that does not exist answers byte_count 0, not a negative number, and
+// byte() answers -1 rather than reading past the end. A caller then never has
+// to tell "no such port" from "the call failed": there is one way for a port
+// to have no name, and it is the same empty answer either way.
+static unsigned int bytes_of(const std::string& text) { return (unsigned int)text.size(); }
+static int byte_of(const std::string& text, unsigned int index) {
+	if (index >= text.size()) return -1;
+	return (int)(unsigned char)text[index];
+}
+
+NVGT_PLUGIN_EXPORT unsigned int midi_export_output_port_name_byte_count(unsigned int port) {
+	try {
+		return bytes_of(midi_output_port_name(port));
+	} catch (...) {
+		// No output device on this machine, or the backend refused to open.
+		// Either way the port has no name, and "0 bytes" is how that is said.
+		return 0;
+	}
+}
+NVGT_PLUGIN_EXPORT int midi_export_output_port_name_byte(unsigned int port, unsigned int index) {
+	try {
+		return byte_of(midi_output_port_name(port), index);
+	} catch (...) {
+		return -1;
+	}
+}
+NVGT_PLUGIN_EXPORT unsigned int midi_export_input_port_name_byte_count(unsigned int port) {
+	try {
+		return bytes_of(midi_input_port_name(port));
+	} catch (...) {
+		return 0;
+	}
+}
+NVGT_PLUGIN_EXPORT int midi_export_input_port_name_byte(unsigned int port, unsigned int index) {
+	try {
+		return byte_of(midi_input_port_name(port), index);
+	} catch (...) {
+		return -1;
+	}
+}
+
+// The backend's own name, with the "nvmidi/" prefix taken back off.
+static std::string midi_backend_name() {
+	const std::string full = midi_api_name();
+	const std::string prefix = "nvmidi/";
+	if (full.compare(0, prefix.size(), prefix) == 0) return full.substr(prefix.size());
+	return full;
+}
+NVGT_PLUGIN_EXPORT unsigned int midi_export_backend_byte_count() { return bytes_of(midi_backend_name()); }
+NVGT_PLUGIN_EXPORT int midi_export_backend_byte(unsigned int index) { return byte_of(midi_backend_name(), index); }
+
+// The same name in the form a script sees.
+NVGT_PLUGIN_EXPORT unsigned int midi_export_api_name_byte_count() { return bytes_of(midi_api_name()); }
+NVGT_PLUGIN_EXPORT int midi_export_api_name_byte(unsigned int index) { return byte_of(midi_api_name(), index); }
+
 // The backend a default-constructed RtMidi port would use, or UNSPECIFIED if
 // RtMidi was built with no backend at all.
 static RtMidi::Api midi_default_api() {
@@ -1776,7 +1850,7 @@ static RtMidi::Api midi_default_api() {
 // source of the WinMM backend, and open() of a virtual port on Windows
 // returning true while midiOutGetNumDevs() still counted only the devices the
 // machine already had.
-bool midi_supports_virtual_ports() {
+NVGT_PLUGIN_EXPORT bool midi_supports_virtual_ports() {
 	switch (midi_default_api()) {
 		case RtMidi::MACOSX_CORE:
 		case RtMidi::LINUX_ALSA:
