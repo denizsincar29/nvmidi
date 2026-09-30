@@ -12,7 +12,7 @@ void main() {
 	print("MIN_PORT_COUNT_DONE " + outs);
 	print("MIN_PORT_CREATE");
 	print("MIN_DECL_OUT");
-	midi_output out = midi_output();
+	midi_output o = midi_output();
 	print("MIN_PORT_CREATE_DONE");
 	print("MIN_DURATION");
 	print("MIN_DECL_D");

@@ -1198,8 +1198,14 @@ jobs:
         continue-on-error: true
         run: |
           $ports = python scripts\windows\winmm_ports.py
+          Write-Host "exit $LASTEXITCODE ($(if ($ports) { $ports.Count } else { 0 }) line(s) on stdout)"
           $ports | Write-Host
           $json = python scripts\windows\winmm_ports.py --json
+          Write-Host "exit $LASTEXITCODE for the json call; its stdout follows"
+          Write-Host "$json"
+          if (-not $json) {
+            Write-Host "::warning::this process could not be asked how many midi outputs it has, so NVGT_PORTS is empty and the listener has no index to fall back on"
+          }
           "NVGT_PORTS=$json" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: play the melody (script)

@@ -1,20 +1,31 @@
-// probe: a_bare - is the bare name alone a declaration the engine takes.
+// probe: a_bare - can this plugin's own type be declared at all, and is a
+// plain name for the variable the thing that was missing.
 //
-// The `@` is gone from line 5. What run 36726960949 measured is that a `@`
-// after a plugin type is a parse error with the column sitting on the `@`
-// (c_handle.nvgt:5 (13), e2e_types.nvgt:14 (13)), and this file is that same
-// line with the character removed - so its answer is the other half: whether
-// a bare name declares at all, and whether the simple type next to it in
-// b_decl behaves the same way.
+// Measured, from the captured output of run 36730904549 (artifact
+// windows-e2e-logs, a_bare.log):
+//   line: 16 (14) ERROR: Expected ';'
+//   line: 16 (14) ERROR: Instead found reserved keyword 'out'
+// Column 14 is the `out` itself. The line is `midi_output out;` and the
+// engine read `midi_output` as the variable and `out` as whatever came next.
+// So the type name resolved - the failure is the variable's name, not the
+// type: `out` is reserved in this engine. That is what the line was doing
+// here, and it is the reason this probe never answered its own question.
 //
-// Nothing is called. The question is about the declaration and only that, so
-// a failure here is the declaration and never a call going wrong.
+// The earlier reading of this file, still on record above in conversation:
+// a `@` after a plugin type is refused with the column on the `@` itself
+// (c_handle.nvgt:5 (13), e2e_types.nvgt:14 (13) - both from run
+// 36726960949), and the e2e script's own bare declaration was refused with
+// "Parameter type can't be 'midi_output', because the type cannot be
+// instantiated." (run 36730213750). Those two are about the type; this file
+// was meant to ask about the declaration and instead asked about the name.
+//
+// Nothing is called. The whole question stays the declaration.
 #pragma plugin nvmidi
 
 void main() {
 	print("A1");
-	midi_output out;
-	print("A2");
 	midi_output d;
+	print("A2");
+	midi_output e;
 	print("A3");
 }
