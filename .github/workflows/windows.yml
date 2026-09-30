@@ -254,17 +254,31 @@ jobs:
           # the two artifacts were, and the mislabelling it was meant to catch
           # was never what it measured.
           #
-          # What is true by construction is the other line. 'the engine already
-          # has array<T> that resolves' sits in the THEN arm, so it is reachable
-          # only when engine_knows_arrays() answered yes by DETECTION - which
-          # the flag makes impossible, because that build returns before the
-          # detection. So it is in every ordinary build and in no control, and
-          # it is the one reading here that separates the two files.
+          # What is true by construction is narrower than it looked: the then
+          # arm's line is reachable only when the detection answered, which the
+          # flag makes impossible - but a PREFIX of that line is not, and the
+          # prefix is what was asked for first. Measured, run 36755407596:
           #
-          # A needle that is in neither file, or in both, is reported as such
-          # and fails the step: silent zeroes are how the previous version went
-          # three runs without an answer.
-          $withOnly = 'the engine already has array<T> that resolves'
+          #   WITH-ADDON-ONLY with-addon=1 no-addon=1
+          #   CONTROL-ONLY    with-addon=0 no-addon=1
+          #
+          # and the located neighbourhood says why: 'the engine already has
+          # array<T' appears in BOTH files, because array_is_usable() opens its
+          # own branches with the same words and a control reaches that method -
+          # the flag makes engine_knows_arrays() answer true, no array<int> is
+          # registered, so it prints '"array" is taken but no array<int>
+          # resolves; the add-on will be called'. A needle has to be a whole
+          # printed line, for the same reason the earlier ones failed: two
+          # builds from one source share most of their strings.
+          #
+          # The two lines that DO separate them, both whole, one per direction:
+          #   ordinary   'the engine has a working array<T>' - printed only on
+          #              the detection path, which the flag skips
+          #   control    'NVGT_SKIP_ARRAY_ADDON is set' - compiled in only when
+          #              the flag is set
+          # Each is asserted in both directions, so a file carrying neither or
+          # both is named as such instead of being counted as zero.
+          $withOnly = 'the engine has a working array<T>'
           $ctrlOnly = 'NVGT_SKIP_ARRAY_ADDON is set'
           $inWith = Count-Needle $withAddon $withOnly
           $inNo   = Count-Needle $noAddon   $withOnly
