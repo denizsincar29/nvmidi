@@ -153,6 +153,17 @@ jobs:
         # once run the cmd it was written in, and the dll it was supposed to
         # produce was never produced. `shell: pwsh` is an explicit path to
         # pwsh.exe and does not go through SHELL.
+        #
+        # The control is built into a name of its own as of commit 15c2a01, so
+        # nothing has to be moved out of the way and the two builds can sit in
+        # one directory at one time. Measured, run 36723890974, which is the run
+        # this step's shape was chosen on: with the recipe still writing
+        # $(TARGET), the control build wrote the *ordinary* binary - 2988213
+        # bytes, byte for byte what was moved into withaddon/ - and both
+        # artifacts of that run carried that same library. Both were labelled
+        # no-addon and neither was one. The artifact README's size claim was
+        # the only thing that could have caught it, and a size claim is not a
+        # measurement.
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force withaddon, noaddon | Out-Null
@@ -161,16 +172,46 @@ jobs:
           if (Test-Path nvmidi.dll) { throw 'the ordinary dll is still in the root' }
           Write-Host "WITH-ADDON-BYTES $((Get-Item withaddon/nvmidi.dll).Length)"
 
-          # The second build. -B because the target's prerequisite is the dll
-          # that was just moved away, and no -o: whatever of the two the recipe
-          # writes is the one the no-addon artifact should carry, and a relative
-          # -o is resolved by build.sh against the caller's directory.
+          # The second build, in one step with no `-o` and no move after it:
+          # the recipe names its own output now, so the file has to exist where
+          # the recipe said it would and the ordinary dll has to be untouched.
+          # Both are checked rather than assumed, because both were wrong in
+          # run 36723890974 and the step went green anyway.
           mingw32-make --print-directory -f Makefile -B nvmidi-noarr.dll
           Write-Host "MAKE-EXIT $LASTEXITCODE"
           if ($LASTEXITCODE -ne 0) { throw 'the make for the no-addon build failed' }
-          if (-not (Test-Path nvmidi.dll)) { throw 'the no-addon build wrote no dll in the root' }
-          Move-Item -Force nvmidi.dll noaddon/nvmidi.dll
+          if (-not (Test-Path nvmidi-noarr.dll)) { throw 'the no-addon build wrote no nvmidi-noarr.dll' }
+          if (-not (Test-Path withaddon/nvmidi.dll)) { throw 'the no-addon build disturbed the ordinary dll' }
+
+          Move-Item -Force nvmidi-noarr.dll noaddon/nvmidi.dll
           Write-Host "NO-ADDON-BYTES $((Get-Item noaddon/nvmidi.dll).Length)"
+
+          # The control is the control only if the add-on's call is not in it.
+          # The strings are literals in the binary, so this is a property of the
+          # file the engine will load rather than of the label on the folder.
+          # The check the e2e probe later makes reads `calling=` the same way;
+          # doing it here means a build that wrote the wrong file fails at the
+          # build instead of being discovered in the probe step that consumes
+          # it, where the two builds have already been copied around each other.
+          $withAddon = [System.IO.File]::ReadAllBytes((Resolve-Path 'withaddon/nvmidi.dll'))
+          $noAddon   = [System.IO.File]::ReadAllBytes((Resolve-Path 'noaddon/nvmidi.dll'))
+          function Count-Needle([byte[]]$haystack, [string]$needle) {
+            $n = [System.Text.Encoding]::ASCII.GetBytes($needle)
+            $hits = 0
+            for ($i = 0; $i -le $haystack.Length - $n.Length; $i++) {
+              $ok = $true
+              for ($j = 0; $j -lt $n.Length; $j++) { if ($haystack[$i + $j] -ne $n[$j]) { $ok = $false; break } }
+              if ($ok) { $hits++ }
+            }
+            return $hits
+          }
+          $marker = 'calling RegisterScriptArray'
+          $inWith = Count-Needle $withAddon $marker
+          $inNo   = Count-Needle $noAddon   $marker
+          Write-Host "CALLING-MARKER with-addon=$inWith no-addon=$inNo"
+          if ($inWith -lt 1) { throw 'the with-addon build does not carry the add-on call' }
+          if ($inNo   -ne 0) { throw 'the no-addon build carries the add-on call, so it is not the control' }
+
           Get-ChildItem withaddon/nvmidi.dll, noaddon/nvmidi.dll | ForEach-Object { Write-Host ("{0} {1}" -f $_.Length, $_.FullName) }
 
       - name: keep the dll with the array add-on
