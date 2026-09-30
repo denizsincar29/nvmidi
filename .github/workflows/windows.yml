@@ -367,7 +367,11 @@ jobs:
                 n = k.GetModuleFileNameW(h, buf, 700)
                 print('    GetModuleFileNameW n=%d -> %s' % (n, buf.value))
                 for name in (b'ModMessage', b'DllMain', b'DriverProc'):
-                    print('    GetProcAddress(%s) -> %s' % (name.decode(), hex(k.GetProcAddress(h, name) or 0)))
+                    try:
+                        a = k.GetProcAddress(h, name)
+                    except OSError as e:
+                        a = 'unavailable: %s' % e
+                    print('    GetProcAddress(%s) -> %s' % (name.decode(), hex(a) if isinstance(a, int) else a))
             # The registry points the Drivers32 slot at a path; does the loader
             # resolve plain "nvmidi.dll" to the same file as that path?
             h = k.GetModuleHandleA(b'nvmidi.dll')
@@ -377,8 +381,8 @@ jobs:
             if h2:
                 buf = ctypes.create_unicode_buffer(700); k.GetModuleFileNameW(h2, buf, 700)
                 print('    resolves to -> %s' % buf.value)
-            '@
-            $py2 | Set-Content -Encoding utf8 "$env:RUNNER_TEMP\case6.py"
+          '@
+
             python -c "import ast,sys; ast.parse(open(sys.argv[1],encoding='utf-8').read())" "$env:RUNNER_TEMP\case6.py"
             if ($LASTEXITCODE -ne 0) { Write-Host '  the case6 probe does not parse' }
             else {
