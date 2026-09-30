@@ -476,11 +476,21 @@ jobs:
       # it into the workspace at the same path, so the file the e2e stages is
       # the file this step built rather than a copy that has to be kept in step
       # by hand.
-      - name: keep the dll
+      #
+      # Both builds go in, under distinct names. Two files cannot share
+      # nvmidi.dll on one filesystem, and the e2e downloads these without
+      # knowing they came off a case-insensitive volume, so the distinction has
+      # to be carried by something a filesystem does not get to collapse: the
+      # name of the download destination. Uploading one file and hoping the
+      # other name survives the round trip is how a measurement quietly becomes
+      # two copies of whichever library happened to be listed second.
+      - name: keep the dlls
         uses: actions/upload-artifact@v4
         with:
-          name: nvmidi-dll
-          path: nvmidi.dll
+          name: nvmidi-dlls
+          path: |
+            nvmidi.dll
+            nvmidi-noarr.dll
           if-no-files-found: error
 
   e2e:
@@ -710,29 +720,45 @@ jobs:
       # way nvgt's own loader does instead of calling into it directly. If it
       # dies in the same place, the add-on is exonerated and the fault is in
       # the engine pointer itself - a larger finding, and one worth having.
-      - name: build the plugin without the array add-on
+      #
+      # Both artifacts, not just the ordinary one. The first version of this
+      # step downloaded `nvmidi-dll` under `path: .` and got nvmidi.dll, which
+      # is correct and useless: the second build lives in the build job under
+      # its own name, and a measurement whose control is missing does not fail,
+      # it goes green having compared the library to itself (measured, run
+      # 36704138343 - the location probe found no nvmidi-noarr.dll and skipped
+      # every no-addon case without a word of complaint).
+      - name: fetch the plugin builds
+        uses: actions/download-artifact@v4
+        with:
+          name: nvmidi-dlls
+          path: .
+
+      - name: check the build without the array add-on landed
         shell: cmd
-        # The build is a target now, not a second invocation with a rewritten
-        # CXXFLAGS. Measured, run 36702495507: `mingw32-make CXXFLAGS="..."` goes
-        # green in eight seconds having built nothing, because a command-line
-        # CXXFLAGS replaces the variable the windows branch uses to add
-        # -D__WINDOWS_MM__, and a MinGW build without that define takes the Linux
-        # RtMidi branch and then includes a file in the checkout root called
-        # Windows.h on a case-insensitive filesystem. The recipe in the Makefile
-        # appends the one flag to the local CXXFLAGS instead, so the windows
-        # defines survive.
+        # Both builds are built in the build job and arrive here as artifacts,
+        # because making the second one after the first cannot work on one
+        # filesystem: a directory holds a single nvmidi.dll, and naming the
+        # second build nvmidi.dll means overwriting the first. That is not a
+        # detail of this step, it is why the build moved out of it.
         #
-        # The target builds nvmidi.dll and stops there. Renaming it is done
-        # here, in cmd, because make on this runner cannot start cmd's built-ins
-        # at all - `copy` is not a program, so make's CreateProcess fails and
-        # the whole target dies with `Error 2` (measured, run 36703826070).
-        # Note that the first command is a real rename and not a copy: a step
-        # that leaves both files behind would let a later `nvmidi.dll` be the
-        # no-addon build, and every measurement after that would be of the
-        # wrong library while looking perfectly healthy.
+        # The ways this step could have gone green with the control missing are
+        # now two measurements rather than arguments. Run 36702495507: a
+        # command-line CXXFLAGS= replaces the variable the windows branch uses
+        # to add -D__WINDOWS_MM__, the build then takes the Linux RtMidi branch,
+        # includes a file in the checkout root called Windows.h on a
+        # case-insensitive filesystem, and exits 0 having produced no dll. Run
+        # 36704138343: the artifact fetch brought only nvmidi.dll across, the
+        # no-addon cases were skipped for a missing file, and the probe
+        # repeated `bisection=no` four times without a word about why.
         run: |
-          mingw32-make nvmidi-noarr.dll
-          move /Y nvmidi.dll nvmidi-noarr.dll
+          if not exist nvmidi.dll goto :missing
+          if not exist nvmidi-noarr.dll goto :missing
+          dir /B nvmidi.dll nvmidi-noarr.dll
+          goto :eof
+          :missing
+          echo one of the two plugin builds is missing, so the comparison cannot run
+          exit /b 1
 
       # Where did we put it. nvgt searches lib/ next to itself for a plugin
       # named by #pragma plugin, so nvmidi.dll has to be there and not in the
