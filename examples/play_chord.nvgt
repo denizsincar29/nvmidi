@@ -72,7 +72,14 @@ string bytes_of_last_error() {
 // The three notes of the chord this file plays, as one array. Every pattern
 // below is handed the same array, so the only thing that changes between runs
 // is the pattern itself.
-array<midi_note@>@ triad(midi_output@ out, double ms) {
+//
+// The parameter is named voice, not out: `out` is a reserved keyword in this
+// engine ("Instead found reserved keyword 'out'", measured 1 October), so a
+// parameter carrying that name will not compile. It is unused here anyway -
+// the notes are made at the default tempo and only the length is set - but it
+// is kept so the signature says what the array is for, and named so a caller
+// can read it without tripping over the engine's own vocabulary.
+array<midi_note@>@ triad(midi_output@ voice, double ms) {
 	array<midi_note@>@ notes = array<midi_note@>();
 	notes.insert_last(nvmidi_note_create(60, 100)); // middle C
 	notes.insert_last(nvmidi_note_create(64, 100));
