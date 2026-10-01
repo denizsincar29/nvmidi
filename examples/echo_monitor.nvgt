@@ -43,6 +43,11 @@ string char_of(uint b) {
 // The quickest way to confirm input works end to end. Play a few notes, turn
 // a knob, move the pitch wheel, and listen to what arrives.
 //
+// This one only listens: it opens an input port and speaks what arrives. It
+// does not send anything back, so a message you play does not come out twice.
+// octave-doubler.nvgt is the example that sends - run this one beside it if
+// you want to hear the same note arriving and leaving.
+//
 // The port comes from midi_config.txt next to this script, so pointing it at
 // another keyboard is a matter of editing that file.
 //

@@ -41,65 +41,15 @@ string char_of(uint b) {
 // play_chord.nvgt - play chords and patterns on the keyboard's own sound.
 //
 // This is the high level layer on its own: no synthesis, no second device.
-// The notes are sent back out of the same keyboard, so its built in engine
-// makes them heard. The port comes from midi_config.txt next to this script.
-
-// Builds an array of notes out of a comma separated list, so a test can be
-// written as "60,64,67" instead of four lines of object juggling.
-array<midi_note@>@ chord(const string&in pitches, double length_ms) {
-	array<midi_note@>@ notes = array<midi_note@>();
-	string[]@ parts = pitches.split(",");
-	for (uint i = 0; i < parts.length(); i++) {
-		// Not a ternary: Angelscript cannot choose between two object handles
-		// in ?:.
-		midi_note@ note;
-		int number = midi_note_number(parts[i].trim_whitespace());
-		if (number >= 0)
-			@note = nvmidi_note_create(number);
-		else
-			@note = nvmidi_note_create(parse_int(parts[i].trim_whitespace()));
-		note.velocity = 100;
-		note.length = midi_duration_create(length_ms, MIDI_MS);
-		notes.insert_last(@note);
-	}
-	return notes;
-}
-
-// The plugin hands its strings over as a count plus an indexed byte - see the
-// readme. These put them back together here, where the engine's own strings
-// were measured alive.
-string bytes_of_config(midi_config@ c) {
-	string s = "";
-	for (int i = 0; i < c.describe_byte_count(); i++) {
-		int b = c.describe_byte(i);
-		s += char_of(b);
-	}
-	return s;
-}
-string bytes_of_last_error() {
-	string s = "";
-	for (int i = 0; i < midi_last_error_byte_count(); i++) {
-		int b = midi_last_error_byte(i);
-		s += char_of(b);
-	}
-	return s;
-}
-string bytes_of_port_name(midi_output@ o) {
-	string s = "";
-	for (int i = 0; i < o.get_port_name_byte_count(); i++) {
-		int b = o.get_port_name_byte(i);
-		s += char_of(b);
-	}
-	return s;
-}
-string bytes_of_input_port_name(midi_input@ o) {
-	string s = "";
-	for (int i = 0; i < o.get_port_name_byte_count(); i++) {
-		int b = o.get_port_name_byte(i);
-		s += char_of(b);
-	}
-	return s;
-}
+// One output port is opened and every note goes to it - on a keyboard that
+// listens to its own MIDI in, that is the keyboard's built in sound engine,
+// which is what the notes are for. midi_config.txt decides which port that is.
+//
+// The port is an *output* port, and it has to be. This file used to open a
+// midi_input and call play_chord_wait on it, which is why it was silent: the
+// chord methods are registered on midi_output, so a midi_input either failed
+// to compile or, on a build where it did compile, sent nothing anywhere.
+// music_quickstart.nvgt always had this right, and this now reads like it.
 
 void main() {
 	if (!show_window("nvmidi - chords")) {
@@ -111,13 +61,13 @@ void main() {
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.txt");
 
-	int port = config.find_input_port();
+	int port = config.find_output_port();
 	if (port < 0) {
 		ui_speak("No port matches " + config.match + " and the fallback is empty. Check midi_config.txt.");
 		return;
 	}
 
-	midi_input@ keyboard = midi_input_create();
+	midi_output@ keyboard = midi_output_create();
 	if (!keyboard.open_config(config, "nvmidi chord test")) {
 		ui_speak("Cannot open: " + bytes_of_last_error());
 		return;

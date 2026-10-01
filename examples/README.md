@@ -11,9 +11,9 @@ only needs that file edited.
 
 - **list_ports.nvgt** — prints every port and says which one the config picks.
   Run this first when something is not working.
-- **echo_monitor.nvgt** — speaks every message the keyboard sends, and transposes
-  it up an octave on the way back out. The quickest way to confirm input and
-  output both work end to end.
+- **echo_monitor.nvgt** — speaks every message the keyboard sends. The quickest
+  way to confirm input works end to end. It listens only; octave-doubler.nvgt
+  is the one that sends.
 - **octave-doubler.nvgt** — forwards the keyboard to another port,
   transposed. Shows input and output at once.
 - **play_chord.nvgt** — plays chords and patterns on the keyboard's own sound
