@@ -17,7 +17,8 @@ only needs that file edited.
 - **octave-doubler.nvgt** — forwards the keyboard to another port,
   transposed. Shows input and output at once.
 - **play_chord.nvgt** — plays chords and patterns on the keyboard's own sound
-  engine. Needs only one port: the notes go out of the port they came from.
+  engine, and stays open so the patterns can be compared one after another.
+  Needs only one port: the notes go out of the port they came from.
 - **music_quickstart.nvgt** — the music API in the fewest lines. Plays in the
   background through `nvmidi_ui.nvgt` while it keeps printing, and stops on
   Alt+F4.

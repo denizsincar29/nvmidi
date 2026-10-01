@@ -40,7 +40,8 @@ string char_of(uint b) {
 // The plugin hands its strings over as a count plus an indexed byte - see the
 // readme. These put them back together here, where the engine's own strings
 // were measured alive. This file has no working chord() helper to fall back on:
-// the plugin registers no such function, only the byte readers below.
+// the plugin registers no such function, so the note array is built by hand
+// below, in triad().
 string bytes_of_last_error() {
 	string s = "";
 	for (int i = 0; i < midi_last_error_byte_count(); i++) {
@@ -49,43 +50,46 @@ string bytes_of_last_error() {
 	}
 	return s;
 }
-// play_chord.nvgt - play chords and patterns on the keyboard's own sound.
+
+// play_chord.nvgt - play chords and patterns, and keep playing while the
+// window stays open.
 //
-// This is the high level layer on its own: no synthesis, no second device.
-// One output port is opened and every note goes to it - on a keyboard that
-// listens to its own MIDI in, that is the keyboard's built in sound engine,
-// which is what the notes are for. midi_config.txt decides which port that is.
+// The port is an *output* port, and it has to be: the chord methods are
+// registered on midi_output, so a midi_input either fails to compile or, on a
+// build where it did compile, sends nothing anywhere. music_quickstart.nvgt
+// had this right from the start, and this reads like it now.
 //
-// The port is an *output* port, and it has to be. This file used to open a
-// midi_input and call play_chord_wait on it, which is why it was silent: the
-// chord methods are registered on midi_output, so a midi_input either failed
-// to compile or, on a build where it did compile, sent nothing anywhere.
-// music_quickstart.nvgt always had this right, and this now reads like it.
+// What this file adds over music_quickstart is the pattern player. That is the
+// whole difference, and it is worth an example because the patterns are the
+// part of the high level layer nobody guesses: one note array, and a name -
+// spread, arpeggio, quick, fast, strum, repeat - lays the same notes out in
+// time differently. music_quickstart builds every arrangement by hand, note by
+// note, which is what you have to do when the pattern player is not the point.
 //
-// There is no chord() function, either. An earlier version of this file called
-// one - chord("60,64,67", 1000) and chord("60,64,67", 0) - and the engine said
-// "No matching symbol 'chord'" six times over. The plugin registers note
-// factories (nvmidi_note_create, four arities) and nothing that parses a
-// string of pitches, so the array is built by hand here, the way
-// music_quickstart.nvgt and scripts/e2e_midi.nvgt already build theirs.
+// The earlier version did neither in a form anyone could hear. It opened the
+// port, ran four chords and closed it in one pass: on a keyboard that listens
+// to its own MIDI in, closing the port before the first _wait returns can drop
+// the notes, and there was no loop to show anything afterwards, so the window
+// appeared, closed, and the run was over. The port now stays open until the
+// user stops it, the same way music_quickstart.nvgt does it.
 
 // The three notes of the chord this file plays, as one array. Every pattern
-// below is handed the same array, so the only thing that changes between runs
-// is the pattern itself.
+// below is handed a fresh array built the same way, so the only thing that
+// changes between runs is the pattern itself.
 //
-// The parameter is named voice, not out: `out` is a reserved keyword in this
-// engine ("Instead found reserved keyword 'out'", measured 1 October), so a
-// parameter carrying that name will not compile. It is unused here anyway -
-// the notes are made at the default tempo and only the length is set - but it
-// is kept so the signature says what the array is for, and named so a caller
-// can read it without tripping over the engine's own vocabulary.
-array<midi_note@>@ triad(midi_output@ voice, double ms) {
+// The length is set through a local handle and not through notes[i] directly:
+// assigning a field through an indexed handle is a shape this engine refuses
+// (play_chord.nvgt, 1 October - the "No matching symbol" family on a line that
+// looks ordinary). Copy the handle out, set the field, and the change is the
+// one that travels.
+array<midi_note@>@ triad(double ms) {
 	array<midi_note@>@ notes = array<midi_note@>();
 	notes.insert_last(nvmidi_note_create(60, 100)); // middle C
 	notes.insert_last(nvmidi_note_create(64, 100));
 	notes.insert_last(nvmidi_note_create(67, 100));
 	for (uint i = 0; i < notes.length(); i++) {
-		notes[i].length = midi_duration(ms, MIDI_MS);
+		midi_note@ n = notes[i];
+		n.length = midi_duration(ms, MIDI_MS);
 	}
 	return notes;
 }
@@ -124,7 +128,7 @@ void main() {
 	keyboard.tempo = 96.0;
 
 	// A major chord, all notes at once, held for a second.
-	keyboard.play_chord_wait(triad(keyboard, 1000.0));
+	keyboard.play_chord_wait(triad(1000.0));
 
 	// The same chord in every unit the duration object understands: a beat
 	// at the class tempo, half a bar, and a length counted in MIDI ticks.
@@ -136,28 +140,43 @@ void main() {
 
 	ui_speak("At " + keyboard.tempo + " bpm a beat is " + beat.to_ms() + " milliseconds, half a bar is " + half_bar.to_ms() + ".");
 
-	array<midi_note@>@ held = triad(keyboard, 0.0);
-	held[0].length = ticks;
+	// One note of the triad written in ticks rather than milliseconds, to show
+	// the two lengths are the same note. The other two keep the array's length.
+	array<midi_note@>@ held = triad(0.0);
+	midi_note@ held_lead = held[0];
+	held_lead.length = ticks;
 	keyboard.play_chord_wait(held);
 
 	// An explicitly qualified unit wins over the class tempo: MUSIC_BEATS_120
 	// is always a beat at 120, whatever keyboard.tempo says. Useful for a
 	// short test that should sound the same on every run.
-	array<midi_note@>@ steady = triad(keyboard, 0.0);
-	steady[0].length = keyboard.duration(1.0, MUSIC_BEATS_120);
+	array<midi_note@>@ steady = triad(0.0);
+	midi_note@ steady_lead = steady[0];
+	steady_lead.length = keyboard.duration(1.0, MUSIC_BEATS_120);
 	keyboard.play_chord_wait(steady);
 
-	// Every pattern the player knows, on one chord, so the difference between
-	// them is audible in one run. ui_pump() between them is an Alt+F4 chance
-	// even though the patterns themselves wait.
+	// Every pattern the player knows, one after another on the same chord, so
+	// the difference between them is audible in one run. Between two patterns
+	// the loop pumps the window, which is where Alt+F4 gets its chance even
+	// though each pattern itself waits for its own notes.
 	string[]@ patterns = {"chord", "spread", "arpeggio", "quick", "fast", "strum", "repeat"};
 	for (uint i = 0; i < patterns.length(); i++) {
 		if (!ui_pump()) break;
 		ui_speak(patterns[i]);
-		keyboard.play_midi_chord_wait(triad(keyboard, 220.0), patterns[i]);
+		keyboard.play_midi_chord_wait(triad(220.0), patterns[i]);
 	}
 
+	// The run is over, but the window stays: the port is still open, and a key
+	// press plays one more chord to show it is. Closing here instead is what
+	// made the old version silent on some keyboards - a port closed while its
+	// notes are still sounding takes the notes with it.
+	keyboard.all_notes_off();
+	ui_speak("Done. Press a key for one more chord, or Alt+F4 to close.");
+	while (ui_pump()) {
+		if (stop_key()) break;
+		if (key_pressed(KEY_SPACE)) keyboard.play_chord_wait(triad(700.0));
+	}
+	keyboard.all_notes_off();
 	keyboard.close();
-	ui_speak("Done. Press Alt+F4 to close.");
-	while (ui_pump()) { if (stop_key()) return; }
+	ui_speak("Stopped.");
 }
