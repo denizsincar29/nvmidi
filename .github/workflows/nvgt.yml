@@ -233,6 +233,11 @@ jobs:
             m.status = uint8(0x90); m.data1 = uint8(60); m.data2 = uint8(100); m.channel = 1;
             midi_message_view v(m);
             print("view note_on=" + v.is_note_on() + " name=" + v.note_name() + " text=" + v.name());
+            // Before the marker, not after: if the wrapper's own file fails to
+            // compile the engine stops at the include and this line is missing,
+            // which is the difference between "WRAPPER_OK absent, and here is
+            // the function it died in" and a step that only knows the script
+            // was short.
             print("WRAPPER_OK");
           }
           SCRIPT
@@ -289,7 +294,15 @@ jobs:
           # purpose by the hearing-test step further down, against an engine that
           # must be able to see the plugin. Compiling it here as well would only
           # duplicate that, and running it would execute a stub.
-          for script in scripts/*.nvgt examples/*.nvgt tests/*.nvgt midi.nvgt nvmidi_constants.nvgt nvmidi_string.nvgt; do
+          # nvmidi_string.nvgt is NOT in this glob either, for the same reason
+          # probe_seal.ngt is not: it is a header, not a program. It names the
+          # plugin's types, and those names only exist after the plugin is
+          # loaded, which midi.nvgt does. Compiled alone it answers "Identifier
+          # 'midi_message' is not a data type in global namespace" eight times -
+          # measured, 1 October - which says nothing about whether it is
+          # correct. It is still compiled and exercised, through midi.nvgt, by
+          # the load check above and by every example and test below.
+          for script in scripts/*.nvgt examples/*.nvgt tests/*.nvgt midi.nvgt nvmidi_constants.nvgt; do
             [ -e "$script" ] || continue
             # get_nvmidi.nvgt is not a test, it is the downloader: running it
             # downloads the published release over the library this job just

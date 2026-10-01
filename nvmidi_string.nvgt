@@ -1,5 +1,13 @@
 // nvmidi_string.nvgt - the plugin's text, as ordinary strings.
 //
+// This file is not compiled on its own. It names the plugin's types -
+// midi_input, midi_message and the rest - and those names only exist once
+// `#pragma plugin nvmidi` has loaded the plugin, which is midi.nvgt's job.
+// Compile it directly with the engine and every one of those names answers
+// "Identifier 'midi_message' is not a data type in global namespace": not a
+// declaration wrong, but a file that should not be compiled by itself. The
+// entry point is midi.nvgt; include that instead.
+//
 // Text coming out of the plugin never arrives as a string. Every one of those
 // surfaces is a pair - a byte count and an indexed byte - because the plugin
 // and the engine are built by different compilers and a C++ string is a
