@@ -15,20 +15,34 @@ name: build
 # intact. A MinGW dll must never be the published one.
 #
 # Why no engine is downloaded here. It used to be, to be turned into an import
-# library through `dumpbin /exports` -> nvgt.def -> lib /def, on the belief that
-# MSVC needs the engine's as* symbols at link time. The belief was mine and it
-# was wrong, so both the download and the assertion on it are gone.
+# library through `dumpbin /exports` -> nvgt.def -> lib /def. There is nothing
+# wrong with the step, and an earlier version of this comment claimed there was:
+# the reason it is gone is that a file on the runner is slower and one more
+# thing to keep in step than a line in the build script.
 #
-# src/nvgt_plugin.h:171-181 is the reason: nvgt_plugin_shared carries the
-# engine's functions as pointers and prepare_plugin() copies them into the
-# plugin's own globals ("name = shared->f_##name"). Nothing is resolved against
-# nvgt.exe by name, so an import library has nothing to satisfy. Measured
-# 2026-10-01 to be sure: the PE of stub/nvgt_windows.bin lists 21 exported names
-# and asAllocMem is not one of them; the Linux engine's ELF .dynsym holds 248
-# defined symbols and no as* at all. The plugin nevertheless loads against that
-# Linux engine and registers 183 names with 0 refused, which is only possible on
-# the pointer path. The dll now links against winmm, ole32, setupapi and ksuser
-# - the platform libraries RtMidi actually calls - and nothing from nvgt.
+# The engine's as* symbols *are* needed at link time, and src/nvgt_plugin.h is
+# why they need an alias. The header hands the plugin the engine's functions as
+# pointers (nvgt_plugin.h:69-70, prepare_plugin() at :171-181 copies them out of
+# nvgt_plugin_shared), so inside this build every one of those names is a
+# pointer *variable* and not a function. third_party/angelscript was written
+# against an engine that exports them as plain C functions and does not know
+# that: scriptarray.cpp takes the address of two of them at :21-22 and calls a
+# third by name at :274. Measure it and the linker says so itself - run
+# 36908725123, five minutes after the import library was dropped:
+#
+#   scriptarray.obj : error LNK2001: unresolved external symbol asAllocMem
+#     Hint: void * (__cdecl* asAllocMem)(unsigned __int64)
+#           (?asAllocMem@@3P6APEAX_K@ZEA)
+#
+# "3P6A" in the mangled name is a pointer to a function, so the symbol MSVC
+# wanted was the variable. scripts/build_win_msvc.bat supplies it with one
+# `/alternatename:` alias per name, written into a generated header and forced
+# in with /FI - no engine binary, no dumpbin, no .def, and the list sits in the
+# same file as the compile line it belongs to.
+#
+# The dll links against winmm, ole32, setupapi and ksuser - the platform
+# libraries RtMidi actually calls - plus those aliases, and nothing else from
+# nvgt.
 #
 # Why the dummy backend on linux. Defining __LINUX_ALSA__ puts a
 # "needed: libasound.so.2" entry into the library, and a machine without ALSA

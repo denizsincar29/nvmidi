@@ -26,8 +26,7 @@
 
 
 void main() {
-	if (!show_window("nvmidi - echo")) {
-		ui_speak("Could not open a window.");
+	if (!ui_open("nvmidi - echo")) {
 		return;
 	}
 	wait(50); // let the reader speak the window title first

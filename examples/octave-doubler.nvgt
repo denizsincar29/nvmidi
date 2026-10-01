@@ -34,8 +34,7 @@ void panic() {
 
 
 void main() {
-	if (!show_window("nvmidi - keyboard to synth")) {
-		ui_speak("Could not open a window.");
+	if (!ui_open("nvmidi - keyboard to synth")) {
 		return;
 	}
 	wait(50); // let the reader speak the window title first

@@ -33,3 +33,8 @@ build-msvc/
 # fresh checkout of the tree, not of a build.
 *.zip
 loadcheck.nvgt
+
+# The pinned engine, downloaded by scripts/nvgt_pin.sh into engine/ for local
+# API probing. It is ~180 MB of prebuilt binaries, it is fetched on demand, and
+# nothing in the repository needs it committed.
+engine/

@@ -66,8 +66,7 @@ bool write_config(const string&in path, int port) {
 }
 
 void main() {
-	if (!show_window("nvmidi - ports")) {
-		ui_speak("Could not open a window.");
+	if (!ui_open("nvmidi - ports")) {
 		return;
 	}
 	wait(50); // let the reader speak the window title before the list

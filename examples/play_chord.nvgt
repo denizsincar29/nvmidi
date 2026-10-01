@@ -55,8 +55,7 @@ array<midi_note@>@ triad(double ms) {
 }
 
 void main() {
-	if (!show_window("nvmidi - chords")) {
-		ui_speak("Could not open a window.");
+	if (!ui_open("nvmidi - chords")) {
 		return;
 	}
 	wait(50); // let the reader speak the window title first

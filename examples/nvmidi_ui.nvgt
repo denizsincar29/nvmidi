@@ -36,6 +36,25 @@ void ui_speak(const string&in text) {
 	if (SCREEN_READER_AVAILABLE) screen_reader_speak(text, false);
 }
 
+// Open the example's window, or say why it could not be opened.
+//
+// The two lines of this function are not ceremony. show_window answers a
+// `game_window@`, a handle, and *not* a bool: the engine's own registration
+// reads "game_window@ show_window(const string& in title, uint flags = 0)",
+// read out of the engine binary's string table, and the compiler names the
+// same type when handed `if (!show_window(...))` - "Can't implicitly convert
+// from 'game_window@&' to 'bool'". A null handle is the only failure, so the
+// test is `is null` and never a truth test on the handle itself. An example
+// that got this wrong compiled on an older engine and stopped compiling here.
+bool ui_open(const string&in title) {
+	game_window@ w = show_window(title);
+	if (w is null) {
+		ui_speak("could not open a window");
+		return false;
+	}
+	return true;
+}
+
 // Keep the window's event loop alive and report whether the user asked to
 // stop. show_window's own note says the window does no event processing
 // unless a loop runs, and wait() is that loop's heartbeat. The Alt+F4

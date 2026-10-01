@@ -21,6 +21,8 @@
 //   file_get_contents
 //   directory_exists/directory_create
 //   alert, input_box             Message boxes
+//   datetime, get_year/month/    Date/Time/date_time
+//   day/hour/minute/second
 //
 // Two things the reference states and this file depends on:
 //
@@ -126,6 +128,28 @@ bool console_mode = true;
 // plain text, and it is meant to be pasted into a bug report.
 const string STAMP_NAME = "last download.txt";
 
+// The current moment, as "yyyy-MM-dd HH:mm:ss".
+//
+// Two digits per field, always, because the stamp is read back by a parser
+// that expects them and a single digit month would look like a different
+// layout. The engine's own date helpers are used rather than a formatted
+// string spelled out in the engine's format language: datetime has the
+// accessors (get_year, get_month, get_day, get_hour, get_minute,
+// get_second) and these are plain integers, so the padding is done here and
+// nothing depends on a format dialect that would be one more name to keep
+// right.
+string two_digits(int n) {
+	if (n < 10) return "0" + n;
+	return "" + n;
+}
+
+string format_date() {
+	datetime@ now = datetime();
+	return "" + now.get_year + "-" + two_digits(now.get_month) + "-"
+		+ two_digits(now.get_day) + " " + two_digits(now.get_hour) + ":"
+		+ two_digits(now.get_minute) + ":" + two_digits(now.get_second);
+}
+
 // The version of the library sitting in this folder, or an empty string if
 // there is no stamp or it does not carry one.
 //
@@ -173,7 +197,7 @@ void remember(const string&in folder, const string&in asset, const string&in rel
 		return; // A missing note is not a failed install.
 	stamp.write("version = " + release + "\n");
 	stamp.write("file = " + folder + "/" + asset + "\n");
-	stamp.write("when = " + format_date("yyyy-MM-dd HH:mm:ss") + " utc\n");
+	stamp.write("when = " + format_date() + " utc\n");
 	stamp.close();
 }
 

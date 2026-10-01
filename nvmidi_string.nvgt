@@ -191,12 +191,18 @@ string midi_duration_text(midi_duration d) {
 // the message, which is what a script that just received it is holding. The
 // plugin fills this pair from the message's data bytes, so a message with no
 // note in it answers nothing.
+//
+// The pitch is read with note() and the name is built here, rather than
+// reading the note_name_byte_count property off m. Measured, and it cost a
+// build: a property access on a value passed as `const midi_message&in`
+// resolves against the script's own midi_message_view first, and that class
+// declares a method called note_name - so a later m.note_name_byte_count in
+// this file resolved to the method and the compiler reported it as
+// "Implemented property accessor 'note_name_byte' expects index argument",
+// naming neither the symbol nor the reason. Asking for the pitch and building
+// the text avoids the whole shadow, and the text is identical either way.
 string midi_message_note_name_text(const midi_message&in m) {
-	string s = "";
-	int n = m.note_name_byte_count;
-	for (int i = 0; i < n; i++)
-		s += midi_string_char(m.note_name_byte(i));
-	return s;
+	return midi_note_pitch_text(m.note());
 }
 
 // The name of a message that arrived, for a log or a screen reader.
@@ -204,11 +210,10 @@ string midi_message_note_name_text(const midi_message&in m) {
 // Both halves are the plugin's free functions, and both are called for real -
 // there is no property here to read as a value. The count comes from
 // midi_message_name_byte_count(m) and one byte from
-// midi_message_name_byte(m, i), the same pairing as the port names above. A
-// property spelled `midi_message_name_byte_count` would collide with that
-// function's own name inside the script object, and the compiler answers a
-// call it cannot resolve with "Implemented property accessor ... expects index
-// argument" rather than with the name that was missing.
+// midi_message_name_byte(m, i), the same pairing as the port names above - a
+// call through a named function needs a full signature to match, which is why
+// this pair survives the shadowing described above while a bare property read
+// does not.
 string midi_message_text(const midi_message&in m) {
 	string s = "";
 	for (int i = 0; i < midi_message_name_byte_count(m); i++)

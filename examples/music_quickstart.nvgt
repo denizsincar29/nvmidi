@@ -29,8 +29,7 @@ void on_frame() {
 }
 
 void main() {
-	if (!show_window("nvmidi - music quickstart")) {
-		ui_speak("Could not open a window.");
+	if (!ui_open("nvmidi - music quickstart")) {
 		return;
 	}
 	wait(50); // let the reader speak the window title first
