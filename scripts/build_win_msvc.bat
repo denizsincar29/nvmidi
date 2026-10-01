@@ -111,10 +111,7 @@ echo #pragma comment(linker, "/alternatename:__imp_asPrepareMultithread=asPrepar
 
 if not exist build-msvc\nvgt_import.inc (
 	echo the alias header was not written
-	dir /b /s *.inc 2>&1
-	exit /b 2
-)
-	echo the alias header was not written
+	type nul
 	exit /b 2
 )
 cl /nologo /TP /c /FIbuild-msvc\nvgt_import.inc build-msvc\nvgt_import.inc >nul 2>&1
