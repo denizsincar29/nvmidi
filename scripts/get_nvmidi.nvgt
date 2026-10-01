@@ -145,9 +145,16 @@ string two_digits(int n) {
 
 string format_date() {
 	datetime@ now = datetime();
-	return "" + now.get_year + "-" + two_digits(now.get_month) + "-"
-		+ two_digits(now.get_day) + " " + two_digits(now.get_hour) + ":"
-		+ two_digits(now.get_minute) + ":" + two_digits(now.get_second);
+	// The parentheses are not decoration. get_year and the rest are registered
+	// as const properties (engine registration: "int get_year() const
+	// property"), and reading one through a handle without calling it is
+	// "Invalid operation on method" at each use - the six it named, and one
+	// more for the get_second on the last line. Calling the accessor is the
+	// operation it wants. Nothing is passed and nothing is returned but an int,
+	// so a call costs the same and reads the same.
+	return "" + now.get_year() + "-" + two_digits(now.get_month()) + "-"
+		+ two_digits(now.get_day()) + " " + two_digits(now.get_hour()) + ":"
+		+ two_digits(now.get_minute()) + ":" + two_digits(now.get_second());
 }
 
 // The version of the library sitting in this folder, or an empty string if
