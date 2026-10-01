@@ -14,18 +14,21 @@ name: build
 # same source built with MSVC against the same engine receives the string
 # intact. A MinGW dll must never be the published one.
 #
-# Why an engine is downloaded here. build_win_msvc.bat turns the running
-# engine's own export table into an import library: the engine's as* symbols
-# (asAllocMem, asGetLibraryOptions, ...) are exported as plain C names, and
-# MSVC needs them at link time where MinGW could leave them unresolved, so the
-# dll links against them. The script reads that table with
-# `dumpbin /exports <engine>\nvgt.exe`, taking the file from NVGT_HOME (or from
-# PATH). A hosted runner has neither, so this workflow fetches the pinned nvgt
-# build - the same rolling `latest` prerelease scripts/nvgt_pin.sh pins - and
-# points NVGT_HOME at the folder holding it. That is the arrangement: the
-# script's own documented NVGT_HOME is supplied with a real engine, and no
-# build script is changed. The export table is asserted before the build, so a
-# wrong download is a named failure and never a dll that links against nothing.
+# Why no engine is downloaded here. It used to be, to be turned into an import
+# library through `dumpbin /exports` -> nvgt.def -> lib /def, on the belief that
+# MSVC needs the engine's as* symbols at link time. The belief was mine and it
+# was wrong, so both the download and the assertion on it are gone.
+#
+# src/nvgt_plugin.h:171-181 is the reason: nvgt_plugin_shared carries the
+# engine's functions as pointers and prepare_plugin() copies them into the
+# plugin's own globals ("name = shared->f_##name"). Nothing is resolved against
+# nvgt.exe by name, so an import library has nothing to satisfy. Measured
+# 2026-10-01 to be sure: the PE of stub/nvgt_windows.bin lists 21 exported names
+# and asAllocMem is not one of them; the Linux engine's ELF .dynsym holds 248
+# defined symbols and no as* at all. The plugin nevertheless loads against that
+# Linux engine and registers 183 names with 0 refused, which is only possible on
+# the pointer path. The dll now links against winmm, ole32, setupapi and ksuser
+# - the platform libraries RtMidi actually calls - and nothing from nvgt.
 #
 # Why the dummy backend on linux. Defining __LINUX_ALSA__ puts a
 # "needed: libasound.so.2" entry into the library, and a machine without ALSA
@@ -49,69 +52,6 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: fetch the pinned nvgt engine, for its export table
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $headers = @{ 'User-Agent' = 'nvmidi-ci' }
-          $release = Invoke-RestMethod -Headers $headers -Uri 'https://api.github.com/repos/samtupy/nvgt/releases/tags/latest'
-          # The .tar.gz, not the .exe: this is the asset scripts/nvgt_pin.sh
-          # fetches, and the one the export table has to be read from. Picking
-          # the first .exe is not the same file - that one no longer exports
-          # asAllocMem, and the check below failed on a build the plugin is
-          # never linked against.
-          $asset = $release.assets | Where-Object { $_.name -like '*.tar.gz' } | Select-Object -First 1
-          if (-not $asset) {
-            throw 'the nvgt release carries no .tar.gz asset, so there is no engine to read an export table from'
-          }
-          Write-Host "engine: $($asset.name), $([math]::Round($asset.size / 1MB, 1)) MB"
-          New-Item -ItemType Directory -Force engine | Out-Null
-          Invoke-WebRequest -Headers $headers -Uri $asset.browser_download_url -OutFile engine/nvgt_engine.tar.gz
-          tar -xzf engine/nvgt_engine.tar.gz -C engine
-          Remove-Item engine/nvgt_engine.tar.gz
-          # The tarball unpacks into a version-named directory; flatten it, the
-          # same way nvgt_pin.sh does, so the rest of the job does not have to
-          # know the version number.
-          $inner = Get-ChildItem engine -Directory -Filter 'nvgt*' -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($inner) {
-            Get-ChildItem $inner.FullName | Move-Item -Destination engine -Force
-            Remove-Item $inner.FullName -Recurse -Force
-          }
-          # $home is not free: PowerShell holds HOME as a read-only variable and
-          # assigns to it with a WriteError, which under $ErrorActionPreference =
-          # 'Stop' ends the step. The value is a path, not the user's home.
-          $nvgtHome = Join-Path (Get-Location).Path 'engine'
-          "NVGT_HOME=$nvgtHome" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
-          Write-Host "NVGT_HOME=$nvgtHome"
-
-      - name: the download really is the engine
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-          if (-not (Test-Path $vswhere)) { throw 'no vswhere on this runner' }
-          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if (-not $vs) { throw 'this runner has no Visual Studio C++ tools' }
-          # Not (Join-Path $vs 'VC/Tools/MSVC'): on the current windows runners
-          # vswhere reports the Visual Studio 18 root, whose C++ tools do not
-          # live under that older sub-path, so the fixed join found nothing and
-          # the step threw 'dumpbin.exe not found'. Searching the install root
-          # for the host-native binary works on both layouts.
-          $dumpbin = Get-ChildItem $vs -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue |
-                     Where-Object { $_.FullName -match '[\\/]Hostx64[\\/]x64[\\/]dumpbin\.exe$' } |
-                     Select-Object -First 1
-          if (-not $dumpbin) { throw "dumpbin.exe not found under $vs" }
-          $engineExe = Get-ChildItem engine -Recurse -Filter 'nvgt.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $engineExe) {
-            throw 'the downloaded tarball carries no nvgt.exe, so there is no export table to read'
-          }
-          Write-Host "reading $($engineExe.FullName)"
-          $exports = (& $dumpbin.FullName /exports $engineExe.FullName 2>&1 | Out-String)
-          if ($exports -notmatch 'asAllocMem') {
-            throw "$($engineExe.Name) does not export asAllocMem, so this file is not the engine build the plugin links against"
-          }
-          Write-Host "$($engineExe.Name) exports the Angelscript symbols the plugin links against"
 
       - name: build nvmidi.dll with MSVC
         shell: cmd
