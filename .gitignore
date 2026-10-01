@@ -21,3 +21,9 @@ __pycache__/
 # through dlopen rather than a link-time dependency. Not shipped, and not
 # something the repository should carry until it is.
 scratch/
+
+# MSVC build products (scripts/build_win_msvc.bat)
+build-msvc/
+*.exp
+*.lib
+*.pdb
