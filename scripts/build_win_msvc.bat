@@ -92,6 +92,28 @@ rem #pragma comment(linker, "/alternatename:__imp_asThreadCleanup=asThreadCleanu
 rem #pragma comment(linker, "/alternatename:__imp_asGetLibraryVersion=asGetLibraryVersion") >> build-msvc\nvgt_import.inc
 rem #pragma comment(linker, "/alternatename:__imp_asPrepareMultithread=asPrepareMultithread") >> build-msvc\nvgt_import.inc
 
+rem Prove the header was written before the compiler is asked to read it. The
+rem redirects above are invisible: they print nothing and cmd reports nothing,
+rem so without this line a header that came out empty and a header that came out
+rem right look the same in the log. It is the "if exist" form rather than a bare
+rem "type" for a reason - RtlWerpReportException answers 0xC0000135 when
+rem nvgt.exe is run on a machine with no MIDI ports (the engine's own loader
+rem report, measured 1 October), and a step that returns that would be read as a
+rem toolchain fault rather than as the check it is. /c is a real compile pass
+rem with a guaranteed error, so cl's own exit code says whether the header was
+rem found: "cannot open source file" means it was not.
+if not exist build-msvc\nvgt_import.inc (
+	echo the alias header was not written
+	exit /b 2
+)
+cl /nologo /TP /c /FIbuild-msvc\nvgt_import.inc build-msvc\nvgt_import.inc >nul 2>&1
+if errorlevel 1 (
+	echo the alias header does not survive a compile
+	type build-msvc\nvgt_import.inc
+	exit /b 2
+)
+echo the alias header compiled
+
 rem The compile itself. Everything above wrote one file and did nothing else;
 rem this is the line the file exists for. It was lost once already: the block
 rem above was rewritten in 7e266e5 and the replacement stopped at the last
