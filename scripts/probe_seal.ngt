@@ -1,5 +1,5 @@
 #pragma plugin nvmidi
 array<midi_note@> notes;
-midi_input@ in = midi_input_create();
-midi_output@ out = midi_output_create();
+midi_input@ keyboard = midi_input_create();
+midi_output@ speaker = midi_output_create();
 midi_config@ cfg = midi_config_create();

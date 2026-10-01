@@ -764,18 +764,28 @@ jobs:
           fi
           echo "compiling with $nvgt"
           # The file compiled here is a stub on purpose, and the choice of
-          # file is the whole point of the step. On 2026-10-01 the step
-          # compiled scripts/hear_test.nvgt, reported success, and printed
-          # nothing between "compiling..." and "Success!" - which was read as
-          # the script being fine. It is not fine: the same script rejects
-          # every midi_* name at run time with "No matching symbol", in the
-          # name form the script actually calls (midi_input_create, handle
-          # returns, get_port_name_byte). The success came out of the engine,
-          # not out of a check: nvgt --compile writes its errors to the
-          # process's stderr, and $() captured stdout only, so the error text
-          # never reached the greps below and a green run meant nothing.
-          # scripts/probe_seal.ngt is those calls with nothing around them; a
-          # compiler that cannot see the plugin must reject it loudly.
+          # file is the whole point of the step. Until 2026-10-01 the step
+          # compiled scripts/hear_test.nvgt and passed on it, and that pass
+          # was read as the script being fine. It was not: the same script
+          # rejects every midi_* name - "No matching symbol" - in the form it
+          # actually calls (midi_input_create, the handle return,
+          # get_port_name_byte), on the one machine that runs the engine by
+          # hand. Read the log of run 36876425574 before doubting that: its
+          # compile section carries no error at all, so the pass was honest
+          # about what it compiled and still said nothing about the script a
+          # user runs. An earlier note here claimed the errors were dropped
+          # because $() captures stdout only; that was wrong - the line
+          # carries 2>&1 - and it is retracted.
+          # What this step can honestly check is the plugin's script surface,
+          # and scripts/probe_seal.ngt is exactly that surface with nothing
+          # around it: the creates, the handle types, one array of a plugin
+          # type. A compiler that cannot see the plugin must reject it loudly,
+          # so a pass here is a claim about the plugin rather than about a
+          # file that may have been stale.
+          # Measured on run 36878234639: it went red, but on
+          # "line: 3 ... Instead found reserved keyword 'in'" - the probe's
+          # own variable names, not the plugin. A stub that fails for its own
+          # reason measures nothing, so the names are keyboard/speaker now.
           out=$(timeout 120 "$nvgt" --compile scripts/probe_seal.ngt 2>&1 || true)
           echo "$out"
           # A pass that ran without the plugin is not a pass. Measured on run
