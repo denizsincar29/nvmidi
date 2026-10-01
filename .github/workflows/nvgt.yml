@@ -294,15 +294,24 @@ jobs:
           # purpose by the hearing-test step further down, against an engine that
           # must be able to see the plugin. Compiling it here as well would only
           # duplicate that, and running it would execute a stub.
-          # nvmidi_string.nvgt is NOT in this glob either, for the same reason
-          # probe_seal.ngt is not: it is a header, not a program. It names the
-          # plugin's types, and those names only exist after the plugin is
-          # loaded, which midi.nvgt does. Compiled alone it answers "Identifier
-          # 'midi_message' is not a data type in global namespace" eight times -
-          # measured, 1 October - which says nothing about whether it is
-          # correct. It is still compiled and exercised, through midi.nvgt, by
-          # the load check above and by every example and test below.
-          for script in scripts/*.nvgt examples/*.nvgt tests/*.nvgt midi.nvgt nvmidi_constants.nvgt; do
+          # midi.nvgt, nvmidi_constants.nvgt and nvmidi_string.nvgt are NOT in
+          # this glob, for the same reason probe_seal.ngt is not: they are
+          # headers, not programs. They name the plugin's types, and those names
+          # only exist after the plugin is loaded, which midi.nvgt does. Compiled
+          # alone nvmidi_string.nvgt answers "Identifier 'midi_message' is not a
+          # data type in global namespace" eight times - measured, 1 October -
+          # which says nothing about whether it is correct.
+          #
+          # This glob used to end in "midi.nvgt nvmidi_constants.nvgt", and a
+          # second list added examples/nvmidi_ui.nvgt and
+          # examples/nvmidi_ui_keys.nvgt through examples/*.nvgt. All four are
+          # headers without an entry point, so the sweep failed on them with
+          # "No entry point found" - an error about the runner's own file list
+          # that reads like an error in the code under test. Removed 1 October.
+          # All of them are still compiled, and exercised for real, through
+          # midi.nvgt by the load check above and by every example and test
+          # below, which is where a header is supposed to be checked.
+          for script in scripts/*.nvgt examples/*.nvgt tests/*.nvgt; do
             [ -e "$script" ] || continue
             # get_nvmidi.nvgt is not a test, it is the downloader: running it
             # downloads the published release over the library this job just
@@ -319,8 +328,8 @@ jobs:
             # check in this repository - a script nobody compiles is a script
             # whose first compile is in a user's hands.
             case "$script" in
-              scripts/get_nvmidi.nvgt|midi.nvgt|nvmidi_constants.nvgt|nvmidi_string.nvgt)
-                echo "::group::$script (compiled only: midi.nvgt is a header, the other two scripts/*.nvgt are programs)"
+              scripts/get_nvmidi.nvgt)
+                echo "::group::$script (compiled only: it is the downloader, not a program under test)"
                 set +e
                 compile_log="logs/$(basename "$script").compile.log"
                 # --compile is `-c` in the engine's help: build the script and

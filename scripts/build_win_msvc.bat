@@ -91,3 +91,25 @@ rem #pragma comment(linker, "/alternatename:__imp_asAtomicDec=asAtomicDec")     
 rem #pragma comment(linker, "/alternatename:__imp_asThreadCleanup=asThreadCleanup")   >> build-msvc\nvgt_import.inc
 rem #pragma comment(linker, "/alternatename:__imp_asGetLibraryVersion=asGetLibraryVersion") >> build-msvc\nvgt_import.inc
 rem #pragma comment(linker, "/alternatename:__imp_asPrepareMultithread=asPrepareMultithread") >> build-msvc\nvgt_import.inc
+
+rem The compile itself. Everything above wrote one file and did nothing else;
+rem this is the line the file exists for. It was lost once already: the block
+rem above was rewritten in 7e266e5 and the replacement stopped at the last
+rem alias line, so the batch ran, wrote its header, reported success and never
+rem invoked a compiler - the job's own step log was empty between "Run
+rem scripts\build_win_msvc.bat" and the next step, and the dll was simply
+rem absent afterwards. A batch file that silently does nothing looks exactly
+rem like one that worked, so the echo at the end matters as much as the line:
+rem it is the only thing in this file that says the compile was reached.
+rem
+rem /FI force-includes the generated alias header into each of the three
+rem translation units, which is the whole point of writing it - see the block
+rem above for why each name needs an alias.
+cl /nologo /std:c++17 /O2 /EHsc /MD /LD /D__WINDOWS_MM__ /D_CRT_SECURE_NO_WARNINGS ^
+   /Isrc /Ithird_party\rtmidi /Ithird_party\angelscript /Fo:build-msvc\ ^
+   /FIbuild-msvc\nvgt_import.inc ^
+   src\nvmidi.cpp third_party\rtmidi\RtMidi.cpp third_party\angelscript\scriptarray.cpp ^
+   /Fe:nvmidi.dll /link winmm.lib ole32.lib setupapi.lib ksuser.lib || exit /b 2
+
+echo built nvmidi.dll with MSVC
+popd
