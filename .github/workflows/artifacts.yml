@@ -70,3 +70,59 @@ jobs:
           name: nvmidi-dll
           path: nvmidi.dll
           retention-days: 1
+
+  # The Linux side, and the reason it is a second job rather than a second
+  # step: this is the only build in the repository that carries a real MIDI
+  # backend on Linux.
+  #
+  # Every other Linux build here is `MIDI_BACKEND=dummy`, and deliberately so.
+  # The release ships dummy because an .so naming libasound.so.2 is refused
+  # whole by the loader on a machine without ALSA, and the engine's only words
+  # for that are "failed to load plugin" with no script code run at all - see
+  # the readelf assertion in release.yml. That is the right default for a file
+  # handed to everyone.
+  #
+  # It is the wrong file for one person with a Nord Piano 6 plugged into a
+  # Linux box, who needs the plugin to actually reach a sequencer, and for whom
+  # libasound is not a risk but the entire point. So this job builds the other
+  # one, and asserts the mirror image of release.yml's check: libasound must BE
+  # in the NEEDED list. The two assertions are the same question asked from
+  # opposite sides, and neither file can satisfy the other's.
+  #
+  # The artifact is marked as such by name, because a file that loads on one
+  # machine and not another is exactly the kind of thing that gets mixed up.
+  alsa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # libasound2-dev is the development half: the runtime .so.2 is on any
+      # desktop, but the headers and the -lasound symlink are what a compile
+      # needs, and neither is present by default on a runner image.
+      - name: get the ALSA headers
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      - name: build with the ALSA backend
+        run: make MIDI_BACKEND=alsa
+
+      # The mirror of release.yml's assertion, and it is not decoration. A
+      # `make MIDI_BACKEND=alsa` that fell through to the dummy branch would
+      # produce a library that builds, loads, opens no ports and reports
+      # nothing - the exact silent wrong answer this repository has been bitten
+      # by. The check reads the dynamic section rather than trusting the build
+      # log, because the log says what was asked for and the .so says what is.
+      - name: assert the library really carries the ALSA backend
+        run: |
+          set -euo pipefail
+          readelf -d nvmidi.so | grep -E 'NEEDED|SONAME' || true
+          if ! readelf -d nvmidi.so | grep -q 'libasound'; then
+            echo "::error::this library does not name libasound.so.2, so it is a dummy build under the ALSA build's name and will open no ports while looking like it should"
+            exit 1
+          fi
+
+      - name: keep the alsa library
+        uses: actions/upload-artifact@v4
+        with:
+          name: nvmidi-so-alsa
+          path: nvmidi.so
+          retention-days: 1
