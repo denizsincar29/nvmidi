@@ -63,9 +63,12 @@ jobs:
           Write-Host "engine: $($asset.name), $([math]::Round($asset.size / 1MB, 1)) MB"
           New-Item -ItemType Directory -Force engine | Out-Null
           Invoke-WebRequest -Headers $headers -Uri $asset.browser_download_url -OutFile engine/nvgt.exe
-          $home = Join-Path (Get-Location).Path 'engine'
-          "NVGT_HOME=$home" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
-          Write-Host "NVGT_HOME=$home"
+          # $home is not free: PowerShell holds HOME as a read-only variable and
+          # assigns to it with a WriteError, which under $ErrorActionPreference =
+          # 'Stop' ends the step. The value is a path, not the user's home.
+          $nvgtHome = Join-Path (Get-Location).Path 'engine'
+          "NVGT_HOME=$nvgtHome" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+          Write-Host "NVGT_HOME=$nvgtHome"
 
       - name: the download really is the engine
         shell: pwsh
