@@ -192,6 +192,15 @@ string midi_message_note_name_text(const midi_message&in m) {
 }
 
 // The name of a message that arrived, for a log or a screen reader.
+//
+// Both halves are the plugin's free functions, and both are called for real -
+// there is no property here to read as a value. The count comes from
+// midi_message_name_byte_count(m) and one byte from
+// midi_message_name_byte(m, i), the same pairing as the port names above. A
+// property spelled `midi_message_name_byte_count` would collide with that
+// function's own name inside the script object, and the compiler answers a
+// call it cannot resolve with "Implemented property accessor ... expects index
+// argument" rather than with the name that was missing.
 string midi_message_text(const midi_message&in m) {
 	string s = "";
 	for (int i = 0; i < midi_message_name_byte_count(m); i++)
