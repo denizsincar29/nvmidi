@@ -36,7 +36,7 @@
 // ---- a message, with names ------------------------------------------------
 //
 //     midi_message m;
-//     while (in.next_message(m)) {
+//     while (keyboard.next_message(m)) {
 //         midi_message_view v(m);
 //         if (v.is_note_on)
 //             screen_reader_speak(v.note_name + ", velocity " + v.velocity);
@@ -115,32 +115,32 @@ midi_note@ midi_note_named(const string &in name, int velocity) {
 // synthesiser beside it needs. The pitch helpers answer false rather than
 // clamping, because a caller who passed 200 wants to hear about it.
 
-bool midi_input_play_note(midi_input@ in, int pitch, int velocity) {
-	if (@in == null) return false;
+bool midi_input_play_note(midi_input@ input, int pitch, int velocity) {
+	if (@input == null) return false;
 	if (pitch < MIDI_MIN || pitch > MIDI_MAX) return false;
 	midi_note@ n = nvmidi_note_create(pitch, velocity);
-	return in.play_note_wait(n);
+	return input.play_note_wait(n);
 }
 
-bool midi_input_play_note(midi_input@ in, const string &in name, int velocity) {
+bool midi_input_play_note(midi_input@ input, const string &in name, int velocity) {
 	int pitch = midi_note_number(name);
 	if (pitch < 0) return false;
-	return midi_input_play_note(in, pitch, velocity);
+	return midi_input_play_note(input, pitch, velocity);
 }
 
 // The same, on an output: the note goes to whatever is listening.
 
-bool midi_output_play_note(midi_output@ out, int pitch, int velocity) {
-	if (@out == null) return false;
+bool midi_output_play_note(midi_output@ output, int pitch, int velocity) {
+	if (@output == null) return false;
 	if (pitch < MIDI_MIN || pitch > MIDI_MAX) return false;
 	midi_note@ n = nvmidi_note_create(pitch, velocity);
-	return out.play_note_wait(n);
+	return output.play_note_wait(n);
 }
 
-bool midi_output_play_note(midi_output@ out, const string &in name, int velocity) {
+bool midi_output_play_note(midi_output@ output, const string &in name, int velocity) {
 	int pitch = midi_note_number(name);
 	if (pitch < 0) return false;
-	return midi_output_play_note(out, pitch, velocity);
+	return midi_output_play_note(output, pitch, velocity);
 }
 
 // ---- a chord, from names --------------------------------------------------
@@ -151,24 +151,24 @@ bool midi_output_play_note(midi_output@ out, const string &in name, int velocity
 // empty chord is not an error worth reporting - it plays nothing and answers
 // true.
 
-bool midi_input_play_chord(midi_input@ in, const string[] &in names, int velocity) {
-	if (@in == null) return false;
+bool midi_input_play_chord(midi_input@ input, const string[] &in names, int velocity) {
+	if (@input == null) return false;
 	array<midi_note@> notes;
 	for (uint i = 0; i < names.length(); i++) {
 		int pitch = midi_note_number(names[i]);
 		if (pitch < 0) return false;
 		notes.insert_last(nvmidi_note_create(pitch, velocity));
 	}
-	return in.play_chord_wait(notes);
+	return input.play_chord_wait(notes);
 }
 
-bool midi_output_play_chord(midi_output@ out, const string[] &in names, int velocity) {
-	if (@out == null) return false;
+bool midi_output_play_chord(midi_output@ output, const string[] &in names, int velocity) {
+	if (@output == null) return false;
 	array<midi_note@> notes;
 	for (uint i = 0; i < names.length(); i++) {
 		int pitch = midi_note_number(names[i]);
 		if (pitch < 0) return false;
 		notes.insert_last(nvmidi_note_create(pitch, velocity));
 	}
-	return out.play_chord_wait(notes);
+	return output.play_chord_wait(notes);
 }

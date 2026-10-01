@@ -109,19 +109,19 @@ string midi_output_port_name_text(uint port) {
 // A null handle answers an empty string rather than faulting: a script that
 // reached here has usually just failed to create the object.
 
-string midi_input_name_text(midi_input@ in) {
-	if (@in == null) return "";
+string midi_input_name_text(midi_input@ input) {
+	if (@input == null) return "";
 	string s = "";
-	for (int i = 0; i < in.get_port_name_byte_count(); i++)
-		s += midi_string_char(in.get_port_name_byte(i));
+	for (int i = 0; i < input.get_port_name_byte_count(); i++)
+		s += midi_string_char(input.get_port_name_byte(i));
 	return s;
 }
 
-string midi_output_name_text(midi_output@ out) {
-	if (@out == null) return "";
+string midi_output_name_text(midi_output@ output) {
+	if (@output == null) return "";
 	string s = "";
-	for (int i = 0; i < out.get_port_name_byte_count(); i++)
-		s += midi_string_char(out.get_port_name_byte(i));
+	for (int i = 0; i < output.get_port_name_byte_count(); i++)
+		s += midi_string_char(output.get_port_name_byte(i));
 	return s;
 }
 
