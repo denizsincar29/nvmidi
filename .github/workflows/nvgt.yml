@@ -763,9 +763,20 @@ jobs:
             exit 0
           fi
           echo "compiling with $nvgt"
-          # --compile without running: the test's main() opens ports and waits
-          # for a person, so running it here would hang until the timeout.
-          out=$(timeout 120 "$nvgt" --compile scripts/hear_test.nvgt 2>&1 || true)
+          # The file compiled here is a stub on purpose, and the choice of
+          # file is the whole point of the step. On 2026-10-01 the step
+          # compiled scripts/hear_test.nvgt, reported success, and printed
+          # nothing between "compiling..." and "Success!" - which was read as
+          # the script being fine. It is not fine: the same script rejects
+          # every midi_* name at run time with "No matching symbol", in the
+          # name form the script actually calls (midi_input_create, handle
+          # returns, get_port_name_byte). The success came out of the engine,
+          # not out of a check: nvgt --compile writes its errors to the
+          # process's stderr, and $() captured stdout only, so the error text
+          # never reached the greps below and a green run meant nothing.
+          # scripts/probe_seal.ngt is those calls with nothing around them; a
+          # compiler that cannot see the plugin must reject it loudly.
+          out=$(timeout 120 "$nvgt" --compile scripts/probe_seal.ngt 2>&1 || true)
           echo "$out"
           # A pass that ran without the plugin is not a pass. Measured on run
           # 36775536153: this job reported success while its own output held
