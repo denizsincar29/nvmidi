@@ -186,23 +186,30 @@ string midi_duration_text(midi_duration d) {
 	return s;
 }
 
-// The note name a message is about, off the message's own byte pair rather than
-// off the pitch - the same name midi_note_pitch_text() would give, but asked of
-// the message, which is what a script that just received it is holding. The
-// plugin fills this pair from the message's data bytes, so a message with no
-// note in it answers nothing.
+// The note name a message is about - the same name midi_note_pitch_text()
+// would give, but asked of the message, which is what a script that just
+// received it is holding. A message with no note in it answers an empty
+// string, because is_note is false and data1 is then no pitch at all.
 //
-// The pitch is read with note() and the name is built here, rather than
-// reading the note_name_byte_count property off m. Measured, and it cost a
-// build: a property access on a value passed as `const midi_message&in`
-// resolves against the script's own midi_message_view first, and that class
-// declares a method called note_name - so a later m.note_name_byte_count in
-// this file resolved to the method and the compiler reported it as
-// "Implemented property accessor 'note_name_byte' expects index argument",
-// naming neither the symbol nor the reason. Asking for the pitch and building
-// the text avoids the whole shadow, and the text is identical either way.
+// The pitch is read from data1 and the name built here, and both halves of
+// that are measured rather than assumed. The first version asked for the
+// message's own note_name_byte_count/note_name_byte pair, and the compiler
+// answered "Implemented property accessor 'note_name_byte' expects index
+// argument" - a property access written without an index resolves against the
+// script's own classes, and midi_message_view in midi.nvgt declares a method
+// called note_name, so the pair below resolved to that method instead.
+//
+// The second version wrote m.note() to dodge the shadow, and that cost another
+// build: note() is a method of midi_message_view - the wrapper - and not of
+// midi_message, which is the type this file compiles against and which
+// registers only its own accessors (get_kind, get_is_note, get_controller and
+// the rest, in src/nvmidi.cpp). A call through a named free function needs an
+// exact match, so "No matching symbol 'note'" was the whole error and it named
+// no type. The message carries the pitch as data1 - the same byte the plugin
+// builds its own note name from (src/nvmidi.cpp:2259) - so this asks for that.
 string midi_message_note_name_text(const midi_message&in m) {
-	return midi_note_pitch_text(m.note());
+	if (!m.is_note) return "";
+	return midi_note_pitch_text(m.data1);
 }
 
 // The name of a message that arrived, for a log or a screen reader.
