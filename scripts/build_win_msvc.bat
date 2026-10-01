@@ -77,37 +77,38 @@ rem parentheses and cmd answered ") was unexpected at this time." at that line
 rem on the runner, exit 255, before the compiler ran - run 36909839651. Every
 rem line below is inert text, so no line in this block can fail that way; the
 rem first ">" creates the file, the rest append.
-rem #pragma clang diagnostic push                                       > "build-msvc\nvgt_import.inc"
-rem #pragma comment(linker, "/alternatename:__imp_asAllocMem=asAllocMem")             >> "build-msvc\nvgt_import.inc"
-rem #pragma comment(linker, "/alternatename:__imp_asFreeMem=asFreeMem")               >> "build-msvc\nvgt_import.inc"
-rem #pragma comment(linker, "/alternatename:__imp_asGetLibraryOptions=asGetLibraryOptions") >> "build-msvc\nvgt_import.inc"
-rem #pragma comment(linker, "/alternatename:__imp_asGetActiveContext=asGetActiveContext")   >> "build-msvc\nvgt_import.inc"
-rem #pragma comment(linker, "/alternatename:__imp_asAcquireExclusiveLock=asAcquireExclusiveLock") >> "build-msvc\nvgt_import.inc"
-rem #pragma comment(linker, "/alternatename:__imp_asReleaseExclusiveLock=asReleaseExclusiveLock") >> "build-msvc\nvgt_import.inc"
-rem #pragma comment(linker, "/alternatename:__imp_asAcquireSharedLock=asAcquireSharedLock") >> "build-msvc\nvgt_import.inc"
-rem #pragma comment(linker, "/alternatename:__imp_asReleaseSharedLock=asReleaseSharedLock") >> "build-msvc\nvgt_import.inc"
-rem #pragma comment(linker, "/alternatename:__imp_asAtomicInc=asAtomicInc")           >> "build-msvc\nvgt_import.inc"
-rem #pragma comment(linker, "/alternatename:__imp_asAtomicDec=asAtomicDec")           >> "build-msvc\nvgt_import.inc"
-rem #pragma comment(linker, "/alternatename:__imp_asThreadCleanup=asThreadCleanup")   >> "build-msvc\nvgt_import.inc"
-rem #pragma comment(linker, "/alternatename:__imp_asGetLibraryVersion=asGetLibraryVersion") >> "build-msvc\nvgt_import.inc"
-rem #pragma comment(linker, "/alternatename:__imp_asPrepareMultithread=asPrepareMultithread") >> "build-msvc\nvgt_import.inc"
+rem Write the alias header. Every line is an "if exist" guard
+rem around a redirect, rather than the "rem ... >" form the block above
+rem used to be: cmd ends a rem at the word, but it also did not perform
+rem the redirection there - measured four runs on the runner, including
+rem after the target was quoted - and a form that is supposed to work and
+rem does not is worse than one whose rule is written down. The guard says
+rem which of the file's own two steps failed, and the mkdir below means
+rem this cannot be a missing-directory error.
+if not exist "build-msvc" mkdir "build-msvc"
+if not exist "build-msvc" (
+	echo could not create the build directory
+	exit /b 2
+)
 
-rem Prove the header was written before the compiler is asked to read it. The
-rem redirects above are invisible: they print nothing and cmd reports nothing,
-rem so without this line a header that came out empty and a header that came out
-rem right look the same in the log. It is the "if exist" form rather than a bare
-rem "type" for a reason - RtlWerpReportException answers 0xC0000135 when
-rem nvgt.exe is run on a machine with no MIDI ports (the engine's own loader
-rem report, measured 1 October), and a step that returns that would be read as a
-rem toolchain fault rather than as the check it is. /c is a real compile pass
-rem with a guaranteed error, so cl's own exit code says whether the header was
-rem found: "cannot open source file" means it was not.
-echo --- build-msvc before the compile:
-dir /b build-msvc 2>&1
-echo --- what the write of the alias header did:
-> build-msvc\probe_import.tmp echo probe
-if exist build-msvc\probe_import.tmp (echo probe wrote a file) else (echo probe wrote nothing)
-del build-msvc\probe_import.tmp 2>nul
+echo #pragma clang diagnostic push > "build-msvc\nvgt_import.inc"
+if not exist "build-msvc\nvgt_import.inc" (
+	echo writing the alias header failed
+	exit /b 2
+)
+echo #pragma comment(linker, "/alternatename:__imp_asFreeMem=asFreeMem") >> "build-msvc\nvgt_import.inc"
+echo #pragma comment(linker, "/alternatename:__imp_asGetLibraryOptions=asGetLibraryOptions") >> "build-msvc\nvgt_import.inc"
+echo #pragma comment(linker, "/alternatename:__imp_asGetActiveContext=asGetActiveContext") >> "build-msvc\nvgt_import.inc"
+echo #pragma comment(linker, "/alternatename:__imp_asAcquireExclusiveLock=asAcquireExclusiveLock") >> "build-msvc\nvgt_import.inc"
+echo #pragma comment(linker, "/alternatename:__imp_asReleaseExclusiveLock=asReleaseExclusiveLock") >> "build-msvc\nvgt_import.inc"
+echo #pragma comment(linker, "/alternatename:__imp_asAcquireSharedLock=asAcquireSharedLock") >> "build-msvc\nvgt_import.inc"
+echo #pragma comment(linker, "/alternatename:__imp_asReleaseSharedLock=asReleaseSharedLock") >> "build-msvc\nvgt_import.inc"
+echo #pragma comment(linker, "/alternatename:__imp_asAtomicInc=asAtomicInc") >> "build-msvc\nvgt_import.inc"
+echo #pragma comment(linker, "/alternatename:__imp_asAtomicDec=asAtomicDec") >> "build-msvc\nvgt_import.inc"
+echo #pragma comment(linker, "/alternatename:__imp_asThreadCleanup=asThreadCleanup") >> "build-msvc\nvgt_import.inc"
+echo #pragma comment(linker, "/alternatename:__imp_asGetLibraryVersion=asGetLibraryVersion") >> "build-msvc\nvgt_import.inc"
+echo #pragma comment(linker, "/alternatename:__imp_asPrepareMultithread=asPrepareMultithread") >> "build-msvc\nvgt_import.inc"
+
 if not exist build-msvc\nvgt_import.inc (
 	echo the alias header was not written
 	dir /b /s *.inc 2>&1
