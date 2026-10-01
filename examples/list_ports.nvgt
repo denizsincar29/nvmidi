@@ -124,22 +124,28 @@ void announce_port(int unused, int chosen, uint count) {
 	ui_speak("Port " + (chosen + 1) + " of " + count + ": " + bytes_of_input_port_name(chosen));
 }
 
-// Writes the choice where the other examples will read it. open / write /
-// close are the engine's three old file functions, and they were picked
-// because they are exactly that: old. file_open exists in the engine's stub
-// headers and is versioned, so a script written against it would refuse to
-// run on an engine older than the stub. This file has to keep working on the
-// machine it was written for, which is why nothing newer than a comment went
-// in. The one unmeasured line in this example is whether the engine's writer
-// accepts these arguments - it is on the list of things to check on a real
-// run, not something this script can verify for itself.
+// Writes the choice where the other examples will read it.
+//
+// This is the file class from the engine's stream library - the manual's page
+// for it is doc/src/references/builtin/!Streams/file, and its Methods/open
+// page gives the exact signature: bool file::open(string filename, string
+// mode), modes a/w/r/r+, and a file opened for writing is created if it is
+// not there. The mode used to be "w" alone; the manual's own example passes
+// "wb", and the b is accepted and ignored for compatibility, so "w" is left
+// as it is. write() is the stream method and returns the byte count, and one
+// newline ends each line because there is no write_line() on this class.
+//
+// The first version of this function called open() and write_line() as free
+// functions holding a file handle. That is not the engine's API at all: both
+// names failed to compile ("No matching symbol 'open'"), and this is the
+// version that the manual supports.
 bool write_config(const string&in path, int port) {
-	file@ f = open(path, "w");
-	if (@f == null) return false;
-	f.write_line("# Chosen with list_ports.nvgt. An empty match cannot match any");
-	f.write_line("# port name, so \"port\" is what decides which device is opened.");
-	f.write_line("match = ");
-	f.write_line("port = " + port);
+	file f;
+	if (!f.open(path, "w")) return false;
+	f.write("# Chosen with list_ports.nvgt. An empty match cannot match any\n");
+	f.write("# port name, so \"port\" is what decides which device is opened.\n");
+	f.write("match = \n");
+	f.write("port = " + port + "\n");
 	f.close();
 	return true;
 }
