@@ -285,6 +285,11 @@ void main() {
 	// nvgt does not search for plugins. SCRIPT_EXECUTABLE is the full path of
 	// the engine that is executing this, which is what we want - and it also
 	// keeps working in a compiled game, where it names the game's executable.
+	// Read before it is needed: the -d option fills it in further down, and the
+	// library path at the end of this preamble is derived from it. A declaration
+	// after its first use is a compile error in this language, not a warning.
+	string asked_folder = "";
+
 	string exe = SCRIPT_EXECUTABLE;
 	string here = exe;
 	// Drop the file name, keeping the directory. Both separators are accepted
@@ -338,10 +343,6 @@ void main() {
 	// the executable name, and it strips the script name too, so the very first
 	// word is already the requested version (measured, see the header).
 	string target = "latest";
-	// Where to download to. Empty means "work it out from the engine", which is
-	// what every version of this script did before there was a way to say
-	// otherwise; a -d argument replaces that derivation outright.
-	string asked_folder = "";
 	// --check changes nothing and says what is installed and what is not. It
 	// asks github the same question the install path asks, so a person can
 	// tell "I have the newest" from "the download failed silently" without

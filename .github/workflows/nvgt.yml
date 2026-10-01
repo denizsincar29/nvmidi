@@ -284,6 +284,11 @@ jobs:
           # it has drifted from the engine's own api.
           mkdir -p logs
           status=0
+          # scripts/*.ngt is deliberately NOT in this glob. probe_seal.ngt is a
+          # fragment - declarations and no function - and it is compiled on
+          # purpose by the hearing-test step further down, against an engine that
+          # must be able to see the plugin. Compiling it here as well would only
+          # duplicate that, and running it would execute a stub.
           for script in scripts/*.nvgt examples/*.nvgt tests/*.nvgt midi.nvgt nvmidi_constants.nvgt nvmidi_string.nvgt; do
             [ -e "$script" ] || continue
             # get_nvmidi.nvgt is not a test, it is the downloader: running it

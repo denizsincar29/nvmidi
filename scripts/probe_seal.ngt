@@ -3,3 +3,10 @@ array<midi_note@> notes;
 midi_input@ keyboard = midi_input_create();
 midi_output@ speaker = midi_output_create();
 midi_config@ cfg = midi_config_create();
+
+// An entry point, because the engine refuses to compile a program without
+// one - "No entry point found (either 'int main()' or 'void main()')" - and a
+// stub that fails for its own reason measures nothing about the plugin. It is
+// empty on purpose: nothing in this file is meant to run yet.
+void main() {
+}
