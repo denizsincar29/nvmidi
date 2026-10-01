@@ -32,3 +32,4 @@ build-msvc/
 # They are products, not sources: an update that ships them back in makes a
 # fresh checkout of the tree, not of a build.
 *.zip
+loadcheck.nvgt

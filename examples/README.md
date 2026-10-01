@@ -3,6 +3,19 @@
 These are demonstrations, not tests. Each one opens a window, speaks what it
 does through the screen reader as well as printing it, and stops on Alt+F4.
 
+Every one of them starts with the same two lines, and a script you write should
+too:
+
+```angelscript
+#include "midi.nvgt"        // the plugin, the constants and the string helpers
+#include "nvmidi_ui.nvgt"   // the window helpers - only needed if you want a window
+```
+
+`midi.nvgt` is the wrapper: it carries `#pragma plugin nvmidi` itself, so none
+of these files names the plugin or builds a string out of bytes by hand. The
+window helpers are a separate include on purpose — they are about a window on a
+screen, not about MIDI, and a script that only sends notes does not want them.
+
 All of them read `midi_config.txt` from this folder, so a different keyboard
 only needs that file edited.
 
@@ -65,4 +78,6 @@ the owner asked for the bug to be recorded rather than worked on.
 `nvmidi_ui.nvgt` is the shared helper: `speak`, `pump` and background playback.
 `#include` it, or copy the one function you need.
 
-The four smoke tests live in `../tests/`, not here.
+The four smoke tests live in `../tests/`, not here, and they are on the wrapper
+too — a test that reads the plugin directly would stop proving that the wrapper
+still compiles, so the wrapper is what they exercise first.

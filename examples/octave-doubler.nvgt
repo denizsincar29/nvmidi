@@ -1,41 +1,12 @@
-// nvgt loads this plugin only when the script asks for it by name: without
-// the pragma below the engine never opens the library and every midi_* name
-#pragma plugin nvmidi
+// One include gets everything: the plugin itself, the note and controller
+// constants, the pitch table, and the string helpers. midi.nvgt carries the
+// #pragma plugin line, so nothing else here needs to ask for the library.
+#include "midi.nvgt"
+
+// The window helpers are separate on purpose: they are about a window on the
+// screen, not about MIDI, and a script that only sends notes does not want them.
 #include "nvmidi_ui.nvgt"
 #include "nvmidi_ui_keys.nvgt"
-
-// One byte, back as a one-character string. This engine's string(byte) gives
-// the decimal digits of the number rather than the character they stand for -
-// measured on a windows runner, where the backend name came out of the byte
-// pair as "110118109105100105..." and every comparison against "Windows"
-// failed.
-//
-// A table walked with substr() does not work either, and that is measured too:
-// index 32 answers 'W', index 65 answers '-', index 47 answers 'l', and
-// substr(67, 1) is already empty on a literal whose length() is 68. The offsets
-// are not one constant, so what the engine is doing there is unmeasured; what
-// is measured is that the first ten and first twenty six characters of a
-// literal read correctly (find("1") is 1, find("A") is 10). That is all this
-// branch needs: digits, A-Z and a-z come from those two ranges, the punctuation
-// a backend name is made of is a plain branch, and nothing walks the table.
-//
-// Every bound is a number because a character literal here is a one character
-// string, not a code: measured, `b >= '0'` is "No conversion from 'const
-// string' to math type available".
-const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
-const string digits = "0123456789";
-string char_of(uint b) {
-	if (b >= 48 && b <= 57) return digits.substr(b - 48, 1);
-	if (b >= 65 && b <= 90) return byte_letters.substr(b - 65 + 10, 1);
-	if (b >= 97 && b <= 122) return byte_letters.substr(b - 97 + 36, 1);
-	if (b == 47) return "/";
-	if (b == 46) return ".";
-	if (b == 95) return "_";
-	if (b == 45) return "-";
-	if (b == 43) return "+";
-	if (b == 32) return " ";
-	return ".";
-}
 
 
 // octave-doubler.nvgt - play a keyboard plugged into the computer through a
@@ -61,41 +32,6 @@ void panic() {
 	ui_speak("Stopped.");
 }
 
-// The plugin hands its strings over as a count plus an indexed byte - see the
-// readme. These put them back together here, where the engine's own strings
-// were measured alive.
-string bytes_of_config(midi_config@ c) {
-	string s = "";
-	for (int i = 0; i < c.describe_byte_count(); i++) {
-		int b = c.describe_byte(i);
-		s += char_of(b);
-	}
-	return s;
-}
-string bytes_of_last_error() {
-	string s = "";
-	for (int i = 0; i < midi_last_error_byte_count(); i++) {
-		int b = midi_last_error_byte(i);
-		s += char_of(b);
-	}
-	return s;
-}
-string bytes_of_port_name(midi_output@ o) {
-	string s = "";
-	for (int i = 0; i < o.get_port_name_byte_count(); i++) {
-		int b = o.get_port_name_byte(i);
-		s += char_of(b);
-	}
-	return s;
-}
-string bytes_of_input_port_name(midi_input@ o) {
-	string s = "";
-	for (int i = 0; i < o.get_port_name_byte_count(); i++) {
-		int b = o.get_port_name_byte(i);
-		s += char_of(b);
-	}
-	return s;
-}
 
 void main() {
 	if (!show_window("nvmidi - keyboard to synth")) {
@@ -116,15 +52,15 @@ void main() {
 	@output = midi_output_create();
 
 	if (!input.open_config(config, "nvmidi forward in")) {
-		ui_speak("Input (" + bytes_of_config(config) + "): " + bytes_of_last_error());
+		ui_speak("Input (" + midi_config_text(config) + "): " + midi_last_error_text());
 		return;
 	}
 	if (!output.open_config(config, "nvmidi forward out")) {
-		ui_speak("Output (" + bytes_of_config(config) + "): " + bytes_of_last_error());
+		ui_speak("Output (" + midi_config_text(config) + "): " + midi_last_error_text());
 		input.close();
 		return;
 	}
-	ui_speak("From " + bytes_of_input_port_name(input) + " to " + bytes_of_port_name(output) + ", an octave up. Alt+F4 stops.");
+	ui_speak("From " + midi_input_name_text(input) + " to " + midi_output_name_text(output) + ", an octave up. Alt+F4 stops.");
 
 	// ui_pump() keeps the window alive and is also the Alt+F4 test, so this
 	// loop can always be stopped from the keyboard.

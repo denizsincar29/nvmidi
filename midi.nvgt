@@ -1,0 +1,174 @@
+// midi.nvgt - one line to get MIDI, instead of three.
+//
+//     #include "midi.nvgt"
+//
+// and the plugin is loaded and the names below are available. You do not need
+// a `#pragma plugin` line of your own: the engine reads pragmas out of every
+// file it compiles, and this one carries it.
+//
+// What is here and why. The plugin's own classes and functions - midi_input,
+// midi_output, midi_note, midi_message and the midi_* free functions - are
+// exactly what the C++ registered, and a script can call them directly. This
+// file layers three things on top.
+//
+//   * The constants and the pitch table, from nvmidi_constants.nvgt, so a
+//     script writes NOTE_C4 rather than 60.
+//   * The plugin's text back as strings, from nvmidi_string.nvgt, so
+//     midi_input_port_name_text(0) answers a string rather than a pair of byte
+//     accessors.
+//   * midi_message_view below, which answers the same questions a midi_message
+//     does but with strings where a string makes sense.
+//
+// midi_message_view exists because a script cannot add methods to the plugin's
+// own class: the type is registered as a plain value, and the engine only lets
+// a script extend a class it declared itself. So the view holds a message by
+// value and copies the answers out of it. The raw fields are still right there
+// - m.data1, m.data2, m.channel - and a view is small enough to pass around.
+
+// The plugin, and the two script-side files. The order matters because
+// nvmidi_string.nvgt reads PITCH_NAMES, so the constants come first. The
+// engine compiles the whole set as one module and skips a file it has already
+// included, so including this one twice is harmless.
+#pragma plugin nvmidi
+#include "nvmidi_constants.nvgt"
+#include "nvmidi_string.nvgt"
+
+// ---- a message, with names ------------------------------------------------
+//
+//     midi_message m;
+//     while (in.next_message(m)) {
+//         midi_message_view v(m);
+//         if (v.is_note_on)
+//             screen_reader_speak(v.note_name + ", velocity " + v.velocity);
+//     }
+//
+// Each property forwards to the plugin's own accessor, so both spell the same
+// answer. The two that differ are the ones handing back a string: `note_name`
+// is "C4" rather than a note number, and `name` is the kind of message in
+// words - "note on", "control change".
+
+class midi_message_view {
+	midi_message m;
+
+	midi_message_view() {}
+	midi_message_view(const midi_message &in other) {
+		m = other;
+	}
+
+	// What it is.
+	int kind() const { return m.kind; }
+	bool is_note() const { return m.is_note; }
+	bool is_note_on() const { return m.is_note_on; }
+	bool is_note_off() const { return m.is_note_off; }
+	bool is_control_change() const { return m.is_control_change; }
+	bool is_pedal() const { return m.is_pedal; }
+
+	// The message itself, under the names MIDI uses.
+	int channel() const { return m.channel; }
+	int data1() const { return m.data1; }
+	int data2() const { return m.data2; }
+	double timestamp() const { return m.timestamp; }
+
+	// Playing, rather than reading. -1 when the message is not that kind, so a
+	// script can tell "no controller" from "controller 0".
+	int note() const { return m.is_note ? m.data1 : -1; }
+	int velocity() const { return m.is_note ? m.data2 : -1; }
+	int controller() const { return m.controller; }
+	int pedal_type() const { return m.pedal_type; }
+	int pitch_bend() const { return m.pitch_bend; }
+	int program() const { return m.program; }
+	int aftertouch() const { return m.aftertouch; }
+	int channel_pressure() const { return m.channel_pressure; }
+
+	// The two that answer text.
+	string note_name() const {
+		int pitch = note();
+		if (pitch < 0) return "";
+		return midi_note_pitch_text(pitch);
+	}
+
+	string name() const { return midi_message_text(m); }
+};
+
+// ---- a note, from a name --------------------------------------------------
+//
+// midi_note_number("C4") already parses a name, but it answers -1 for a name it
+// does not understand and every caller then has to decide what to do about it.
+// These two build the handle directly, and answer null on a bad name.
+
+midi_note@ midi_note_named(const string &in name) {
+	int pitch = midi_note_number(name);
+	if (pitch < 0) return null;
+	return nvmidi_note_create(pitch);
+}
+
+midi_note@ midi_note_named(const string &in name, int velocity) {
+	int pitch = midi_note_number(name);
+	if (pitch < 0) return null;
+	return nvmidi_note_create(pitch, velocity);
+}
+
+// ---- play a note, by name -------------------------------------------------
+//
+// Built on the plugin's own play path: the note leaves the port it arrived on
+// and the keyboard's sound engine makes it, which is what a keyboard with no
+// synthesiser beside it needs. The pitch helpers answer false rather than
+// clamping, because a caller who passed 200 wants to hear about it.
+
+bool midi_input_play_note(midi_input@ in, int pitch, int velocity) {
+	if (@in == null) return false;
+	if (pitch < MIDI_MIN || pitch > MIDI_MAX) return false;
+	midi_note@ n = nvmidi_note_create(pitch, velocity);
+	return in.play_note_wait(n);
+}
+
+bool midi_input_play_note(midi_input@ in, const string &in name, int velocity) {
+	int pitch = midi_note_number(name);
+	if (pitch < 0) return false;
+	return midi_input_play_note(in, pitch, velocity);
+}
+
+// The same, on an output: the note goes to whatever is listening.
+
+bool midi_output_play_note(midi_output@ out, int pitch, int velocity) {
+	if (@out == null) return false;
+	if (pitch < MIDI_MIN || pitch > MIDI_MAX) return false;
+	midi_note@ n = nvmidi_note_create(pitch, velocity);
+	return out.play_note_wait(n);
+}
+
+bool midi_output_play_note(midi_output@ out, const string &in name, int velocity) {
+	int pitch = midi_note_number(name);
+	if (pitch < 0) return false;
+	return midi_output_play_note(out, pitch, velocity);
+}
+
+// ---- a chord, from names --------------------------------------------------
+//
+//     midi_play_chord(in, {"C4", "E4", "G4"}, 100);
+//
+// The array the plugin wants is a handle, so it is declared as one here. An
+// empty chord is not an error worth reporting - it plays nothing and answers
+// true.
+
+bool midi_input_play_chord(midi_input@ in, const string[] &in names, int velocity) {
+	if (@in == null) return false;
+	array<midi_note@> notes;
+	for (uint i = 0; i < names.length(); i++) {
+		int pitch = midi_note_number(names[i]);
+		if (pitch < 0) return false;
+		notes.insert_last(nvmidi_note_create(pitch, velocity));
+	}
+	return in.play_chord_wait(notes);
+}
+
+bool midi_output_play_chord(midi_output@ out, const string[] &in names, int velocity) {
+	if (@out == null) return false;
+	array<midi_note@> notes;
+	for (uint i = 0; i < names.length(); i++) {
+		int pitch = midi_note_number(names[i]);
+		if (pitch < 0) return false;
+		notes.insert_last(nvmidi_note_create(pitch, velocity));
+	}
+	return out.play_chord_wait(notes);
+}

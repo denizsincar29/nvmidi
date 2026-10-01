@@ -2370,6 +2370,104 @@ jobs:
           }
           Write-Host "trace scan done, $found trace file(s) found"
 
+      # The engine on this runner is the MSVC nvgt.exe, which is the one users
+      # run, and the dll beside it is the one this workflow just built. That
+      # combination is the only place a script is compiled by the same engine
+      # and the same plugin a user has, so every script in the repository is
+      # compiled here, once.
+      #
+      # Why it is worth a step of its own. The ubuntu scripts job compiles the
+      # same files against the same sources, so a syntax error is caught there
+      # too - but a name that exists yet does not answer, a method whose
+      # parameter is a handle on one build and a value on the other, and a
+      # mismatch between what the linux .so registers and what the windows .dll
+      # exports are differences this step alone can see. Measured on
+      # 2026-10-01: play_notes_wait does not exist (the plugin registers
+      # play_note_wait and play_chord_wait) and an array parameter is declared
+      # &in, which is a handle; a wrapper written from the header alone got
+      # both wrong and neither is a syntax error.
+      #
+      - name: compile every script against the built plugin
+        if: always()
+        shell: pwsh
+        run: |
+          $exe = Join-Path $env:NVGT_DIR 'nvgt.exe'
+          if (-not (Test-Path $exe)) {
+            Write-Host "::error title=no engine::nvgt.exe is not at $exe, so no script was compiled"
+            exit 1
+          }
+
+          # Every script here says #include "midi.nvgt", and midi.nvgt says
+          # #pragma plugin nvmidi: a plain compile of any of them fails with
+          # `failed to load plugin` if the engine cannot reach the dll this job
+          # built, and that failure reads exactly like a broken include. So the
+          # question of where the engine looks is asked once, here, on a script
+          # that does nothing but name the plugin - and the answer is used,
+          # rather than assumed. The `where does the engine find the plugin`
+          # step above is still the place that reports the location it found;
+          # this is only the consequence for this step.
+          $built = Join-Path $env:GITHUB_WORKSPACE 'nvmidi.dll'
+          if (-not (Test-Path $built)) {
+            Write-Host "::error title=no plugin::the build produced no nvmidi.dll, so no script can load it"
+            exit 1
+          }
+          $candidates = @(
+            (Join-Path $env:NVGT_DIR 'lib'),
+            $env:NVGT_DIR,
+            $env:GITHUB_WORKSPACE
+          )
+          $placed = $null
+          foreach ($dir in $candidates) {
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            Copy-Item $built -Destination (Join-Path $dir 'nvmidi.dll') -Force
+            if ((Get-Item (Join-Path $dir 'nvmidi.dll')).Length -eq 0) {
+              Write-Host "::error title=empty copy::the copy of nvmidi.dll into $dir is zero bytes"
+              exit 1
+            }
+            Write-Host "placed the plugin in $dir"
+          }
+          # The same two placements the install step makes, so the sweep below
+          # is not the first thing in the job that asks the engine to load it.
+
+          # Compiled, never run: --compile builds the whole script, includes
+          # and pragmas (so the plugin really loads and any name lookup in it
+          # really happens), and then stops. A script that would open a port or
+          # send a note never gets that far, which is what makes the sweep safe
+          # to point at the examples.
+          # -File, and a shallow recurse: the root listing has to reach the
+          # three wrapper files (midi.nvgt, nvmidi_constants.nvgt,
+          # nvmidi_string.nvgt) without walking into .git and .github, and
+          # Get-ChildItem -Path '.' -Filter '*.nvgt' does walk into them.
+          $scripts = @()
+          $scripts += Get-ChildItem -Path 'examples' -Filter '*.nvgt' -File -ErrorAction SilentlyContinue
+          $scripts += Get-ChildItem -Path 'tests'    -Filter '*.nvgt' -File -ErrorAction SilentlyContinue
+          $scripts += Get-ChildItem -Path '.' -Filter '*.nvgt' -File -Depth 1 -ErrorAction SilentlyContinue
+          if (@($scripts).Count -eq 0) {
+            Write-Host "::error title=nothing compiled::no .nvgt file was found, so this step proved nothing"
+            exit 1
+          }
+
+          $bad = $false
+          $ran = 0
+          foreach ($s in $scripts) {
+            # scripts/get_nvmidi.nvgt is the downloader: it fetches the
+            # published release and would drop it over the dll this job just
+            # built. --compile does not run it, so it is compiled here with the
+            # rest and nothing is fetched.
+            $log = "compile_" + ($s.Name -replace '\.nvgt$', '') + ".log"
+            Write-Host "::group::$($s.FullName)"
+            & $exe --compile $s.FullName *>&1 | Tee-Object -FilePath $log
+            $ran++
+            $hits = Select-String -Path $log -Pattern 'ERROR:|Unexpected token|No matching signature|Compilation error' -ErrorAction SilentlyContinue
+            foreach ($h in $hits) {
+              Write-Host "::error file=$($s.FullName),line=$($h.LineNumber)::$($h.Line.Trim())"
+              $bad = $true
+            }
+            Write-Host "::endgroup::"
+          }
+          Write-Host "compiled $ran script(s)"
+          if ($bad) { throw "at least one script did not compile against the built plugin" }
+
       - name: keep both logs
         if: always()
         uses: actions/upload-artifact@v4

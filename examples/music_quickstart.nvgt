@@ -1,4 +1,4 @@
-#pragma plugin nvmidi
+#include "midi.nvgt"
 #include "nvmidi_ui.nvgt"
 #include "nvmidi_ui_keys.nvgt"
 

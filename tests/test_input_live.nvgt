@@ -1,4 +1,4 @@
-#pragma plugin nvmidi
+#include "midi.nvgt"
 
 // test_input_live.nvgt - the half of the transport no build machine can reach:
 // a byte that comes out of a real instrument and through the queue.
@@ -20,22 +20,6 @@
 //
 // Run it from any directory; it writes apitest.log beside itself.
 
-const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
-const string digits = "0123456789";
-string char_of(uint b) {
-	if (b >= 48 && b <= 57) return digits.substr(b - 48, 1);
-	if (b >= 65 && b <= 90) return byte_letters.substr(b - 65 + 10, 1);
-	if (b >= 97 && b <= 122) return byte_letters.substr(b - 97 + 36, 1);
-	if (b == 47) return "/";
-	if (b == 46) return ".";
-	if (b == 95) return "_";
-	if (b == 45) return "-";
-	if (b == 43) return "+";
-	if (b == 32) return " ";
-	if (b == 40) return "(";
-	if (b == 41) return ")";
-	return ".";
-}
 
 int g_pass = 0;
 int g_fail = 0;
@@ -51,21 +35,6 @@ void check(const string&in name, bool ok, const string&in detail) {
 	else g_fail += 1;
 }
 
-string bytes_of_last_error() {
-	string s = "";
-	for (int i = 0; i < midi_last_error_byte_count(); i++) s += char_of(midi_last_error_byte(i));
-	return s;
-}
-string bytes_of_input_port(midi_input@ o) {
-	string s = "";
-	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += char_of(o.get_port_name_byte(i));
-	return s;
-}
-string bytes_of_output_port(midi_output@ o) {
-	string s = "";
-	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += char_of(o.get_port_name_byte(i));
-	return s;
-}
 
 // C E G E, one note at a time. octave = 0 puts it on middle C, octave = -1 an
 // octave below, which is the "your turn" signal.
@@ -84,18 +53,18 @@ void main() {
 
 	midi_output@ mo = midi_output_create();
 	if (!mo.open(2)) {
-		check("live_open_output", false, "cannot open output port 2: " + bytes_of_last_error());
+		check("live_open_output", false, "cannot open output port 2: " + midi_last_error_text());
 		return;
 	}
-	check("live_open_output", true, bytes_of_output_port(mo));
+	check("live_open_output", true, midi_output_name_text(mo));
 
 	midi_input@ mi = midi_input_create();
 	if (!mi.open(1)) {
-		check("live_open_input", false, "cannot open input port 1: " + bytes_of_last_error());
+		check("live_open_input", false, "cannot open input port 1: " + midi_last_error_text());
 		mo.close();
 		return;
 	}
-	check("live_open_input", true, bytes_of_input_port(mi));
+	check("live_open_input", true, midi_input_name_text(mi));
 	check("live_input_ignore_sysex_default", mi.get_ignore_sysex() == true, "ignore_sysex=" + bstr(mi.get_ignore_sysex()));
 	check("live_input_ignore_timing_default", mi.get_ignore_timing() == true, "ignore_timing=" + bstr(mi.get_ignore_timing()));
 

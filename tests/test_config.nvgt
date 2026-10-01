@@ -1,4 +1,4 @@
-#pragma plugin nvmidi
+#include "midi.nvgt"
 
 // test_config.nvgt - end to end smoke test of midi_config: the match and port
 // members, load, load_if_present, find_input_port, find_output_port,
@@ -14,26 +14,6 @@
 // opened the check logs a FAIL and every API check still runs. There is no
 // startup cue: a test should make only the sound it asserts on.
 
-const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
-const string digits = "0123456789";
-string char_of(uint b) {
-	if (b >= 48 && b <= 57) return digits.substr(b - 48, 1);
-	if (b >= 65 && b <= 90) return byte_letters.substr(b - 65 + 10, 1);
-	if (b >= 97 && b <= 122) return byte_letters.substr(b - 97 + 36, 1);
-	if (b == 47) return "/";
-	if (b == 46) return ".";
-	if (b == 95) return "_";
-	if (b == 45) return "-";
-	if (b == 43) return "+";
-	if (b == 32) return " ";
-	// The plugin does emit brackets - a fallback description is
-	// "MOTU ... (fallback port 0)" - and without these two lines the
-	// reconstruction turns them into dots and every comparison against a
-	// bracketed string fails for a reason that is not the plugin.
-	if (b == 40) return "(";
-	if (b == 41) return ")";
-	return ".";
-}
 
 int g_pass = 0;
 int g_fail = 0;
@@ -49,23 +29,6 @@ void check(const string&in name, bool ok, const string&in detail) {
 	else g_fail += 1;
 }
 
-string bytes_of_last_error() {
-	string s = "";
-	for (int i = 0; i < midi_last_error_byte_count(); i++) s += char_of(midi_last_error_byte(i));
-	return s;
-}
-string bytes_of_describe(midi_config@ c) {
-	string s = "";
-	for (int i = 0; i < c.describe_byte_count(); i++) s += char_of(c.describe_byte(i));
-	return s;
-}
-string bytes_of_path(midi_config@ c) {
-	string s = "";
-	for (int i = 0; i < c.get_path_byte_count(); i++) s += char_of(c.get_path_byte(i));
-	return s;
-}
-
-
 void main() {
 	file_put_contents("apitest.log", "", false);
 
@@ -73,7 +36,7 @@ void main() {
 	midi_output@ cue = midi_output_create();
 	bool cue_open = cue.open(uint(2));
 	if (!cue_open) {
-		check("output_open_port2", false, "cannot open output port 2: " + bytes_of_last_error());
+		check("output_open_port2", false, "cannot open output port 2: " + midi_last_error_text());
 	} else {
 		check("output_open_port2", true, "opened output port 2");
 	}
@@ -85,47 +48,47 @@ void main() {
 
 	// -- load a real file (fallback path: nothing matches, port=1) ---------
 	bool load_fb = cfg.load("midi_config.txt");
-	check("config_load_file_returns_true", load_fb, "returned=" + bstr(load_fb) + " error=" + bytes_of_last_error());
+	check("config_load_file_returns_true", load_fb, "returned=" + bstr(load_fb) + " error=" + midi_last_error_text());
 	int fb_in = cfg.find_input_port();
 	check("config_fallback_find_input_port_1", fb_in == 1, "found=" + fb_in);
 	check("config_fallback_get_last_port_1", cfg.get_last_port() == 1, "last_port=" + cfg.get_last_port());
-	check("config_fallback_describe_doc", bytes_of_describe(cfg) == "Nord Piano 6 MIDI 1 (fallback port 1)", "text=" + bytes_of_describe(cfg));
+	check("config_fallback_describe_doc", midi_config_text(cfg) == "Nord Piano 6 MIDI 1 (fallback port 1)", "text=" + midi_config_text(cfg));
 	int fb_out = cfg.find_output_port();
-	check("config_fallback_find_output_port_1", fb_out == 1, "found=" + fb_out + " text=" + bytes_of_describe(cfg));
+	check("config_fallback_find_output_port_1", fb_out == 1, "found=" + fb_out + " text=" + midi_config_text(cfg));
 
 	// -- load_if_present: a missing file is not fatal ----------------------
 	bool ifp_missing = cfg.load_if_present("no_such_file_zzz.txt");
 	check("config_load_if_present_missing_returns_false", !ifp_missing, "returned=" + bstr(ifp_missing));
-	check("config_load_if_present_missing_no_error", midi_last_error_byte_count() == 0, "last_error=" + bytes_of_last_error());
+	check("config_load_if_present_missing_no_error", midi_last_error_byte_count() == 0, "last_error=" + midi_last_error_text());
 	bool ifp_present = cfg.load_if_present("midi_config.txt");
-	check("config_load_if_present_present_returns_true", ifp_present, "returned=" + bstr(ifp_present) + " error=" + bytes_of_last_error());
+	check("config_load_if_present_present_returns_true", ifp_present, "returned=" + bstr(ifp_present) + " error=" + midi_last_error_text());
 
 	// -- load: a missing file is an error ----------------------------------
 	bool load_missing = cfg.load("no_such_file_zzz.txt");
 	check("config_load_missing_returns_false", !load_missing, "returned=" + bstr(load_missing));
-	check("config_load_missing_reports_error", midi_last_error_byte_count() > 0, "last_error=" + bytes_of_last_error());
+	check("config_load_missing_reports_error", midi_last_error_byte_count() > 0, "last_error=" + midi_last_error_text());
 
 	// -- a config that matches by name -------------------------------------
 	midi_config@ cfg2 = midi_config_create();
 	bool load_named = cfg2.load("midi_config_named.txt");
-	check("config_named_load_returns_true", load_named, "returned=" + bstr(load_named) + " error=" + bytes_of_last_error());
+	check("config_named_load_returns_true", load_named, "returned=" + bstr(load_named) + " error=" + midi_last_error_text());
 	int named_in = cfg2.find_input_port();
-	check("config_named_find_input_port_1", named_in == 1, "found=" + named_in + " text=" + bytes_of_describe(cfg2));
-	check("config_named_describe_doc", bytes_of_describe(cfg2) == "Nord Piano 6 MIDI 1", "text=" + bytes_of_describe(cfg2) + " last_port=" + cfg2.get_last_port());
+	check("config_named_find_input_port_1", named_in == 1, "found=" + named_in + " text=" + midi_config_text(cfg2));
+	check("config_named_describe_doc", midi_config_text(cfg2) == "Nord Piano 6 MIDI 1", "text=" + midi_config_text(cfg2) + " last_port=" + cfg2.get_last_port());
 	int named_out = cfg2.find_output_port();
 	check("config_named_find_output_port_2", named_out == 2, "found=" + named_out);
-	check("config_named_output_describe_doc", bytes_of_describe(cfg2) == "Nord Piano 6 MIDI 2", "text=" + bytes_of_describe(cfg2) + " last_port=" + cfg2.get_last_port());
+	check("config_named_output_describe_doc", midi_config_text(cfg2) == "Nord Piano 6 MIDI 2", "text=" + midi_config_text(cfg2) + " last_port=" + cfg2.get_last_port());
 
 	// -- get_path ----------------------------------------------------------
-	check("config_get_path_bytes", cfg2.get_path_byte_count() == 21 && bytes_of_path(cfg2) == "midi_config_named.txt", "count=" + cfg2.get_path_byte_count() + " path=" + bytes_of_path(cfg2));
+	check("config_get_path_bytes", cfg2.get_path_byte_count() == 21 && midi_config_path_text(cfg2) == "midi_config_named.txt", "count=" + cfg2.get_path_byte_count() + " path=" + midi_config_path_text(cfg2));
 
 	// -- the members set from the script -----------------------------------
 	cfg2.match = "motu";
 	cfg2.port = 0;
 	int motu_in = cfg2.find_input_port();
-	check("config_script_match_motu_input_0", motu_in == 0, "found=" + motu_in + " text=" + bytes_of_describe(cfg2));
+	check("config_script_match_motu_input_0", motu_in == 0, "found=" + motu_in + " text=" + midi_config_text(cfg2));
 	int motu_out = cfg2.find_output_port();
-	check("config_script_match_motu_output_1", motu_out == 1, "found=" + motu_out + " text=" + bytes_of_describe(cfg2));
+	check("config_script_match_motu_output_1", motu_out == 1, "found=" + motu_out + " text=" + midi_config_text(cfg2));
 
 	// -- reading the match member back (a string crossing out) -------------
 	string match_read = cfg2.match;

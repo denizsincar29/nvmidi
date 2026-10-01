@@ -1,139 +1,199 @@
-// nvmidi strings - text coming out of the plugin, back as an ordinary string.
+// nvmidi_string.nvgt - the plugin's text, as ordinary strings.
 //
-// Every string this plugin hands over crosses the boundary as two functions:
-// a count, and an indexed byte. There is no function returning a string, and
-// the reason is in TECHNICAL.md: the plugin and the engine are built by
-// different compilers, and a C++ string is a different shape in each of them,
-// so one of them handing a string to the other reads the wrong fields and
-// takes the game down. A count and a byte at a time crosses safely because
-// both sides agree on what an int is.
+// Text coming out of the plugin never arrives as a string. Every one of those
+// surfaces is a pair - a byte count and an indexed byte - because the plugin
+// and the engine are built by different compilers and a C++ string is a
+// different shape in each of them. One side handing the other a std::string
+// reads the wrong fields and takes the process down. A count and a byte at a
+// time crosses safely because both sides agree on what an int is.
 //
-// That leaves the script holding bytes. This file turns them back into a
-// string, and it is the same code that used to sit at the top of every
-// example and every test.
+// So each function below asks the plugin how many bytes the text has, pulls
+// the bytes one at a time and glues them into a string the script can use.
+// The work is trivial; the point is that it happens in one place.
 //
-// #include "nvmidi_string.nvgt" after `#pragma plugin nvmidi`.
+//   int midi_input_port_name_byte_count(uint port)
+//   int midi_input_port_name_byte(uint port, uint index)
 //
-// If you are only reading messages, you may not need much of this: the useful
-// numbers on a message now have names of their own - `m.is_note_on`,
-// `m.controller`, `m.pitch_bend` and the rest - so a script that used to pull
-// a byte apart to compare it can compare properties instead. What is left in
-// this file is the text: error messages, port names, and the note name.
+// answers -1 for a byte that is not there, which is how the end of the text is
+// found - not the same as a zero byte. That is also the only error signal
+// those two give: a port number out of range answers -1 bytes, so a name that
+// comes back empty means the port does not exist.
 
-// ---------------------------------------------------------------------------
-// One byte, as one character
-// ---------------------------------------------------------------------------
-
-// This engine's string(byte) gives the decimal digits of the number rather
-// than the character they stand for - measured, and the reason this file
-// exists at all: a backend name asked for that way came out as
-// "110118109105100105..." and every comparison against "Windows" failed.
+// ---- the primitive --------------------------------------------------------
 //
-// A table walked with substr() does not work either, and that is measured too:
-// on a literal, index 32 answers 'W', index 65 answers '-', index 47 answers
-// 'l', and substr(67, 1) is already empty on a literal whose length() is 68.
-// What is measured is that the *first* ten characters and the *first* twenty
-// six characters of a literal read correctly. So the two ranges a byte pair
-// actually needs - digits, and letters - are fetched from two short literals
-// walked from their own start, and the punctuation a port name is made of is
-// written out as a branch.
-//
-// Every bound here is a number because a character literal in this engine is
-// a one-character string, not a code: measured, `b >= '0'` is "No conversion
-// from 'const string' to math type available".
+// A string built from one character has to be built from a character, and
+// there is no char type in AngelScript: `string(65)` is the two digits "65",
+// and substr on a literal answers nonsense past about ten characters (index 32
+// gave 'W', index 65 gave '-'). So the character is found by its number in a
+// table. This is the one place in these files that is a lookup rather than a
+// call, and it is the reason the function takes a byte and not a string.
 
-const string NVMDIGITS = "0123456789";
-const string NVMALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const string NVM_DIGITS = "0123456789";
+const string NVM_ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
-// One byte back as a one-character string. Bytes that are not text at all -
-// control bytes, or anything above 126 - come back as ".", because a count and
-// an indexed byte carry no encoding: the 128 is a MIDI byte, not a character
-// in any codepage. Non-ASCII port names therefore lose their accents here; the
-// plugin reports them as bytes and cannot do better.
 string midi_string_char(uint b) {
-	if (b >= 48 && b <= 57) return NVMDIGITS.substr(b - 48, 1);
-	if (b >= 65 && b <= 90) return NVMALPHA.substr(b - 65, 1);
-	if (b >= 97 && b <= 122) return NVMALPHA.substr(b - 97 + 26, 1);
-	if (b == 47) return "/";
-	if (b == 46) return ".";
-	if (b == 95) return "_";
-	if (b == 45) return "-";
-	if (b == 43) return "+";
+	if (b >= 48 && b <= 57) return "" + NVM_DIGITS[int(b) - 48];
+	if (b >= 65 && b <= 90) return "" + NVM_ALPHA[int(b) - 65];
+	if (b >= 97 && b <= 122) return "" + NVM_ALPHA[int(b) - 97 + 26];
+	// The punctuation a port name actually contains. Anything else is dropped,
+	// which is honest: the plugin reports MIDI bytes, not characters in a
+	// codepage, so a name with accents in it arrives incomplete either way.
 	if (b == 32) return " ";
-	return ".";
+	if (b == 45) return "-";
+	if (b == 95) return "_";
+	if (b == 46) return ".";
+	if (b == 44) return ",";
+	if (b == 47) return "/";
+	if (b == 58) return ":";
+	if (b == 40) return "(";
+	if (b == 41) return ")";
+	if (b == 91) return "[";
+	if (b == 93) return "]";
+	if (b == 43) return "+";
+	if (b == 35) return "#";
+	if (b == 39) return "'";
+	if (b == 33) return "!";
+	if (b == 63) return "?";
+	if (b == 38) return "&";
+	if (b == 42) return "*";
+	if (b == 37) return "%";
+	return "";
 }
 
-// ---------------------------------------------------------------------------
-// Putting a byte pair back together
-// ---------------------------------------------------------------------------
-
-// The two calls every reader below is built on. `-1` from the indexed call
-// means "no byte there", which is how the end is found; it is not a zero byte,
-// and a zero byte would not be text either.
-//
-// The count is asked for once and the index walked to it, rather than calling
-// the count inside the loop condition, because every one of these calls
-// crosses into the plugin.
+// ---- the plugin's own words ----------------------------------------------
 
 string midi_last_error_text() {
 	string s = "";
-	const int n = midi_last_error_byte_count();
-	for (int i = 0; i < n; i++) s += midi_string_char(midi_last_error_byte(i));
+	for (int i = 0; i < midi_last_error_byte_count(); i++)
+		s += midi_string_char(midi_last_error_byte(i));
 	return s;
 }
 
-string midi_error_text() {
+string midi_first_error_text() {
 	string s = "";
-	const int n = midi_first_error_byte_count();
-	for (int i = 0; i < n; i++) s += midi_string_char(midi_first_error_byte(i));
+	for (int i = 0; i < midi_first_error_byte_count(); i++)
+		s += midi_string_char(midi_first_error_byte(i));
 	return s;
 }
 
 string midi_api_name_text() {
 	string s = "";
-	const int n = midi_api_name_byte_count();
-	for (int i = 0; i < n; i++) s += midi_string_char(midi_api_name_byte(i));
+	for (int i = 0; i < midi_api_name_byte_count(); i++)
+		s += midi_string_char(midi_api_name_byte(i));
 	return s;
 }
 
 string midi_input_port_name_text(uint port) {
 	string s = "";
-	const int n = midi_input_port_name_byte_count(port);
-	for (int i = 0; i < n; i++) s += midi_string_char(midi_input_port_name_byte(port, i));
+	for (int i = 0; i < midi_input_port_name_byte_count(port); i++)
+		s += midi_string_char(midi_input_port_name_byte(port, i));
 	return s;
 }
 
 string midi_output_port_name_text(uint port) {
 	string s = "";
-	const int n = midi_output_port_name_byte_count(port);
-	for (int i = 0; i < n; i++) s += midi_string_char(midi_output_port_name_byte(port, i));
+	for (int i = 0; i < midi_output_port_name_byte_count(port); i++)
+		s += midi_string_char(midi_output_port_name_byte(port, i));
 	return s;
 }
 
-// The one-line description of a message, the same text `midi_message_name`
-// produces in the plugin.
+// ---- the text a port carries, rather than the port's number ---------------
+//
+// These two take an open midi_input or midi_output and ask *it* what it is
+// connected to. That is not the same question as midi_input_port_name_text(0)
+// above: the free function answers for a port number, while an open object
+// answers for the port it actually opened, which is the one thing a script
+// holding the object already knows. Both are here because both spellings
+// existed in the examples before this file did.
+//
+// A null handle answers an empty string rather than faulting: a script that
+// reached here has usually just failed to create the object.
+
+string midi_input_name_text(midi_input@ in) {
+	if (@in == null) return "";
+	string s = "";
+	for (int i = 0; i < in.get_port_name_byte_count(); i++)
+		s += midi_string_char(in.get_port_name_byte(i));
+	return s;
+}
+
+string midi_output_name_text(midi_output@ out) {
+	if (@out == null) return "";
+	string s = "";
+	for (int i = 0; i < out.get_port_name_byte_count(); i++)
+		s += midi_string_char(out.get_port_name_byte(i));
+	return s;
+}
+
+// What the config decided, in words - "port 2" or the name it matched. The
+// examples print this when open_config() fails, because the config is the only
+// thing that says which device was being asked for.
+string midi_config_text(midi_config@ c) {
+	if (@c == null) return "";
+	string s = "";
+	for (int i = 0; i < c.describe_byte_count(); i++)
+		s += midi_string_char(c.describe_byte(i));
+	return s;
+}
+
+// The same two questions asked of the frame, not of the opened object: what the
+// config matched, and which file decided that. midi_config_text() above covers
+// describe_byte_*; the path is a separate pair on the same object, so it gets
+// its own function rather than a mode flag.
+string midi_config_path_text(midi_config@ c) {
+	if (@c == null) return "";
+	string s = "";
+	for (int i = 0; i < c.get_path_byte_count(); i++)
+		s += midi_string_char(c.get_path_byte(i));
+	return s;
+}
+
+// A note the script itself built, printed as text. The plugin defines this text
+// for a note it hands back; a midi_note is a value the script made, so the
+// script asks it the same way. This is what a log wants when a chord is wrong.
+string midi_note_text(midi_note@ n) {
+	if (@n == null) return "";
+	string s = "";
+	for (int i = 0; i < n.to_string_byte_count(); i++)
+		s += midi_string_char(n.to_string_byte(i));
+	return s;
+}
+
+// A note name for a pitch: 60 gives "C4". This is the same text the plugin
+// produces for midi_note_pitch_name_byte_count, put together on the script
+// side, so it costs no boundary crossing - but it needs PITCH_NAMES, so this
+// file is meant to be reached through midi.nvgt or included after
+// nvmidi_constants.nvgt.
+string midi_note_pitch_text(int pitch) {
+	if (pitch < 0 || pitch > 127) return "";
+	return PITCH_NAMES[pitch % 12] + (pitch / 12 - 1);
+}
+
+// A duration, the same way. A midi_duration carries its own text and the plugin
+// defines it; this reads it back.
+string midi_duration_text(midi_duration d) {
+	string s = "";
+	for (int i = 0; i < d.to_string_byte_count(); i++)
+		s += midi_string_char(d.to_string_byte(i));
+	return s;
+}
+
+// The note name a message is about, off the message's own byte pair rather than
+// off the pitch - the same name midi_note_pitch_text() would give, but asked of
+// the message, which is what a script that just received it is holding. The
+// plugin fills this pair from the message's data bytes, so a message with no
+// note in it answers nothing.
+string midi_message_note_name_text(const midi_message&in m) {
+	string s = "";
+	for (int i = 0; i < m.note_name_byte_count; i++)
+		s += midi_string_char(m.note_name_byte(i));
+	return s;
+}
+
+// The name of a message that arrived, for a log or a screen reader.
 string midi_message_text(const midi_message&in m) {
 	string s = "";
-	const int n = midi_message_name_byte_count(m);
-	for (int i = 0; i < n; i++) s += midi_string_char(midi_message_name_byte(m, i));
-	return s;
-}
-
-// The note name of a pitch: "C4", "F#3", "A#5". These two take a number
-// rather than a message, so they work on a pitch that came from anywhere.
-string midi_note_pitch_text(int pitch) {
-	string s = "";
-	const int n = midi_note_pitch_name_byte_count(pitch);
-	for (int i = 0; i < n; i++) s += midi_string_char(midi_note_pitch_name_byte(pitch, i));
-	return s;
-}
-
-// The name of the note this message is about, from the message itself. The
-// plugin builds it, so a script can speak `midi_note_name(m)` without knowing
-// that a pitch is a number and an octave is a division.
-string midi_note_name(const midi_message&in m) {
-	string s = "";
-	const int n = m.note_name_byte_count;
-	for (int i = 0; i < n; i++) s += midi_string_char(m.note_name_byte(i));
+	for (int i = 0; i < midi_message_name_byte_count(m); i++)
+		s += midi_string_char(midi_message_name_byte(m, i));
 	return s;
 }

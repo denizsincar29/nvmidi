@@ -20,26 +20,80 @@ the engine you are running, which is where NVGT looks for plugins. Nothing else
 needs downloading — the script uses NVGT's own http, file and screen reader
 functions.
 
-Then ask for the plugin from the script that needs it, on a line of its own at
-the top of the file:
+A script then asks for the plugin with one include:
 
 ```angelscript
-#pragma plugin nvmidi
+#include "midi.nvgt"
 ```
 
-The pragma is the whole of the installation as far as your script is concerned:
-NVGT reads a script's pragmas before compiling it and loads exactly the names it
-finds there. Without that line every `midi_*` name fails to compile with
-`No matching symbol`, which reads like a broken library rather than a missing
-request.
+`midi.nvgt` carries the `#pragma plugin nvmidi` line itself and pulls in the
+constants and the string helpers, so that one line is the whole of the setup.
+You never write the pragma and never import the plugin by name. The compiler
+resolves the include relative to the file that carries it, so `midi.nvgt` has
+to be reachable from your script — keep it beside the script, or beside the
+`lib/` folder the installer wrote.
+
+Underneath, the pragma is the installation: NVGT reads a script's pragmas
+before compiling it and loads exactly the names it finds there. Without it
+every `midi_*` name fails to compile with `No matching symbol`, which reads
+like a broken library rather than a missing request. That is why the include is
+not optional even though it looks like one more line.
+
+## The wrapper
+
+`midi.nvgt` is a thin script layer over the plugin. It changes nothing about
+what the plugin does; it removes the two things every script was otherwise
+writing for itself.
+
+It wraps the awkward types in classes, so a function that hands back a message
+hands back something a script can read:
+
+```angelscript
+midi_message_view v(m);
+if (v.is_note_on()) screen_reader_speak(v.note_name() + " velocity " + v.velocity());
+```
+
+The view answers the same questions the message does — `is_note()`,
+`is_note_on()`, `is_note_off()`, `is_control_change()`, `is_pedal()`, `note()`,
+`velocity()`, `controller()`, `pedal_type()`, `pitch_bend()`, `program()`,
+`aftertouch()`, `channel_pressure()`, `note_name()`, `name()` — as calls rather
+than as properties, because they are forwarding to the message and a script
+class cannot turn a function into a property for its caller.
+
+It does the same for text, so a name is a string rather than a byte count and
+an index:
+
+```angelscript
+screen_reader_speak(midi_input_port_name_text(0));
+screen_reader_speak(midi_last_error_text());
+screen_reader_speak(midi_message_text(m));
+```
+
+And it lets a note be named rather than numbered, on both the input and the
+output side:
+
+```angelscript
+midi_output_play_note(out, "E4", 100);
+midi_output_play_chord(out, "C4 E4 G4".split(" "), 100);
+midi_input_play_note(in, "C5", 100);   // back out of the keyboard's own port
+```
+
+Those are free functions rather than methods of the port, because AngelScript
+cannot add methods to a class the plugin has already registered — the port
+classes belong to the plugin, and a script cannot extend them. The chord
+functions take the same `array<midi_note@>` the plugin does; for a named chord
+that means splitting a string into an array first, as above.
+
+Everything the plugin documented before still works — this is a wrapper, not a
+replacement — but a new script should not need to touch the byte tables at all.
 
 ## Reading a keyboard
 
 ```angelscript
-#pragma plugin nvmidi
-#include "nvmidi_string.nvgt"
+#include "midi.nvgt"
 
 midi_input@ in = midi_input_create();
+midi_message m;
 
 void main() {
 	// Say what is plugged in, so you have a port number to use.
@@ -52,10 +106,10 @@ void main() {
 	}
 
 	while (true) {
-		midi_message m;
 		while (in.next_message(m)) {
-			if (m.is_note_on)
-				screen_reader_speak(midi_note_name(m) + " velocity " + m.data2);
+			midi_message_view v(m);
+			if (v.is_note_on)
+				screen_reader_speak(v.note_name() + " velocity " + v.velocity());
 		}
 		wait(10); // never spin without sleeping
 	}
@@ -77,25 +131,26 @@ reading one message per frame — a fast player generates messages quicker than
 ## Playing a chord
 
 `midi_note` carries a pitch, a velocity and a length, and the length can be
-written in whichever unit you think in. `nvmidi_constants.nvgt` names the
-pitches, so the same code reads as notes rather than as numbers:
+written in whichever unit you think in. The wrapper reaches the pitches by name,
+so the same code reads as notes rather than as numbers:
 
 ```angelscript
-#include "nvmidi_constants.nvgt"
+#include "midi.nvgt"
 
 array<midi_note@>@ notes = array<midi_note@>();
-midi_note@ n = nvmidi_note_create(NOTE_C4, 100);   // middle C, velocity 100
-n.length = midi_duration(1.0, MIDI_BEATS);         // one beat at 120 bpm
+midi_note@ n = midi_note_named("C4", 100);   // middle C, velocity 100
+n.length = midi_duration(1.0, MIDI_BEATS);   // one beat at 120 bpm
 notes.insert_last(n);
-notes.insert_last(nvmidi_note_create(NOTE_E4, 100));
-notes.insert_last(nvmidi_note_create(NOTE_G4, 100));
+notes.insert_last(midi_note_named("E4", 100));
+notes.insert_last(midi_note_named("G4", 100));
 
-out.play_chord_wait(notes);                        // sounds, then returns
+out.play_chord_wait(notes);                  // sounds, then returns
 out.play_midi_chord_wait(notes, "arpeggio");
 ```
 
 `midi_note_number("E4")` does the same job from a name, for a script that would
-rather read the name than a constant.
+rather read the name than a constant, and `midi_note_pitch_text(64)` goes the
+other way and gives back "E4" for a number.
 
 `play_midi_chord(notes, pattern)` lays a group out in time — `spread`,
 `arpeggio`, `quick`, `fast`, `sequence`, `repeat`, `strum` or `chord`. The same
@@ -112,16 +167,24 @@ shape in each of them; one side handing the other a string reads the wrong
 fields and takes the process down. A count and a byte at a time crosses safely
 because both sides agree on what an `int` is.
 
-`nvmidi_string.nvgt` puts the text back together, so a script asks for a name
-and gets a string:
+`midi.nvgt` puts the text back together, so a script asks for a name and gets
+a string. The functions are in `nvmidi_string.nvgt`, which `midi.nvgt` includes
+for you — you never include it yourself:
 
 ```angelscript
-#include "nvmidi_string.nvgt"
+#include "midi.nvgt"
 
 screen_reader_speak(midi_input_port_name_text(0));
 screen_reader_speak(midi_last_error_text());
-screen_reader_speak(midi_note_name(m));
+screen_reader_speak(midi_message_text(m));       // off the message itself
+screen_reader_speak(midi_note_pitch_text(64));   // "E4", from a pitch
 ```
+
+Two spellings exist for the port name, and the difference is which question you
+are asking. `midi_input_port_name_text(0)` answers for port number 0, whether
+or not anything is open. `midi_input_name_text(in)` answers for the object you
+are holding — the port it actually opened — which is what a script that just
+failed to open something already knows.
 
 `-1` from the indexed call means "no byte there", which is not the same as a
 zero byte; that is how the end of the text is found. The bytes carry no

@@ -204,32 +204,41 @@ jobs:
           nvgt="$(find engine -type f -name nvgt | head -n1)"
           chmod +x "$nvgt"
 
-          cat > /tmp/loadcheck.nvgt <<'SCRIPT'
-          #pragma plugin nvmidi
-          // The backend name comes over as bytes: this engine publishes no
-          // string factory, so a plugin-returned string would corrupt the
-          // process. Rebuild the text here, where the engine's own strings
-          // were measured alive. See PROBE-FINDINGS.md at the repo root.
-          string backend_name() {
-            // string(byte) hands back the decimal digits of the number, not
-            // the character: measured on a windows runner, where the name came
-            // out as "110118109105100105...". This table is the conversion
-            // that works.
-            const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
-            string s = "";
-            for (int i = 0; i < midi_api_name_byte_count(); i++) {
-              uint b = uint(midi_api_name_byte(i));
-              if (b < byte_letters.length()) s += byte_letters.substr(b, 1);
-            }
-            return s;
-          }
+          # The check is written into the checkout rather than into /tmp, so
+          # that the wrapper under test is the one that is #included. The
+          # include is resolved relative to the file that carries it, and a
+          # file in /tmp has no midi.nvgt beside it: the engine would report
+          # "file not found" and the step would fail for a reason that is not
+          # the plugin. The name carries the .nvgt extension the engine wants.
+          cat > loadcheck.nvgt <<'SCRIPT'
+          // This file exercises midi.nvgt itself, not only the plugin behind
+          // it: every wrapper function below is a call the examples and the
+          // tests now make, so if the wrapper has drifted from the plugin's
+          // own surface this script is where it shows.
+          #include "midi.nvgt"
+
           void main() {
-            print("NVGT_PLUGIN_LOADED " + backend_name());
+            // The backend name comes over as bytes: this engine publishes no
+            // string factory, so a plugin-returned string would corrupt the
+            // process. midi_api_name_text() is the wrapper's reconstruction of
+            // it, and printing it here is the check that the reconstruction
+            // still matches what the plugin publishes.
+            print("NVGT_PLUGIN_LOADED api=" + midi_api_name_text());
+            print("ports in=" + midi_input_port_count() + " out=" + midi_output_port_count());
+            print("C4 is " + midi_note_pitch_text(NOTE_C4));
+            print("C#4 parses to " + midi_note_number("C#4"));
+            // A message the wrapper has to describe, built by hand so the
+            // check does not need a device to play into.
+            midi_message m;
+            m.status = uint8(0x90); m.data1 = uint8(60); m.data2 = uint8(100); m.channel = 1;
+            midi_message_view v(m);
+            print("view note_on=" + v.is_note_on() + " name=" + v.note_name() + " text=" + v.name());
+            print("WRAPPER_OK");
           }
           SCRIPT
 
           set +e
-          timeout 120 "$nvgt" /tmp/loadcheck.nvgt 2>&1 | tee loadcheck.log
+          timeout 120 "$nvgt" loadcheck.nvgt 2>&1 | tee loadcheck.log
           rc="${PIPESTATUS[0]}"
           set -e
 
@@ -238,8 +247,8 @@ jobs:
             echo "::error title=plugin does not load::the engine refused nvmidi.so, so no script in this repository can run"
             failed=1
           fi
-          if ! grep -q 'NVGT_PLUGIN_LOADED' loadcheck.log; then
-            echo "::error title=plugin never ran::the engine did not report the plugin as loaded; the script did not reach main()"
+          if ! grep -q 'WRAPPER_OK' loadcheck.log; then
+            echo "::error title=wrapper or plugin failed::the script did not reach WRAPPER_OK. Either the plugin did not load, or midi.nvgt did not compile against it - both leave the script short of its last line."
             failed=1
           fi
           if [ "$failed" -ne 0 ]; then
@@ -275,7 +284,7 @@ jobs:
           # it has drifted from the engine's own api.
           mkdir -p logs
           status=0
-          for script in scripts/*.nvgt examples/*.nvgt tests/*.nvgt; do
+          for script in scripts/*.nvgt examples/*.nvgt tests/*.nvgt midi.nvgt nvmidi_constants.nvgt nvmidi_string.nvgt; do
             [ -e "$script" ] || continue
             # get_nvmidi.nvgt is not a test, it is the downloader: running it
             # downloads the published release over the library this job just
@@ -292,10 +301,10 @@ jobs:
             # check in this repository - a script nobody compiles is a script
             # whose first compile is in a user's hands.
             case "$script" in
-              scripts/get_nvmidi.nvgt)
-                echo "::group::$script (compiled only, never run: it would replace the library under test)"
+              scripts/get_nvmidi.nvgt|midi.nvgt|nvmidi_constants.nvgt|nvmidi_string.nvgt)
+                echo "::group::$script (compiled only: midi.nvgt is a header, the other two scripts/*.nvgt are programs)"
                 set +e
-                compile_log="logs/get_nvmidi.compile.log"
+                compile_log="logs/$(basename "$script").compile.log"
                 # --compile is `-c` in the engine's help: build the script and
                 # exit without running a line of it, so this cannot reach the
                 # network. Its exit code is not asserted, because the zero
@@ -306,6 +315,12 @@ jobs:
                 timeout 120 "$nvgt" --compile "$script" > "$compile_log" 2>&1
                 set -e
                 cat "$compile_log"
+                if [ ! -s "$compile_log" ]; then
+                  echo "::error file=$script::the compile of $script produced no output, so nothing was compiled"
+                  status=1
+                  echo "::endgroup::"
+                  continue
+                fi
                 if grep -qE 'ERROR:|Unexpected token|No matching signatures' "$compile_log"; then
                   echo "::error file=$script::the engine reported an error while compiling $script"
                   grep -E 'ERROR:|Unexpected token|No matching signatures' "$compile_log"
