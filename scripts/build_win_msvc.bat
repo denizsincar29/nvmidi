@@ -77,20 +77,20 @@ rem parentheses and cmd answered ") was unexpected at this time." at that line
 rem on the runner, exit 255, before the compiler ran - run 36909839651. Every
 rem line below is inert text, so no line in this block can fail that way; the
 rem first ">" creates the file, the rest append.
-rem #pragma clang diagnostic push                                       > build-msvc\nvgt_import.inc
-rem #pragma comment(linker, "/alternatename:__imp_asAllocMem=asAllocMem")             >> build-msvc\nvgt_import.inc
-rem #pragma comment(linker, "/alternatename:__imp_asFreeMem=asFreeMem")               >> build-msvc\nvgt_import.inc
-rem #pragma comment(linker, "/alternatename:__imp_asGetLibraryOptions=asGetLibraryOptions") >> build-msvc\nvgt_import.inc
-rem #pragma comment(linker, "/alternatename:__imp_asGetActiveContext=asGetActiveContext")   >> build-msvc\nvgt_import.inc
-rem #pragma comment(linker, "/alternatename:__imp_asAcquireExclusiveLock=asAcquireExclusiveLock") >> build-msvc\nvgt_import.inc
-rem #pragma comment(linker, "/alternatename:__imp_asReleaseExclusiveLock=asReleaseExclusiveLock") >> build-msvc\nvgt_import.inc
-rem #pragma comment(linker, "/alternatename:__imp_asAcquireSharedLock=asAcquireSharedLock") >> build-msvc\nvgt_import.inc
-rem #pragma comment(linker, "/alternatename:__imp_asReleaseSharedLock=asReleaseSharedLock") >> build-msvc\nvgt_import.inc
-rem #pragma comment(linker, "/alternatename:__imp_asAtomicInc=asAtomicInc")           >> build-msvc\nvgt_import.inc
-rem #pragma comment(linker, "/alternatename:__imp_asAtomicDec=asAtomicDec")           >> build-msvc\nvgt_import.inc
-rem #pragma comment(linker, "/alternatename:__imp_asThreadCleanup=asThreadCleanup")   >> build-msvc\nvgt_import.inc
-rem #pragma comment(linker, "/alternatename:__imp_asGetLibraryVersion=asGetLibraryVersion") >> build-msvc\nvgt_import.inc
-rem #pragma comment(linker, "/alternatename:__imp_asPrepareMultithread=asPrepareMultithread") >> build-msvc\nvgt_import.inc
+rem #pragma clang diagnostic push                                       > "build-msvc\nvgt_import.inc"
+rem #pragma comment(linker, "/alternatename:__imp_asAllocMem=asAllocMem")             >> "build-msvc\nvgt_import.inc"
+rem #pragma comment(linker, "/alternatename:__imp_asFreeMem=asFreeMem")               >> "build-msvc\nvgt_import.inc"
+rem #pragma comment(linker, "/alternatename:__imp_asGetLibraryOptions=asGetLibraryOptions") >> "build-msvc\nvgt_import.inc"
+rem #pragma comment(linker, "/alternatename:__imp_asGetActiveContext=asGetActiveContext")   >> "build-msvc\nvgt_import.inc"
+rem #pragma comment(linker, "/alternatename:__imp_asAcquireExclusiveLock=asAcquireExclusiveLock") >> "build-msvc\nvgt_import.inc"
+rem #pragma comment(linker, "/alternatename:__imp_asReleaseExclusiveLock=asReleaseExclusiveLock") >> "build-msvc\nvgt_import.inc"
+rem #pragma comment(linker, "/alternatename:__imp_asAcquireSharedLock=asAcquireSharedLock") >> "build-msvc\nvgt_import.inc"
+rem #pragma comment(linker, "/alternatename:__imp_asReleaseSharedLock=asReleaseSharedLock") >> "build-msvc\nvgt_import.inc"
+rem #pragma comment(linker, "/alternatename:__imp_asAtomicInc=asAtomicInc")           >> "build-msvc\nvgt_import.inc"
+rem #pragma comment(linker, "/alternatename:__imp_asAtomicDec=asAtomicDec")           >> "build-msvc\nvgt_import.inc"
+rem #pragma comment(linker, "/alternatename:__imp_asThreadCleanup=asThreadCleanup")   >> "build-msvc\nvgt_import.inc"
+rem #pragma comment(linker, "/alternatename:__imp_asGetLibraryVersion=asGetLibraryVersion") >> "build-msvc\nvgt_import.inc"
+rem #pragma comment(linker, "/alternatename:__imp_asPrepareMultithread=asPrepareMultithread") >> "build-msvc\nvgt_import.inc"
 
 rem Prove the header was written before the compiler is asked to read it. The
 rem redirects above are invisible: they print nothing and cmd reports nothing,
