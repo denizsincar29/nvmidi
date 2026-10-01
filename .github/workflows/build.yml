@@ -1,0 +1,175 @@
+name: build
+
+# Builds the plugin for the two platforms the release publishes, and does
+# nothing else. Each job produces exactly one file:
+#
+#   windows -> nvmidi.dll   built with MSVC by scripts/build_win_msvc.bat
+#   linux   -> nvmidi.so    the dummy-backend build
+#
+# Why MSVC on windows, and not MinGW. nvgt.exe on windows is an MSVC build. A
+# MinGW plugin carries libstdc++'s std::string layout while the engine carries
+# MSVC's, and the two do not agree about where the characters and the size sit:
+# measured 2026-10-01, a MinGW plugin received "nord" as size=0
+# data=0x64726f6e, and midi_config::load() faulted on the misread pointer. The
+# same source built with MSVC against the same engine receives the string
+# intact. A MinGW dll must never be the published one.
+#
+# Why an engine is downloaded here. build_win_msvc.bat turns the running
+# engine's own export table into an import library: the engine's as* symbols
+# (asAllocMem, asGetLibraryOptions, ...) are exported as plain C names, and
+# MSVC needs them at link time where MinGW could leave them unresolved, so the
+# dll links against them. The script reads that table with
+# `dumpbin /exports <engine>\nvgt.exe`, taking the file from NVGT_HOME (or from
+# PATH). A hosted runner has neither, so this workflow fetches the pinned nvgt
+# build - the same rolling `latest` prerelease scripts/nvgt_pin.sh pins - and
+# points NVGT_HOME at the folder holding it. That is the arrangement: the
+# script's own documented NVGT_HOME is supplied with a real engine, and no
+# build script is changed. The export table is asserted before the build, so a
+# wrong download is a named failure and never a dll that links against nothing.
+#
+# Why the dummy backend on linux. Defining __LINUX_ALSA__ puts a
+# "needed: libasound.so.2" entry into the library, and a machine without ALSA
+# has the loader reject the whole library before a symbol is looked up; the
+# engine then says only "failed to load plugin". The dummy build needs libc
+# and libstdc++ only, so it loads anywhere. An ALSA build in a release is a
+# trap, not a fallback.
+#
+# The workflow is reusable: release.yml calls it, so a release and an ordinary
+# build compile the same way.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: fetch the pinned nvgt engine, for its export table
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $headers = @{ 'User-Agent' = 'nvmidi-ci' }
+          $release = Invoke-RestMethod -Headers $headers -Uri 'https://api.github.com/repos/samtupy/nvgt/releases/tags/latest'
+          $asset = $release.assets | Where-Object { $_.name -like '*.exe' } | Select-Object -First 1
+          if (-not $asset) {
+            throw 'the nvgt release carries no .exe asset, so there is no engine to read an export table from'
+          }
+          Write-Host "engine: $($asset.name), $([math]::Round($asset.size / 1MB, 1)) MB"
+          New-Item -ItemType Directory -Force engine | Out-Null
+          Invoke-WebRequest -Headers $headers -Uri $asset.browser_download_url -OutFile engine/nvgt.exe
+          $home = Join-Path (Get-Location).Path 'engine'
+          "NVGT_HOME=$home" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+          Write-Host "NVGT_HOME=$home"
+
+      - name: the download really is the engine
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (-not (Test-Path $vswhere)) { throw 'no vswhere on this runner' }
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'this runner has no Visual Studio C++ tools' }
+          $dumpbin = Get-ChildItem (Join-Path $vs 'VC/Tools/MSVC') -Recurse -Filter dumpbin.exe -ErrorAction Stop |
+                     Where-Object { $_.FullName -like '*Hostx64/x64/dumpbin.exe' } | Select-Object -First 1
+          if (-not $dumpbin) { throw "dumpbin.exe not found under $vs" }
+          $exports = (& $dumpbin.FullName /exports engine/nvgt.exe 2>&1 | Out-String)
+          if ($exports -notmatch 'asAllocMem') {
+            throw 'engine/nvgt.exe does not export asAllocMem, so this file is not the engine build the plugin links against'
+          }
+          Write-Host 'engine/nvgt.exe exports the Angelscript symbols the plugin links against'
+
+      - name: build nvmidi.dll with MSVC
+        shell: cmd
+        run: scripts\build_win_msvc.bat
+
+      - name: the dll needs no MinGW runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path nvmidi.dll)) { throw 'the MSVC build wrote no nvmidi.dll' }
+          $bytes = [IO.File]::ReadAllBytes('nvmidi.dll')
+          $pe = [BitConverter]::ToInt32($bytes, 0x3c)
+          $nsections = [BitConverter]::ToUInt16($bytes, $pe + 6)
+          $optsize = [BitConverter]::ToUInt16($bytes, $pe + 20)
+          $opt = $pe + 24
+          $magic = [BitConverter]::ToUInt16($bytes, $opt)
+          $directories = $opt + $(if ($magic -eq 0x20b) { 112 } else { 96 })
+          $sectionTable = $opt + $optsize
+          $sections = for ($i = 0; $i -lt $nsections; $i++) {
+            $o = $sectionTable + $i * 40
+            [pscustomobject]@{
+              Va     = [BitConverter]::ToUInt32($bytes, $o + 12)
+              VSize  = [BitConverter]::ToUInt32($bytes, $o + 8)
+              RawOff = [BitConverter]::ToUInt32($bytes, $o + 20)
+            }
+          }
+          function Convert-RvaToOffset([uint32]$rva) {
+            foreach ($s in $sections) {
+              if ($rva -ge $s.Va -and $rva -lt ($s.Va + [Math]::Max($s.VSize, 1))) {
+                return [int]($s.RawOff + ($rva - $s.Va))
+              }
+            }
+            return -1
+          }
+          $importRva = [BitConverter]::ToUInt32($bytes, $directories + 8)
+          if ($importRva -eq 0) { throw 'the dll has no import table' }
+          $off = Convert-RvaToOffset $importRva
+          $needs = @()
+          while ($true) {
+            $nameRva = [BitConverter]::ToUInt32($bytes, $off + 12)
+            if ($nameRva -eq 0) { break }
+            $nameOff = Convert-RvaToOffset $nameRva
+            $end = $nameOff
+            while ($bytes[$end] -ne 0) { $end++ }
+            $needs += [Text.Encoding]::ASCII.GetString($bytes, $nameOff, $end - $nameOff)
+            $off += 20
+          }
+          $needs | ForEach-Object { Write-Host "  needs: $_" }
+          $mingw = $needs | Where-Object { $_ -match '^(libwinpthread|libstdc\+\+|libgcc)' }
+          if ($mingw) {
+            throw "the dll imports $($mingw -join ', '), a MinGW runtime windows does not have. Windows refuses such a dll whole and nvgt then says only 'failed to load plugin'. This must be an MSVC build."
+          }
+          $vc = $needs | Where-Object { $_ -match '^(vcruntime|msvcp)' }
+          if ($vc) {
+            Write-Host "::warning title=the dll needs the VC runtime::it imports $($vc -join ', '), so a user needs the Microsoft Visual C++ redistributable installed."
+          }
+          Write-Host 'the dll needs no MinGW runtime'
+
+      - name: keep the dll
+        uses: actions/upload-artifact@v4
+        with:
+          name: nvmidi-dll
+          path: nvmidi.dll
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build nvmidi.so with the dummy backend
+        run: make MIDI_BACKEND=dummy
+
+      - name: the so needs nothing a stock machine lacks
+        run: |
+          set -euo pipefail
+          test -s nvmidi.so
+          ls -l nvmidi.so
+          readelf -d nvmidi.so | grep -E 'NEEDED|SONAME' || true
+          if readelf -d nvmidi.so | grep -q 'libasound'; then
+            echo "::error::this library needs libasound.so.2, so the loader rejects it on a machine without ALSA and the engine reports only 'failed to load plugin'"
+            exit 1
+          fi
+
+      - name: keep the so
+        uses: actions/upload-artifact@v4
+        with:
+          name: nvmidi-so
+          path: nvmidi.so
+          if-no-files-found: error

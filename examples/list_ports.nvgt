@@ -1,6 +1,7 @@
 // nvgt loads this plugin only when the script asks for it by name: without
 // the pragma below the engine never opens the library and every midi_* name
 #pragma plugin nvmidi
+#include "nvmidi_ui.nvgt"
 
 // One byte, back as a one-character string. This engine's string(byte) gives
 // the decimal digits of the number rather than the character they stand for -
@@ -35,25 +36,6 @@ string char_of(uint b) {
 	return ".";
 }
 
-
-// --- headless safety net -------------------------------------------------
-// Measured on the engine: when a script calls screen_reader_speak on a machine
-// with no screen reader attached, nvgt does not return from the call - the
-// process dies with SIGABRT and nothing that follows runs. That makes every
-// script in this repository untestable on a build machine, and it is a
-// property of the caller's machine, not of the script.
-//
-// So the reader is not called at all: the scripts go straight to the engine's
-// own dialog box, which speaks through whatever assistive technology is
-// running and is readable by a person either way. The caller's machine decides
-// how the text arrives, not the script - and on a build machine the script
-// runs to the end instead of dying on its first announcement.
-void announce(const string&in text) {
-	// alert wants a title as its second argument; a bare call does not
-	// compile against this engine (measured: "No matching signatures to
-	// 'alert(string)'").
-	alert(text, "nvmidi");
-}
 
 // list_ports.nvgt - print every MIDI port on this machine.
 //
@@ -121,35 +103,42 @@ string bytes_of_api_name() {
 	return s;
 }
 void main() {
-	announce("MIDI backend: " + bytes_of_api_name());
+	if (!show_window("nvmidi - ports")) {
+		ui_speak("Could not open a window.");
+		return;
+	}
+	wait(50); // let the reader speak the window title before the list
+
+	ui_speak("MIDI backend: " + bytes_of_api_name());
 
 	uint inputs = midi_input_port_count();
 	if (inputs == 0) {
-		announce("No MIDI input ports found.");
+		ui_speak("No MIDI input ports found.");
 	} else {
-		announce(inputs + " input ports.");
+		ui_speak(inputs + " input ports.");
 		for (uint i = 0; i < inputs; i++) {
-			announce("Input " + i + ": " + bytes_of_input_port_name(i));
+			ui_speak("Input " + i + ": " + bytes_of_input_port_name(i));
 		}
 	}
 
 	uint outputs = midi_output_port_count();
 	if (outputs == 0) {
-		announce("No MIDI output ports found.");
+		ui_speak("No MIDI output ports found.");
 	} else {
-		announce(outputs + " output ports.");
+		ui_speak(outputs + " output ports.");
 		for (uint i = 0; i < outputs; i++) {
-			announce("Output " + i + ": " + bytes_of_output_port_name(i));
+			ui_speak("Output " + i + ": " + bytes_of_output_port_name(i));
 		}
 	}
 
 	// What the other examples will open, so a mismatch is visible right here.
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.txt");
-	announce("Looking for \"" + config.match + "\".");
-	announce("Input: " + (config.find_input_port() >= 0 ? bytes_of_config(config) : "nothing found, not even the fallback port " + config.port + "."));
+	ui_speak("Looking for \"" + config.match + "\".");
+	ui_speak("Input: " + (config.find_input_port() >= 0 ? bytes_of_config(config) : "nothing found, not even the fallback port " + config.port + "."));
 	int out_port = config.find_output_port();
-	announce("Output: " + (out_port >= 0 ? bytes_of_output_port_name(out_port) : "nothing found."));
+	ui_speak("Output: " + (out_port >= 0 ? bytes_of_output_port_name(out_port) : "nothing found."));
 
-	wait(500);
+	ui_speak("Press Alt+F4 to close.");
+	while (ui_pump()) { } // stay open until the user asks to go
 }

@@ -1,6 +1,7 @@
 // nvgt loads this plugin only when the script asks for it by name: without
 // the pragma below the engine never opens the library and every midi_* name
 #pragma plugin nvmidi
+#include "nvmidi_ui.nvgt"
 
 // One byte, back as a one-character string. This engine's string(byte) gives
 // the decimal digits of the number rather than the character they stand for -
@@ -36,25 +37,6 @@ string char_of(uint b) {
 }
 
 
-// --- headless safety net -------------------------------------------------
-// Measured on the engine: when a script calls screen_reader_speak on a machine
-// with no screen reader attached, nvgt does not return from the call - the
-// process dies with SIGABRT and nothing that follows runs. That makes every
-// script in this repository untestable on a build machine, and it is a
-// property of the caller's machine, not of the script.
-//
-// So the reader is not called at all: the scripts go straight to the engine's
-// own dialog box, which speaks through whatever assistive technology is
-// running and is readable by a person either way. The caller's machine decides
-// how the text arrives, not the script - and on a build machine the script
-// runs to the end instead of dying on its first announcement.
-void announce(const string&in text) {
-	// alert wants a title as its second argument; a bare call does not
-	// compile against this engine (measured: "No matching signatures to
-	// 'alert(string)'").
-	alert(text, "nvmidi");
-}
-
 // play_chord.nvgt - play chords and patterns on the keyboard's own sound.
 //
 // This is the high level layer on its own: no synthesis, no second device.
@@ -76,7 +58,7 @@ array<midi_note@>@ chord(const string&in pitches, double length_ms) {
 		else
 			@note = nvmidi_note_create(parse_int(parts[i].trim_whitespace()));
 		note.velocity = 100;
-		note.length = midi_duration(length_ms, MIDI_MS);
+		note.length = midi_duration_create(length_ms, MIDI_MS);
 		notes.insert_last(@note);
 	}
 	return notes;
@@ -119,21 +101,27 @@ string bytes_of_input_port_name(midi_input@ o) {
 }
 
 void main() {
+	if (!show_window("nvmidi - chords")) {
+		ui_speak("Could not open a window.");
+		return;
+	}
+	wait(50); // let the reader speak the window title first
+
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.txt");
 
 	int port = config.find_input_port();
 	if (port < 0) {
-		announce("No port matches " + config.match + " and the fallback is empty. Check midi_config.txt.");
+		ui_speak("No port matches " + config.match + " and the fallback is empty. Check midi_config.txt.");
 		return;
 	}
 
 	midi_input@ keyboard = midi_input_create();
 	if (!keyboard.open_config(config, "nvmidi chord test")) {
-		announce("Cannot open: " + bytes_of_last_error());
+		ui_speak("Cannot open: " + bytes_of_last_error());
 		return;
 	}
-	announce("Playing on " + bytes_of_config(config));
+	ui_speak("Playing on " + bytes_of_config(config) + ". Alt+F4 stops.");
 
 	// The tempo lives on the music class, so a note written as "a beat" means
 	// one beat here and not the 120 default. duration() reads that tempo for
@@ -149,9 +137,9 @@ void main() {
 	// think in music and pass milliseconds only where the hardware demands it.
 	midi_duration beat = keyboard.duration(1.0, MIDI_BEATS);
 	midi_duration half_bar = keyboard.duration(0.5, MIDI_BARS);
-	midi_duration ticks = midi_duration(96.0, MIDI_TICKS);
+	midi_duration ticks = midi_duration_create(96.0, MIDI_TICKS);
 
-	announce("At " + keyboard.tempo + " bpm a beat is " + beat.to_ms() + " milliseconds, half a bar is " + half_bar.to_ms() + ".");
+	ui_speak("At " + keyboard.tempo + " bpm a beat is " + beat.to_ms() + " milliseconds, half a bar is " + half_bar.to_ms() + ".");
 
 	array<midi_note@>@ held = chord("60,64,67", 0);
 	held[0].length = ticks;
@@ -165,14 +153,16 @@ void main() {
 	keyboard.play_chord_wait(steady);
 
 	// Every pattern the player knows, on one chord, so the difference between
-	// them is audible in one run.
+	// them is audible in one run. ui_pump() between them is an Alt+F4 chance
+	// even though the patterns themselves wait.
 	string[]@ patterns = {"chord", "spread", "arpeggio", "quick", "fast", "strum", "repeat"};
 	for (uint i = 0; i < patterns.length(); i++) {
-		announce(patterns[i]);
+		if (!ui_pump()) break;
+		ui_speak(patterns[i]);
 		keyboard.play_midi_chord_wait(chord("60,64,67,71", 220), patterns[i]);
 	}
 
-	announce("Done.");
 	keyboard.close();
-	wait(500);
+	ui_speak("Done. Press Alt+F4 to close.");
+	while (ui_pump()) { }
 }

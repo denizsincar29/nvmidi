@@ -1,0 +1,94 @@
+// nvmidi_ui.nvgt - the small helper the windowed examples #include.
+//
+// It gives them three things and nothing else, because an example should read
+// as the API it teaches:
+//
+//   ui_speak(text)                      speak through the screen reader and
+//                                       print the same words
+//   ui_pump()                           keep the window alive; false once the
+//                                       user pressed Alt+F4 (or escape)
+//   ui_play_background(synth, notes, step_ms, on_frame)
+//                                       play a group of notes in the
+//                                       background while the caller keeps
+//                                       updating other things; false if
+//                                       Alt+F4 interrupted it
+//
+// There is no #pragma plugin line here on purpose: the script that includes
+// this file asks for the plugin, and a file with no main() is not run on its
+// own.
+//
+// The callback is an AngelScript function handle (funcdef ui_tick below).
+// Measured on this engine: a handler can be stored in a global and called
+// again, so no base class was needed. Pass null for no per frame work.
+
+funcdef void ui_tick();
+
+// Speak and print the same words. SCREEN_READER_AVAILABLE is checked first:
+// measured, with no reader attached screen_reader_speak aborts the process
+// instead of returning, so on a build machine the print would never happen.
+void ui_speak(const string&in text) {
+	print(text + "\n");
+	if (SCREEN_READER_AVAILABLE) screen_reader_speak(text, false);
+}
+
+// Keep the window's event loop alive and report whether the user asked to
+// stop. show_window's own note says the window does no event processing
+// unless a loop runs, and wait() is that loop's heartbeat. The Alt+F4
+// spelling is the engine manual's own: keyboard_modifiers & KEYMOD_ALT with
+// key_pressed(KEY_F4).
+bool ui_pump() {
+	wait(5);
+	if ((keyboard_modifiers & KEYMOD_ALT) > 0 && key_pressed(KEY_F4)) return false;
+	if (key_pressed(KEY_ESCAPE)) return false;
+	return true;
+}
+
+// Plays a group of notes in the background, while the caller keeps running.
+// With step_ms > 0 each note starts step_ms after the one before it (an
+// arpeggio or a scale); with step_ms <= 0 they all start together (a chord).
+// Either way a note is held for its own length. on_frame, if given, runs on
+// every turn of the loop, which is where the caller updates its own things.
+// Returns true once every note has finished, false if Alt+F4 cut it short.
+//
+// This drives send_note_on / send_note_off from its own clock instead of
+// calling play_chord and watching get_active_notes(). That is deliberate and
+// measured: the plugin has no timer that releases a non waiting play_chord,
+// so get_active_notes() stays non zero for ever after one. Read in
+// src/nvmidi.cpp, and confirmed on the engine - it was still 1 a full second
+// after a 200 millisecond chord. A real background player has to schedule its
+// own releases, which is what this does.
+bool ui_play_background(midi_output@ synth, array<midi_note@>@ notes,
+		double step_ms = 0.0, ui_tick@ on_frame = null) {
+	const int count = int(notes.length());
+	if (count == 0) return true;
+	array<double> off_at;
+	for (int i = 0; i < count; i++) off_at.insert_last(-1.0);
+	const double start = ticks();
+	int next_on = 0;
+	int pending = 0;
+	while (next_on < count || pending > 0) {
+		const double elapsed = ticks() - start;
+		// Every note whose moment has arrived, this frame.
+		while (next_on < count) {
+			const double at = (step_ms > 0.0) ? (next_on * step_ms) : 0.0;
+			if (elapsed + 0.0001 < at) break;
+			midi_note@ n = notes[next_on];
+			synth.send_note_on(n.channel, n.pitch, n.velocity);
+			off_at[next_on] = at + n.duration_ms();
+			pending++;
+			next_on++;
+		}
+		// Every note whose length is over.
+		for (int i = 0; i < count; i++) {
+			if (off_at[i] < 0.0) continue;
+			if (elapsed + 0.0001 < off_at[i]) continue;
+			midi_note@ n = notes[i];
+			synth.send_note_off(n.channel, n.pitch);
+			off_at[i] = -1.0;
+			pending--;
+		}
+		if (!ui_pump()) { synth.all_notes_off(); return false; }
+		if (on_frame !is null) on_frame();
+	}
+	return true;
+}

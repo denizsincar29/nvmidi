@@ -520,37 +520,41 @@ dropped rather than memory growing without bound.
 
 ## Examples
 
-`examples/` holds four scripts, all of which read `midi_config.txt` from that
-folder: `list_ports` (what is plugged in, and what the config picks),
-`echo_monitor` (speaks every incoming message), `keyboard_to_synth` (forwards
-one port to another, transposed) and `play_chord` (chords and patterns on the
-keyboard's own sound engine).
+`examples/` holds the five demonstration scripts, all of which read
+`midi_config.txt` from that folder: `list_ports` (what is plugged in, and what
+the config picks), `echo_monitor` (speaks every incoming message),
+`keyboard_to_synth` (forwards one port to another, transposed), `play_chord`
+(chords and patterns on the keyboard's own sound engine) and `music_quickstart`
+(the music API in the fewest lines). Each opens a window with `show_window`,
+speaks its messages through the screen reader as well as printing them, and
+exits on Alt+F4. `nvmidi_ui.nvgt` is the shared helper they include; its own
+header says what it gives and why.
 
-Four more are smoke tests rather than demonstrations. The three that need
-nobody open the instrument's own output port and ripple C-E-G-E before their
-first check, so the person sitting at the piano hears a run begin:
+## Tests
+
+`tests/` holds the smoke tests. They are headless on purpose: no window, no
+speech, one line of `TEST <name> PASS|FAIL` per call and a `RESULT` line at the
+end, each appended to `apitest.log` next to the test as it goes, because the
+engine buffers `print()` until a clean exit and a crash would otherwise take
+the whole transcript with it. None of them plays a startup cue any more - the
+only sound they make is the sound they assert on.
 
 - `test_lowlevel` - the whole `midi_output` surface, the port functions and the
-  byte pairs, one line of `TEST <name> PASS|FAIL` per call and a `RESULT` line
-  at the end;
+  byte pairs;
 - `test_music` - `midi_note` and `midi_duration` fields, every unit constant,
   `tempo`, and `play_note` / `play_chord` / `play_midi_chord` / `play_sequence`
   with every pattern name;
 - `test_config` - `midi_config`: load, the two searches, `get_last_port`,
-  `describe` and `get_path`. Run it from a directory holding
+  `describe` and `get_path`. Its two fixtures sit beside it now:
   `midi_config.txt` (`match=zzzznope`, `port=1`) and `midi_config_named.txt`
-  (`match=nord`, `port=0`) - the header says so too.
-
-- `test_input_live` - the one that does need a person. It ripples C-E-G-E on
-  middle C to say a run has started, then the *same ripple an octave down,
-  twice* to say "play the instrument now", listens for 30 seconds, prints and
-  counts every message that comes out of it, and sends each note back an octave
-  up. A low ripple once more at the end says the turn is over. Measured on
-  2026-10-01: 193 messages in, 97 note-ons, 193 events echoed, 0 failures.
-
-Each writes `apitest.log` next to itself as it goes, because the engine buffers
-`print()` until a clean exit and a crash would otherwise take the whole
-transcript with it.
+  (`match=nord`, `port=0`), so it is run from `tests/`.
+- `test_input_live` - the one that does need a person. It opens the keyboard,
+  ripples C-E-G-E *an octave below middle C* to say "play the instrument now",
+  listens for 30 seconds, prints and counts every message that comes out of it,
+  and sends each note back an octave up. The same low ripple once more at the
+  end says the turn is over. That low ripple is the only cue, kept on purpose:
+  the old high startup ripple was decoration. Measured on 2026-10-01: 193
+  messages in, 97 note-ons, 193 events echoed, 0 failures.
 
 ## Installing the dll
 

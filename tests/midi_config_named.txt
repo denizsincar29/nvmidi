@@ -1,0 +1,5 @@
+# Fixture for test_config.nvgt: the by-name path. "nord" matches the Nord
+# Piano on the test machine, so the search finds it and ignores the fallback.
+
+match = nord
+port = 0

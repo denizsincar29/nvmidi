@@ -275,7 +275,7 @@ jobs:
           # it has drifted from the engine's own api.
           mkdir -p logs
           status=0
-          for script in scripts/*.nvgt examples/*.nvgt; do
+          for script in scripts/*.nvgt examples/*.nvgt tests/*.nvgt; do
             [ -e "$script" ] || continue
             # get_nvmidi.nvgt is not a test, it is the downloader: running it
             # downloads the published release over the library this job just
@@ -697,7 +697,7 @@ jobs:
   # So the release workflow's own backend is rebuilt here, without ALSA, and
   # the name a running plugin gives back is compared against the one the
   # release actually shipped. A mismatch is a red build on the tag itself.
-  # The scripts job compiles every script in scripts/ and examples/. This one
+  # The scripts job compiles every script in scripts/, examples/ and tests/. This one
   # compiles the hearing test and stops there, without fetching the engine or
   # building anything, because that is the whole claim being made: the test
   # parses, so a build machine catches the syntax before a person with an

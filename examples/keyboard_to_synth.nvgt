@@ -1,6 +1,7 @@
 // nvgt loads this plugin only when the script asks for it by name: without
 // the pragma below the engine never opens the library and every midi_* name
 #pragma plugin nvmidi
+#include "nvmidi_ui.nvgt"
 
 // One byte, back as a one-character string. This engine's string(byte) gives
 // the decimal digits of the number rather than the character they stand for -
@@ -36,25 +37,6 @@ string char_of(uint b) {
 }
 
 
-// --- headless safety net -------------------------------------------------
-// Measured on the engine: when a script calls screen_reader_speak on a machine
-// with no screen reader attached, nvgt does not return from the call - the
-// process dies with SIGABRT and nothing that follows runs. That makes every
-// script in this repository untestable on a build machine, and it is a
-// property of the caller's machine, not of the script.
-//
-// So the reader is not called at all: the scripts go straight to the engine's
-// own dialog box, which speaks through whatever assistive technology is
-// running and is readable by a person either way. The caller's machine decides
-// how the text arrives, not the script - and on a build machine the script
-// runs to the end instead of dying on its first announcement.
-void announce(const string&in text) {
-	// alert wants a title as its second argument; a bare call does not
-	// compile against this engine (measured: "No matching signatures to
-	// 'alert(string)'").
-	alert(text, "nvmidi");
-}
-
 // keyboard_to_synth.nvgt - play a keyboard plugged into the computer through
 // a synth running on the same computer.
 //
@@ -74,7 +56,7 @@ void panic() {
 	output.all_notes_off();
 	input.close();
 	output.close();
-	announce("Stopped.");
+	ui_speak("Stopped.");
 }
 
 // The plugin hands its strings over as a count plus an indexed byte - see the
@@ -114,8 +96,14 @@ string bytes_of_input_port_name(midi_input@ o) {
 }
 
 void main() {
+	if (!show_window("nvmidi - keyboard to synth")) {
+		ui_speak("Could not open a window.");
+		return;
+	}
+	wait(50); // let the reader speak the window title first
+
 	if (midi_input_port_count() == 0 || midi_output_port_count() == 0) {
-		announce("Need at least one input and one output port.");
+		ui_speak("Need at least one input and one output port.");
 		return;
 	}
 
@@ -126,17 +114,19 @@ void main() {
 	@output = midi_output_create();
 
 	if (!input.open_config(config, "nvmidi forward in")) {
-		announce("Input (" + bytes_of_config(config) + "): " + bytes_of_last_error());
+		ui_speak("Input (" + bytes_of_config(config) + "): " + bytes_of_last_error());
 		return;
 	}
 	if (!output.open_config(config, "nvmidi forward out")) {
-		announce("Output (" + bytes_of_config(config) + "): " + bytes_of_last_error());
+		ui_speak("Output (" + bytes_of_config(config) + "): " + bytes_of_last_error());
 		input.close();
 		return;
 	}
-	announce("From " + bytes_of_input_port_name(input) + " to " + bytes_of_port_name(output));
+	ui_speak("From " + bytes_of_input_port_name(input) + " to " + bytes_of_port_name(output) + ", an octave up. Alt+F4 stops.");
 
-	while (!key_pressed(KEY_ESCAPE)) {
+	// ui_pump() keeps the window alive and is also the Alt+F4 test, so this
+	// loop can always be stopped from the keyboard.
+	while (ui_pump()) {
 		// As in echo_monitor: one common variable filled by reference, copied
 		// into it through midi_message's opAssign behaviour.
 		midi_message m;
@@ -160,7 +150,6 @@ void main() {
 			}
 			// Everything else is dropped. Add cases here as you need them.
 		}
-		wait(5);
 	}
 
 	panic();

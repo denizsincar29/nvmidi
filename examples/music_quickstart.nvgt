@@ -1,27 +1,47 @@
 #pragma plugin nvmidi
+#include "nvmidi_ui.nvgt"
 
 // music_quickstart.nvgt - the high level half of nvmidi, with none of the
 // scaffolding the test files carry.
 //
-// Open this beside test_music.nvgt and the difference is the whole point. The
-// tests rebuild plugin strings byte by byte, log every check and count
-// pass/fail, because they assert on the interface. This one just plays; read
-// this one when you want to know what the music API looks like.
+// Open this beside tests/test_music.nvgt and the difference is the whole
+// point. The tests rebuild plugin strings byte by byte, log every check and
+// count pass/fail, because they assert on the interface. This one just plays.
 //
 //   nvgt.exe music_quickstart.nvgt
 //
 // The notes come out of the keyboard's own sound engine, so what you hear is
-// the instrument, not this program.
+// the instrument, not this program. Everything plays in the background - the
+// script keeps printing while the notes sound - and Alt+F4 stops it at any
+// point.
+
+// Runs on every frame of a background playback (see ui_play_background in
+// nvmidi_ui.nvgt). Here it is deliberately tiny: keep printing, so the point
+// of a background player is visible.
+int g_last_print = -1;
+void on_frame() {
+	int half_seconds = int(ticks() / 500);
+	if (half_seconds != g_last_print) {
+		g_last_print = half_seconds;
+		print("still here, " + half_seconds + " half second(s) in\n");
+	}
+}
 
 void main() {
-	// Which port. 2 is the Nord on the machine this was written for; run
-	// examples\list_ports.nvgt on yours and change the number.
-	midi_output@ mo = midi_output_create();
-	if (!mo.open(2)) {
-		// A string cannot come back out of the plugin, so say it in words.
-		print("Cannot open MIDI output port 2 - run examples\\list_ports.nvgt to see the numbers.\n");
+	if (!show_window("nvmidi - music quickstart")) {
+		ui_speak("Could not open a window.");
 		return;
 	}
+	wait(50); // let the reader speak the window title first
+
+	// Which port. 2 is the Nord on the machine this was written for; run
+	// list_ports.nvgt on yours and change the number.
+	midi_output@ mo = midi_output_create();
+	if (!mo.open(2)) {
+		ui_speak("Cannot open MIDI output port 2. Run list_ports to see the numbers.");
+		return;
+	}
+	ui_speak("Playing on the keyboard's own sound engine. Alt+F4 stops.");
 
 	// One tempo for everything below. A length is written in the unit you
 	// think in and resolved against it.
@@ -32,28 +52,36 @@ void main() {
 	midi_note@ c = nvmidi_note_create(60, 100);   // middle C
 	midi_note@ e = nvmidi_note_create(64, 100);
 	midi_note@ g = nvmidi_note_create(67, 100);
-	c.length = mo.duration(1.0, MIDI_BEATS);     // one beat at 96 bpm
+	c.length = mo.duration(1.0, MIDI_BEATS);       // one beat at 96 bpm
 	e.length = mo.duration(1.0, MIDI_BEATS);
 	g.length = mo.duration(1.0, MIDI_BEATS);
 	triad.insert_last(c);
 	triad.insert_last(e);
 	triad.insert_last(g);
 
-	// The same three notes, laid out in time two ways.
-	mo.play_midi_chord_wait(triad, "arpeggio");  // C, then E, then G
-	mo.play_midi_chord_wait(triad, "chord");     // all three together
+	// An arpeggio in the background: each note starts 250 ms after the one
+	// before it. The print in on_frame runs while it plays.
+	ui_speak("Arpeggio, in the background.");
+	if (!ui_play_background(mo, triad, 250.0, @on_frame)) { mo.all_notes_off(); mo.close(); ui_speak("Stopped."); return; }
 
-	// A scale: each note for its own length, one after another. That is what
-	// play_sequence is - see doc/api.md for the other pattern names.
+	// The same three notes at once, again in the background.
+	ui_speak("Chord.");
+	if (!ui_play_background(mo, triad, 0.0, @on_frame)) { mo.all_notes_off(); mo.close(); ui_speak("Stopped."); return; }
+
+	// A scale: one note after another, each held for its own length, which
+	// is what a step equal to the length gives.
 	array<midi_note@>@ scale = array<midi_note@>();
+	double step = mo.duration(0.5, MIDI_BEATS).to_ms();
 	for (int i = 0; i < 8; i++) {
 		midi_note@ n = nvmidi_note_create(60 + i * 2, 90);
 		n.length = mo.duration(0.5, MIDI_BEATS);
 		scale.insert_last(n);
 	}
-	mo.play_sequence(scale);
+	ui_speak("Scale.");
+	if (!ui_play_background(mo, scale, step, @on_frame)) { mo.all_notes_off(); mo.close(); ui_speak("Stopped."); return; }
 
 	mo.all_notes_off();   // never leave a note sounding
 	mo.close();
-	print("music_quickstart: done\n");
+	ui_speak("Done. Press Alt+F4 to close.");
+	while (ui_pump()) { }
 }
