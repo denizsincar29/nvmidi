@@ -202,20 +202,20 @@ midi_input@ in = midi_input_create();
 void main() {
 	// List what is plugged in, so you can pick a port number.
 	for (uint i = 0; i < midi_input_port_count(); i++) {
-		screen_reader_speak(bytes_of_input_port_name(i));
+		screen_reader_speak(midi_input_port_name_text(i));
 	}
 	if (!in.open(0)) { // first input port
-		screen_reader_speak("could not open the keyboard: " + bytes_of_last_error());
+		screen_reader_speak("could not open the keyboard: " + midi_last_error_text());
 		return;
 	}
 
 	while (true) {
 		midi_message m;
 		while (in.next_message(m)) {
-			// m is a midi_message; bytes_of_message(m) reads like
+			// m is a midi_message; midi_message_text(m) reads like
 			// "note on, channel 1, note 60, velocity 100"
-			if ((m.status & 0xf0) == 0x90 && m.data2 > 0) {
-				screen_reader_speak("note " + m.data1);
+			if (m.is_note_on) {
+				screen_reader_speak(midi_note_name(m) + ", velocity " + m.data2);
 			}
 		}
 		wait(10); // never spin without sleeping
@@ -227,6 +227,39 @@ void main() {
 them. Always drain it in a loop until it returns false, rather than reading
 one message per frame — a fast player generates messages quicker than 60 a
 second.
+
+### Reading a message
+
+A status byte holds two things at once — the command in its high nibble and
+the channel in its low one — so the plugin does the split once and names the
+results. Every one below is a property of the message, and every one also
+compiles as a call.
+
+    m.kind                  the command nibble: 0x90, 0xb0, 0xe0 ...
+    m.is_note               either spelling of a note event
+    m.is_note_on            a press - false for velocity 0
+    m.is_note_off           a release, either spelling
+    m.is_control_change     a controller move
+    m.controller            the controller number, -1 if not one
+    m.is_pedal              a sustain, sostenuto or soft pedal move
+    m.pedal_type            1 sustain, 2 sostenuto, 3 soft, 0 none
+    m.channel_pressure      aftertouch over the whole channel, -1 if not
+    m.aftertouch            per-note aftertouch, -1 if not
+    m.pitch_bend            0..16383, 8192 centred, -1 if not a bend
+    m.program               the program number, -1 if not one
+    m.note_name_byte_count  the note this message is about, as text
+    m.note_name_byte(i)
+
+`m.is_note_on` is false when a note arrives as 0x90 with velocity 0, because
+that is how hardware spells a release under running status; `m.is_note_off` is
+true for both that and an explicit 0x80. A script keeping its own list of held
+notes that counts a velocity-0 note-on as a press will hold that key down
+forever.
+
+The numbers that do not apply to a message answer -1 rather than 0, because 0
+is a real controller, a real program and a real pitch-bend position; the caller
+has to be able to tell "this is not that kind of message" from "this is that
+kind, set to zero".
 
 ## Picking a port by name
 
@@ -361,48 +394,36 @@ For every string surface there is a pair — a count and an indexed byte:
 byte: a port name may legitimately contain one, so the end of the text has to
 be distinguishable from a byte inside it.
 
-Read it back into a script string like this:
+Read it back into a script string through `nvmidi_string.nvgt`, which ships
+with the plugin and is the same code the examples used to carry a copy of:
 
 ```angelscript
-// A whole byte back as one character. Read only the two ranges this engine
-// reads correctly - measured, find("1") is 1 and find("A") is 10 - and name the
-// punctuation a backend name is made of one byte at a time. Never walk a table
-// with substr(): measured, index 32 answers 'W', index 65 answers '-', and
-// substr(67, 1) is already empty on a literal whose length() is 68. Bounds are
-// numbers, not character literals - `b >= '0'` does not compile here.
-const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
-const string digits = "0123456789";
-string char_of(uint b) {
-	if (b >= 48 && b <= 57) return digits.substr(b - 48, 1);
-	if (b >= 65 && b <= 90) return byte_letters.substr(b - 65 + 10, 1);
-	if (b >= 97 && b <= 122) return byte_letters.substr(b - 97 + 36, 1);
-	if (b == 47) return "/";
-	if (b == 46) return ".";
-	if (b == 95) return "_";
-	if (b == 45) return "-";
-	if (b == 43) return "+";
-	if (b == 32) return " ";
-	return ".";
-}
+#include "nvmidi_string.nvgt"
 
-string bytes_of_api_name() {
-	string s = "";
-	for (int i = 0; i < midi_api_name_byte_count(); i++) {
-		s += char_of(midi_api_name_byte(i));
-	}
-	return s;
-}
-
-screen_reader_speak("MIDI backend: " + bytes_of_api_name());
+screen_reader_speak("MIDI backend: " + midi_api_name_text());
+screen_reader_speak(midi_input_port_name_text(0));
+screen_reader_speak(midi_last_error_text());
+screen_reader_speak(midi_note_name(m));   // the note a message is about
 ```
 
-Every `examples/*.nvgt` file carries this helper; copy the one you need.
+That file holds the one nontrivial piece of this - `midi_string_char(uint b)`,
+which turns a byte back into a character - and its comment carries the
+measurements that forced its shape: this engine's `string(byte)` gives the
+decimal digits of the number rather than the character, `substr()` walking a
+long literal answers the wrong characters past the first ten, and a character
+literal is a one-character string rather than a code, so every bound has to be
+a number. Read it before changing it.
+
+Wrappers exist for every string surface the plugin has: `midi_api_name_text`,
+`midi_last_error_text`, `midi_error_text`, `midi_input_port_name_text`,
+`midi_output_port_name_text`, `midi_message_text`, `midi_note_pitch_text`,
+`midi_note_name`. A script that needs one the file does not have can still walk
+the pair itself with `midi_string_char`.
 
 The shape is the same everywhere. Where a global has a pair, `midi_api_name`
 above does; where an object method does, it is spelled `get_port_name_byte_count()`
 and `get_port_name_byte(uint index)` on the object, or `describe_byte_count()`
-on a config. `examples/` has a helper for each one, and they are four lines
-each — copy whichever you need.
+on a config.
 
 If a future engine grows a string factory, the plugin prints a warning at
 registration and these pairs become optional rather than necessary. Until a

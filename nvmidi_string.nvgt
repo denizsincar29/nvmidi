@@ -1,0 +1,139 @@
+// nvmidi strings - text coming out of the plugin, back as an ordinary string.
+//
+// Every string this plugin hands over crosses the boundary as two functions:
+// a count, and an indexed byte. There is no function returning a string, and
+// the reason is in TECHNICAL.md: the plugin and the engine are built by
+// different compilers, and a C++ string is a different shape in each of them,
+// so one of them handing a string to the other reads the wrong fields and
+// takes the game down. A count and a byte at a time crosses safely because
+// both sides agree on what an int is.
+//
+// That leaves the script holding bytes. This file turns them back into a
+// string, and it is the same code that used to sit at the top of every
+// example and every test.
+//
+// #include "nvmidi_string.nvgt" after `#pragma plugin nvmidi`.
+//
+// If you are only reading messages, you may not need much of this: the useful
+// numbers on a message now have names of their own - `m.is_note_on`,
+// `m.controller`, `m.pitch_bend` and the rest - so a script that used to pull
+// a byte apart to compare it can compare properties instead. What is left in
+// this file is the text: error messages, port names, and the note name.
+
+// ---------------------------------------------------------------------------
+// One byte, as one character
+// ---------------------------------------------------------------------------
+
+// This engine's string(byte) gives the decimal digits of the number rather
+// than the character they stand for - measured, and the reason this file
+// exists at all: a backend name asked for that way came out as
+// "110118109105100105..." and every comparison against "Windows" failed.
+//
+// A table walked with substr() does not work either, and that is measured too:
+// on a literal, index 32 answers 'W', index 65 answers '-', index 47 answers
+// 'l', and substr(67, 1) is already empty on a literal whose length() is 68.
+// What is measured is that the *first* ten characters and the *first* twenty
+// six characters of a literal read correctly. So the two ranges a byte pair
+// actually needs - digits, and letters - are fetched from two short literals
+// walked from their own start, and the punctuation a port name is made of is
+// written out as a branch.
+//
+// Every bound here is a number because a character literal in this engine is
+// a one-character string, not a code: measured, `b >= '0'` is "No conversion
+// from 'const string' to math type available".
+
+const string NVMDIGITS = "0123456789";
+const string NVMALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+// One byte back as a one-character string. Bytes that are not text at all -
+// control bytes, or anything above 126 - come back as ".", because a count and
+// an indexed byte carry no encoding: the 128 is a MIDI byte, not a character
+// in any codepage. Non-ASCII port names therefore lose their accents here; the
+// plugin reports them as bytes and cannot do better.
+string midi_string_char(uint b) {
+	if (b >= 48 && b <= 57) return NVMDIGITS.substr(b - 48, 1);
+	if (b >= 65 && b <= 90) return NVMALPHA.substr(b - 65, 1);
+	if (b >= 97 && b <= 122) return NVMALPHA.substr(b - 97 + 26, 1);
+	if (b == 47) return "/";
+	if (b == 46) return ".";
+	if (b == 95) return "_";
+	if (b == 45) return "-";
+	if (b == 43) return "+";
+	if (b == 32) return " ";
+	return ".";
+}
+
+// ---------------------------------------------------------------------------
+// Putting a byte pair back together
+// ---------------------------------------------------------------------------
+
+// The two calls every reader below is built on. `-1` from the indexed call
+// means "no byte there", which is how the end is found; it is not a zero byte,
+// and a zero byte would not be text either.
+//
+// The count is asked for once and the index walked to it, rather than calling
+// the count inside the loop condition, because every one of these calls
+// crosses into the plugin.
+
+string midi_last_error_text() {
+	string s = "";
+	const int n = midi_last_error_byte_count();
+	for (int i = 0; i < n; i++) s += midi_string_char(midi_last_error_byte(i));
+	return s;
+}
+
+string midi_error_text() {
+	string s = "";
+	const int n = midi_first_error_byte_count();
+	for (int i = 0; i < n; i++) s += midi_string_char(midi_first_error_byte(i));
+	return s;
+}
+
+string midi_api_name_text() {
+	string s = "";
+	const int n = midi_api_name_byte_count();
+	for (int i = 0; i < n; i++) s += midi_string_char(midi_api_name_byte(i));
+	return s;
+}
+
+string midi_input_port_name_text(uint port) {
+	string s = "";
+	const int n = midi_input_port_name_byte_count(port);
+	for (int i = 0; i < n; i++) s += midi_string_char(midi_input_port_name_byte(port, i));
+	return s;
+}
+
+string midi_output_port_name_text(uint port) {
+	string s = "";
+	const int n = midi_output_port_name_byte_count(port);
+	for (int i = 0; i < n; i++) s += midi_string_char(midi_output_port_name_byte(port, i));
+	return s;
+}
+
+// The one-line description of a message, the same text `midi_message_name`
+// produces in the plugin.
+string midi_message_text(const midi_message&in m) {
+	string s = "";
+	const int n = midi_message_name_byte_count(m);
+	for (int i = 0; i < n; i++) s += midi_string_char(midi_message_name_byte(m, i));
+	return s;
+}
+
+// The note name of a pitch: "C4", "F#3", "A#5". These two take a number
+// rather than a message, so they work on a pitch that came from anywhere.
+string midi_note_pitch_text(int pitch) {
+	string s = "";
+	const int n = midi_note_pitch_name_byte_count(pitch);
+	for (int i = 0; i < n; i++) s += midi_string_char(midi_note_pitch_name_byte(pitch, i));
+	return s;
+}
+
+// The name of the note this message is about, from the message itself. The
+// plugin builds it, so a script can speak `midi_note_name(m)` without knowing
+// that a pitch is a number and an octave is a division.
+string midi_note_name(const midi_message&in m) {
+	string s = "";
+	const int n = m.note_name_byte_count;
+	for (int i = 0; i < n; i++) s += midi_string_char(m.note_name_byte(i));
+	return s;
+}

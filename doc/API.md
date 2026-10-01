@@ -27,6 +27,49 @@ are intact. See [Strings arrive as bytes](#strings-arrive-as-bytes).
 For pitch bend the two data bytes combine into a 14-bit value:
 `(data2 << 7) | data1`, which runs 0..16383 with 8192 as centre.
 
+#### Reading a message
+
+The status byte carries the command in its high nibble and the channel in its
+low one. These properties do that split, so a script does not have to. Each is
+a const getter taking no argument, which the engine exposes as a property:
+`m.is_note_on` and `m.is_note_on()` are the same call.
+
+| property | type | meaning |
+| --- | --- | --- |
+| `kind` | `int` | the command nibble — `0x90`, `0xb0`, `0xe0`, with no channel |
+| `is_note` | `bool` | a note event of either spelling, pressed or released |
+| `is_note_on` | `bool` | a press — **false** when velocity is 0 |
+| `is_note_off` | `bool` | a release — true for `0x80` and for `0x90` with velocity 0 |
+| `is_control_change` | `bool` | a controller move |
+| `controller` | `int` | the controller number, `-1` if not a controller move |
+| `is_pedal` | `bool` | a sustain, sostenuto or soft pedal move |
+| `pedal_type` | `int` | `1` sustain, `2` sostenuto, `3` soft, `0` not a pedal |
+| `channel_pressure` | `int` | `0..127`, or `-1` if the message is not one |
+| `aftertouch` | `int` | per-note pressure `0..127`, or `-1` |
+| `pitch_bend` | `int` | `0..16383`, `8192` centred, or `-1` |
+| `program` | `int` | the program number, or `-1` |
+| `note_name_byte_count` | `int` | the name of the note this message is about |
+| `note_name_byte(index)` | `int` | one byte of that name, or `-1` at the end |
+
+`is_note_on` is false for a `0x90` message with velocity 0, because hardware
+sends that as a release under running status; `is_note_off` covers both that
+spelling and an explicit `0x80`. The same pair is what
+`midi_output::send_transposed` uses to decide whether a note is going down or
+coming up.
+
+Every "or -1" above is deliberate: 0 is a real controller number, a real
+program and a real bend position, so a caller has to be able to tell "not that
+kind of message" from "that kind, set to zero".
+
+`note_name_byte_count` / `note_name_byte(i)` hold the name of the note
+(`m.data1` rendered as `C4`, `F#3`), for speaking a message without knowing
+that a pitch is a number and an octave is a division. `nvmidi_string.nvgt`'s
+`midi_note_name(m)` reads them back into a string.
+
+To render the pitch yourself, `PITCH_NAMES[m.data1 % 12]` from
+`nvmidi_constants.nvgt` plus `string((m.data1 / 12) - 1)` gives the same text
+and lets you choose the flat spelling instead.
+
 ### midi_duration
 
 A length, written in whichever unit the script thinks in; the plugin converts
@@ -245,29 +288,25 @@ a name may contain one — so the end of the text stays distinguishable from a
 byte inside it.
 
 ```angelscript
-// See TECHNICAL.md - never walk a table with substr() on this engine. In short:
-const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
-const string digits = "0123456789";
-string char_of(uint b) {
-	if (b >= 48 && b <= 57) return digits.substr(b - 48, 1);
-	if (b >= 65 && b <= 90) return byte_letters.substr(b - 65 + 10, 1);
-	if (b >= 97 && b <= 122) return byte_letters.substr(b - 97 + 36, 1);
-	if (b == 47) return "/";
-	if (b == 46) return ".";
-	if (b == 95) return "_";
-	if (b == 45) return "-";
-	if (b == 43) return "+";
-	if (b == 32) return " ";
-	return ".";
-}
-string s = "";
-for (int i = 0; i < midi_api_name_byte_count(); i++) s += char_of(midi_api_name_byte(i));
+#include "nvmidi_string.nvgt"
+
+screen_reader_speak("MIDI backend: " + midi_api_name_text());
+screen_reader_speak(midi_input_port_name_text(0));
 ```
+
+`nvmidi_string.nvgt` ships with the plugin and carries one wrapper per string
+surface: `midi_api_name_text`, `midi_last_error_text`, `midi_error_text`,
+`midi_input_port_name_text(port)`, `midi_output_port_name_text(port)`,
+`midi_message_text(m)`, `midi_note_pitch_text(pitch)` and `midi_note_name(m)`.
+Its `midi_string_char(uint b)` is the primitive the rest stand on; read its
+comment before changing it, because the shape is forced by measurements
+(`string(byte)` yields digits, `substr()` misreads a long literal past the
+first ten characters, a character literal is a one-character string rather than
+a code).
 
 Object methods follow the same shape: `get_port_name_byte_count()` /
 `get_port_name_byte(index)`, `describe_byte_count()` / `describe_byte(index)`,
-`to_string_byte_count()` / `to_string_byte(index)`. The `examples/` folder has
-a four-line helper for each.
+`to_string_byte_count()` / `to_string_byte(index)`.
 
 
 ## Free functions

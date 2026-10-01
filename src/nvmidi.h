@@ -111,6 +111,67 @@ struct midi_message {
 	// through the type's assignment operator. Same shape as midi_duration's,
 	// same reason.
 	midi_message& opAssign(const midi_message& other);
+
+	// -----------------------------------------------------------------
+	// Reading the message
+	// -----------------------------------------------------------------
+	//
+	// The status byte carries two things at once - the command in its high
+	// nibble and the channel in its low one - and every script that reads a
+	// message otherwise begins by pulling the two apart, by hand, again. The
+	// tests and the examples each carry their own copy of that arithmetic.
+	// So the reading is done once, here, and named.
+	//
+	// These are const and take no argument, so the engine exposes each as a
+	// read-only property: `if (m.is_note_on) ...`, not `m.is_note_on()`.
+	// A getter is how this engine spells either form, so `m.is_note_on()`
+	// also compiles.
+
+	// The command nibble, status with the channel taken off: 0x80 for a note
+	// off, 0x90 for a note on, 0xb0 for a control change, and so on. The same
+	// number a script computes as (status & 0xf0).
+	int get_kind() const;
+	// Status 0x80 or 0x90 whatever the velocity says. The question is "is this
+	// a note message", which is not the same as "is a note sounding".
+	bool get_is_note() const;
+	// True for a note on that is really sounding.
+	//
+	// Note on with velocity 0 is the other spelling of a note off - it is how
+	// a release is written in running status - so an honest is_note_on is
+	// `0x90 && data2 > 0`. That is why this is not simply get_kind() == 0x90.
+	bool get_is_note_on() const;
+	// True for a release, in either of the two spellings hardware uses: an
+	// explicit 0x80, or a 0x90 that arrived with velocity 0.
+	bool get_is_note_off() const;
+	bool get_is_control_change() const;
+	// The controller number of a control change, -1 for anything else. This is
+	// the "cc number" half of the message; the value is data2, which the
+	// message already exposes under that name.
+	int get_controller() const;
+	bool get_is_pedal() const;
+	// 1 sustain, 2 sostenuto, 3 soft, 0 when this message is not a pedal. The
+	// three numbers are the ones the input port's own pedal getters track, so
+	// an incoming pedal message can be filed against the property carrying the
+	// same state.
+	int get_pedal_type() const;
+	// The pressure of a mono (channel) pressure message, -1 otherwise.
+	int get_channel_pressure() const;
+	// The pressure of a polyphonic aftertouch message, -1 otherwise.
+	int get_aftertouch() const;
+	// The 14 bit number a pitch bend carries, 0..16383 and centred at 8192, or
+	// -1 for anything else. The bytes are stored the way MIDI sends them -
+	// data1 is the low seven bits, data2 the high seven - and this is the one
+	// place that has to know it.
+	int get_pitch_bend() const;
+	// The program number of a program change, -1 otherwise.
+	int get_program() const;
+	// The pitch of a note message as a name, "C4", "F#3", "Bb5"; empty for a
+	// message with no note in it. The same spelling midi_note_number() reads
+	// back, so the two round trip. Returned as bytes like every other string
+	// this plugin hands out.
+	int get_note_name_byte_count() const;
+	int get_note_name_byte(unsigned int index) const;
+
 private:
 	// The free function above writes this one; see the note there.
 	friend bool midi_message_read_out(const midi_message& src, midi_message& out);

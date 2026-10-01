@@ -2152,6 +2152,120 @@ std::string midi_message_name(const midi_message& m) {
 }
 
 // ---------------------------------------------------------------------------
+// Reading a message
+// ---------------------------------------------------------------------------
+
+// The status byte carries the command and the channel in one number: the high
+// nibble is what the message is, the low nibble is which of the sixteen
+// channels it is for. Every member below is that split done once, here, so a
+// script can ask `if (m.is_note_on)` instead of writing `(m.status & 0xf0) ==
+// 0x90` at every use and getting the channel test wrong on a keyboard that
+// sends on channel 2.
+//
+// All of these are declared const and take no arguments, so the engine exposes
+// each as a property: `m.is_note_on` and `m.is_note_on()` both compile.
+
+int midi_message::get_kind() const {
+	// The high nibble alone: 0x90 for a note on, 0xb0 for a controller move.
+	// The channel is deliberately not in it, so two messages from different
+	// channels of the same kind compare equal.
+	return int(status & 0xf0);
+}
+
+bool midi_message::get_is_note() const {
+	// Either spelling of a note event, the pressed and the released one.
+	// `is_note_on` and `is_note_off` are the ones you usually want; this is
+	// for the case where you are only asking whether a key moved at all.
+	const int kind = get_kind();
+	return kind == 0x80 || kind == 0x90;
+}
+
+bool midi_message::get_is_note_on() const {
+	// 0x90 with velocity 0 is the running-status spelling of a release, and
+	// hardware does send it. Counting it as a press leaves the note sounding
+	// in the script's own bookkeeping forever, so it is excluded here and
+	// caught by is_note_off below.
+	return get_kind() == 0x90 && data2 > 0;
+}
+
+bool midi_message::get_is_note_off() const {
+	// Both spellings: an explicit 0x80, and a 0x90 that arrived with velocity
+	// zero. midi_output::send_transposed already releases on the same pair.
+	return get_kind() == 0x80 || (get_kind() == 0x90 && data2 == 0);
+}
+
+bool midi_message::get_is_control_change() const {
+	return get_kind() == 0xb0;
+}
+
+int midi_message::get_controller() const {
+	// The controller number, which is the first data byte of a 0xb0 message
+	// and has no meaning in any other kind. -1 rather than 0, because 0 is a
+	// real controller (bank select) and the caller must be able to tell "this
+	// is not a controller move" from "this moves controller zero".
+	if (!get_is_control_change()) return -1;
+	return int(data1);
+}
+
+bool midi_message::get_is_pedal() const {
+	return get_pedal_type() != 0;
+}
+
+int midi_message::get_pedal_type() const {
+	// The three pedal controllers and nothing else. 1 sustain, 2 sostenuto,
+	// 3 soft - the same numbering midi_input's own get_sustain/get_sostenuto/
+	// get_soft use, so a script reading the pedal from a message and a script
+	// reading it from the port land on the same number.
+	if (!get_is_control_change()) return 0;
+	switch (data1) {
+		case 64: return 1;
+		case 66: return 2;
+		case 67: return 3;
+		default: return 0;
+	}
+}
+
+int midi_message::get_channel_pressure() const {
+	// Channel pressure (0xd0) carries its value in the first data byte and has
+	// no second one, unlike polyphonic aftertouch. -1 when the message is
+	// something else.
+	if (get_kind() != 0xd0) return -1;
+	return int(data1);
+}
+
+int midi_message::get_aftertouch() const {
+	// Polyphonic aftertouch (0xa0): pressure for one note, in the second data
+	// byte. The note it belongs to is data1, the same as any other note
+	// message. -1 when the message is something else.
+	if (get_kind() != 0xa0) return -1;
+	return int(data2);
+}
+
+int midi_message::get_pitch_bend() const {
+	// Fourteen bits, least significant seven first. 8192 is centred, 0 is
+	// fully down, 16383 is fully up. -1, not 8192, when the message is not a
+	// bend: a centred bend and no bend at all are different things.
+	if (get_kind() != 0xe0) return -1;
+	return (int(data2) << 7) | int(data1);
+}
+
+int midi_message::get_program() const {
+	// Program change (0xc0) is the one common message with a single data byte.
+	if (get_kind() != 0xc0) return -1;
+	return int(data1);
+}
+
+int midi_message::get_note_name_byte_count() const {
+	buffer = midi_note_pitch_name(int(data1));
+	return int(buffer.size());
+}
+
+int midi_message::get_note_name_byte(unsigned int index) const {
+	if (index >= buffer.size()) return -1;
+	return int(static_cast<unsigned char>(buffer[index]));
+}
+
+// ---------------------------------------------------------------------------
 // Note names
 // ---------------------------------------------------------------------------
 
@@ -2564,6 +2678,26 @@ void register_midi_message(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectProperty("midi_message", "uint8 data2", asOFFSET(midi_message, data2)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_message", "int channel", asOFFSET(midi_message, channel)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_message", "double timestamp", asOFFSET(midi_message, timestamp)), "RegisterObjectProperty", __LINE__);
+	// The reading side of a message: which kind it is, and the numbers inside
+	// it pulled out where the status byte put them. A const getter with no
+	// arguments is exposed as a property, so `m.is_note_on` and
+	// `m.is_note_on()` are the same call - the property spelling reads better
+	// in a condition and the call spelling is there for anyone who writes it
+	// that way out of habit.
+	reg->check( engine->RegisterObjectMethod("midi_message", "int get_kind() const", asMETHOD(midi_message, get_kind), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_message", "bool get_is_note() const", asMETHOD(midi_message, get_is_note), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_message", "bool get_is_note_on() const", asMETHOD(midi_message, get_is_note_on), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_message", "bool get_is_note_off() const", asMETHOD(midi_message, get_is_note_off), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_message", "bool get_is_control_change() const", asMETHOD(midi_message, get_is_control_change), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_message", "int get_controller() const", asMETHOD(midi_message, get_controller), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_message", "bool get_is_pedal() const", asMETHOD(midi_message, get_is_pedal), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_message", "int get_pedal_type() const", asMETHOD(midi_message, get_pedal_type), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_message", "int get_channel_pressure() const", asMETHOD(midi_message, get_channel_pressure), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_message", "int get_aftertouch() const", asMETHOD(midi_message, get_aftertouch), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_message", "int get_pitch_bend() const", asMETHOD(midi_message, get_pitch_bend), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_message", "int get_program() const", asMETHOD(midi_message, get_program), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_message", "int get_note_name_byte_count() const", asMETHOD(midi_message, get_note_name_byte_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_message", "int get_note_name_byte(uint index) const", asMETHOD(midi_message, get_note_name_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 }
 
 void register_midi_input(asIScriptEngine* engine, registration* reg) {

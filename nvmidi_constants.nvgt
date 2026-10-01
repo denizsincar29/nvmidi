@@ -1,0 +1,109 @@
+// nvmidi constants - the names of the numbers, so a script does not have to
+// carry a table of magic values.
+//
+// A MIDI note number is a count of semitones from the bottom of the range,
+// and the only ones anyone remembers are the ends: 0 is the lowest key a MIDI
+// message can address, 127 the highest, and middle C is 60. Everything else
+// is easier to write as NOTE_C4 + 7 than as 67, and easier to read again six
+// months later.
+//
+// #include "nvmidi_constants.nvgt" at the top of a script after
+// `#pragma plugin nvmidi`.
+
+// ---------------------------------------------------------------------------
+// Notes
+// ---------------------------------------------------------------------------
+
+// One octave, in the C4 = 60 convention: each octave starts at C, so the
+// names within an octave are the twelve below and the octave number steps up
+// at C. NOTE_C4 is 60 because the MIDI spec's own convention has middle C
+// there and every manufacturer follows it; write NOTE_C3 + 12 if you think in
+// another octave numbering.
+const int NOTE_C4 = 60;
+const int NOTE_CS4 = 61;
+const int NOTE_D4 = 62;
+const int NOTE_DS4 = 63;
+const int NOTE_E4 = 64;
+const int NOTE_F4 = 65;
+const int NOTE_FS4 = 66;
+const int NOTE_G4 = 67;
+const int NOTE_GS4 = 68;
+const int NOTE_A4 = 69;
+const int NOTE_AS4 = 70;
+const int NOTE_B4 = 71;
+
+// The bottom and top of what a note message can carry. A pitch outside this
+// range cannot be sent: the two numbers are seven bits each by definition of
+// the message, and nothing in this plugin will clamp a note into the range
+// for you.
+const int NOTE_LOWEST = 0;
+const int NOTE_HIGHEST = 127;
+
+// The octave number MIDI calls "the first one". NOTE_C4 is 60, and 60 divided
+// by twelve is five, which is why writing the octave in the note name as
+// `(pitch / 12) - 1` needs this constant rather than a bare 1.
+const int MIDI_OCTAVE_OFFSET = 1;
+
+// ---------------------------------------------------------------------------
+// Status bytes
+// ---------------------------------------------------------------------------
+
+// The high nibble of a status byte: what the message is, with the channel left
+// out. `(m.status & 0xf0) == MIDI_NOTE_ON` is the test a script would
+// otherwise spell with 0x90 written out by hand. The message's own `is_note_on`
+// property does the same thing and is what to reach for first.
+const int MIDI_NOTE_OFF = 0x80;
+const int MIDI_NOTE_ON = 0x90;
+const int MIDI_AFTERTOUCH = 0xa0;
+const int MIDI_CONTROL_CHANGE = 0xb0;
+const int MIDI_PROGRAM_CHANGE = 0xc0;
+const int MIDI_CHANNEL_PRESSURE = 0xd0;
+const int MIDI_PITCH_BEND = 0xe0;
+
+// ---------------------------------------------------------------------------
+// Controllers
+// ---------------------------------------------------------------------------
+
+// The numbers a sustain pedal, a sostenuto pedal and a soft pedal arrive as.
+// `m.pedal_type` already answers this directly; these are here for a script
+// that wants to watch a specific CC by number.
+const int CC_SUSTAIN = 64;
+const int CC_SOSTENUTO = 66;
+const int CC_SOFT_PEDAL = 67;
+
+// The values the three pedal types answer with, from `m.pedal_type`. Zero is
+// not a pedal at all.
+const int PEDAL_NONE = 0;
+const int PEDAL_SUSTAIN = 1;
+const int PEDAL_SOSTENUTO = 2;
+const int PEDAL_SOFT = 3;
+
+// ---------------------------------------------------------------------------
+// The ranges a value can take
+// ---------------------------------------------------------------------------
+
+// A data byte is seven bits, not eight, so every value inside a message - a
+// velocity, a controller value, a pressure, half of a pitch bend - tops out
+// at 127. A pitch bend is two of them side by side and reaches 16383, with
+// 8192 in the middle.
+const int MIDI_MIN = 0;
+const int MIDI_MAX = 127;
+const int MIDI_PITCH_BEND_MAX = 16383;
+const int MIDI_PITCH_BEND_CENTER = 8192;
+
+// ---------------------------------------------------------------------------
+// Writing notes as text
+// ---------------------------------------------------------------------------
+
+// The twelve spellings, sharp-first. Index a pitch into this with the
+// remainder and add the octave:
+//
+//   screen_reader_speak(PITCH_NAMES[m.data1 % 12] + string((m.data1 / 12) - 1));
+//
+// The plugin can do that for you instead - `m.note_name_byte_count` and
+// `m.note_name_byte` hand back the same text - and using the plugin is one
+// function call rather than three. This table is for when you want the parts
+// separately, or the flat spelling, which the plugin does not produce.
+const string[] PITCH_NAMES = {
+	"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
+};

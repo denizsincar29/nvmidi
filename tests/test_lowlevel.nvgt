@@ -89,6 +89,20 @@ string bytes_of_message(const midi_message&in m) {
 	return s;
 }
 
+// The name of the note a message is about, off the message's own byte pair.
+string bytes_of_note_name(const midi_message&in m) {
+	string s = "";
+	for (int i = 0; i < m.note_name_byte_count; i++) s += char_of(m.note_name_byte(i));
+	return s;
+}
+
+// The name of a pitch, off the free function's byte pair.
+string bytes_of_pitch_name(int pitch) {
+	string s = "";
+	for (int i = 0; i < midi_note_pitch_name_byte_count(pitch); i++) s += char_of(midi_note_pitch_name_byte(pitch, i));
+	return s;
+}
+
 
 void main() {
 	file_put_contents("apitest.log", "", false);
@@ -219,6 +233,61 @@ void main() {
 	m.status = uint8(0x90); m.data1 = uint8(60); m.data2 = uint8(100); m.channel = 1;
 	check("midi_message_fields", int(m.status) == 144 && int(m.data1) == 60 && int(m.data2) == 100 && m.channel == 1, "status=" + int(m.status) + " data1=" + int(m.data1) + " data2=" + int(m.data2) + " channel=" + m.channel);
 	check("midi_message_name_bytes", midi_message_name_byte_count(m) > 0, "count=" + midi_message_name_byte_count(m) + " text=" + bytes_of_message(m));
+
+	// -- reading a message: the named accessors ---------------------------
+	// The fields are writable, so every branch is exercised here without a
+	// device: a message is built by hand and then asked what it is.
+	check("msg_kind_note_on", m.kind == 0x90, "kind=" + m.kind);
+	check("msg_is_note", m.is_note, "is_note=" + bstr(m.is_note));
+	check("msg_is_note_on", m.is_note_on, "is_note_on=" + bstr(m.is_note_on));
+	check("msg_is_note_on_false_for_off", !m.is_note_off, "is_note_off=" + bstr(m.is_note_off));
+	check("msg_is_control_change_false", !m.is_control_change, "is_cc=" + bstr(m.is_control_change));
+	check("msg_controller_not_a_cc", m.controller == -1, "controller=" + m.controller);
+	check("msg_pedal_not_a_cc", !m.is_pedal && m.pedal_type == 0, "is_pedal=" + bstr(m.is_pedal) + " type=" + m.pedal_type);
+	check("msg_pitch_bend_not_a_bend", m.pitch_bend == -1, "bend=" + m.pitch_bend);
+	check("msg_program_not_a_pc", m.program == -1, "program=" + m.program);
+	check("msg_note_name_is_c4", bytes_of_note_name(m) == "C4", "name=" + bytes_of_note_name(m));
+
+	// A velocity-0 note on is a release. Hardware sends it under running
+	// status, and counting it as a press is how a script holds a key down
+	// forever.
+	m.data2 = uint8(0);
+	check("msg_velocity0_is_release", !m.is_note_on && m.is_note_off, "is_note_on=" + bstr(m.is_note_on) + " is_note_off=" + bstr(m.is_note_off));
+
+	// An explicit note off, on channel 3 to prove the channel is not in kind.
+	m.status = uint8(0x83); m.channel = 3;
+	check("msg_note_off_explicit", m.is_note_off && !m.is_note_on && m.kind == 0x80, "kind=" + m.kind + " off=" + bstr(m.is_note_off));
+
+	// A controller move of the sustain pedal.
+	m.status = uint8(0xb0); m.data1 = uint8(64); m.data2 = uint8(127);
+	check("msg_cc_sustain", m.is_control_change && m.controller == 64, "controller=" + m.controller);
+	check("msg_pedal_sustain", m.is_pedal && m.pedal_type == 1, "type=" + m.pedal_type);
+	m.data1 = uint8(66);
+	check("msg_pedal_sostenuto", m.pedal_type == 2, "type=" + m.pedal_type);
+	m.data1 = uint8(67);
+	check("msg_pedal_soft", m.pedal_type == 3, "type=" + m.pedal_type);
+	m.data1 = uint8(7); // volume - a controller, but not a pedal
+	check("msg_cc_not_pedal", m.is_control_change && !m.is_pedal && m.controller == 7, "type=" + m.pedal_type + " controller=" + m.controller);
+
+	// Pitch bend: 14 bits, least significant seven first, 8192 centred.
+	m.status = uint8(0xe0); m.data1 = uint8(0); m.data2 = uint8(64);
+	check("msg_pitch_bend_centre", m.pitch_bend == 8192, "bend=" + m.pitch_bend);
+	m.data1 = uint8(127); m.data2 = uint8(127);
+	check("msg_pitch_bend_max", m.pitch_bend == 16383, "bend=" + m.pitch_bend);
+	m.data1 = uint8(0); m.data2 = uint8(0);
+	check("msg_pitch_bend_min", m.pitch_bend == 0, "bend=" + m.pitch_bend);
+
+	// Program change carries one data byte; channel pressure likewise.
+	m.status = uint8(0xc0); m.data1 = uint8(42);
+	check("msg_program", m.program == 42 && m.aftertouch == -1 && m.channel_pressure == -1, "program=" + m.program);
+	m.status = uint8(0xd0); m.data1 = uint8(99);
+	check("msg_channel_pressure", m.channel_pressure == 99, "pressure=" + m.channel_pressure);
+	m.status = uint8(0xa0); m.data1 = uint8(60); m.data2 = uint8(70);
+	check("msg_aftertouch", m.aftertouch == 70, "aftertouch=" + m.aftertouch);
+
+	// The note name of a few pitches, through the plugin's own builder.
+	check("msg_note_name_fsharp3", bytes_of_pitch_name(54) == "F#3", "name=" + bytes_of_pitch_name(54));
+	check("msg_note_name_a5", bytes_of_pitch_name(81) == "A5", "name=" + bytes_of_pitch_name(81));
 
 	// -- midi_output close and its failure model --------------------------
 	mo.all_notes_off();
