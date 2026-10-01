@@ -1,5 +1,6 @@
 #pragma plugin nvmidi
 #include "nvmidi_ui.nvgt"
+#include "nvmidi_ui_keys.nvgt"
 
 // music_quickstart.nvgt - the high level half of nvmidi, with none of the
 // scaffolding the test files carry.
@@ -83,5 +84,5 @@ void main() {
 	mo.all_notes_off();   // never leave a note sounding
 	mo.close();
 	ui_speak("Done. Press Alt+F4 to close.");
-	while (ui_pump()) { }
+	while (ui_pump()) { if (stop_key()) return; }
 }

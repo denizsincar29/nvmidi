@@ -2,6 +2,7 @@
 // the pragma below the engine never opens the library and every midi_* name
 #pragma plugin nvmidi
 #include "nvmidi_ui.nvgt"
+#include "nvmidi_ui_keys.nvgt"
 
 // One byte, back as a one-character string. This engine's string(byte) gives
 // the decimal digits of the number rather than the character they stand for -
@@ -164,5 +165,5 @@ void main() {
 
 	keyboard.close();
 	ui_speak("Done. Press Alt+F4 to close.");
-	while (ui_pump()) { }
+	while (ui_pump()) { if (stop_key()) return; }
 }

@@ -2,6 +2,7 @@
 // the pragma below the engine never opens the library and every midi_* name
 #pragma plugin nvmidi
 #include "nvmidi_ui.nvgt"
+#include "nvmidi_ui_keys.nvgt"
 
 // One byte, back as a one-character string. This engine's string(byte) gives
 // the decimal digits of the number rather than the character they stand for -
@@ -118,6 +119,7 @@ void main() {
 	ui_speak("Listening on " + bytes_of_input_port_name(keyboard) + ". Play. Alt+F4 stops.");
 
 	while (ui_pump()) {
+		if (stop_key()) break;
 		// A common variable, filled by reference: the engine copies the
 		// argument into it, which is what midi_message's opAssign behaviour is
 		// registered for. A handle cannot stand in for it - this is a value

@@ -14,7 +14,7 @@ only needs that file edited.
 - **echo_monitor.nvgt** — speaks every message the keyboard sends, and transposes
   it up an octave on the way back out. The quickest way to confirm input and
   output both work end to end.
-- **keyboard_to_synth.nvgt** — forwards the keyboard to another port,
+- **octave-doubler.nvgt** — forwards the keyboard to another port,
   transposed. Shows input and output at once.
 - **play_chord.nvgt** — plays chords and patterns on the keyboard's own sound
   engine. Needs only one port: the notes go out of the port they came from.

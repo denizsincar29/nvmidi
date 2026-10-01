@@ -2,6 +2,7 @@
 // the pragma below the engine never opens the library and every midi_* name
 #pragma plugin nvmidi
 #include "nvmidi_ui.nvgt"
+#include "nvmidi_ui_keys.nvgt"
 
 // One byte, back as a one-character string. This engine's string(byte) gives
 // the decimal digits of the number rather than the character they stand for -
@@ -37,11 +38,12 @@ string char_of(uint b) {
 }
 
 
-// keyboard_to_synth.nvgt - play a keyboard plugged into the computer through
-// a synth running on the same computer.
+// octave-doubler.nvgt - play a keyboard plugged into the computer through a
+// synth running on the same computer.
 //
 // Reads note messages from one port and forwards them to another, transposed
 // and with the velocity scaled. Shows both directions working at once.
+// (Renamed from keyboard_to_synth.nvgt: the name should say what it does.)
 //
 // Press escape to stop. On the way out every note is released, so nothing is
 // left sounding. Both ports come from midi_config.txt next to this script.
@@ -127,6 +129,7 @@ void main() {
 	// ui_pump() keeps the window alive and is also the Alt+F4 test, so this
 	// loop can always be stopped from the keyboard.
 	while (ui_pump()) {
+		if (stop_key()) break;
 		// As in echo_monitor: one common variable filled by reference, copied
 		// into it through midi_message's opAssign behaviour.
 		midi_message m;

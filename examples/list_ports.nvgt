@@ -2,6 +2,7 @@
 // the pragma below the engine never opens the library and every midi_* name
 #pragma plugin nvmidi
 #include "nvmidi_ui.nvgt"
+#include "nvmidi_ui_keys.nvgt"
 
 // One byte, back as a one-character string. This engine's string(byte) gives
 // the decimal digits of the number rather than the character they stand for -
@@ -162,7 +163,7 @@ void main() {
 	uint inputs = midi_input_port_count();
 	if (inputs == 0) {
 		ui_speak("No MIDI input ports found. Nothing to choose from. Press Alt+F4 to close.");
-		while (ui_pump()) { }
+		while (ui_pump()) { if (stop_key()) return; }
 		return;
 	}
 	ui_speak(inputs + " input port(s). Up and down choose one, enter writes it to the config, escape leaves without writing.");
@@ -176,13 +177,22 @@ void main() {
 
 	announce_port(0, chosen, inputs);
 
-	// The loop's only job is to notice a key the moment it goes down. Every
-	// key this engine offers (key_pressed, key_repeating, key_down) is level
-	// triggered - it stays true while the key is held - so one press would
-	// otherwise move the selection many times. The way out is not to ask how
-	// the key system works but to watch the transition here: an edge is
-	// "true now, false on the previous turn". The engine's own menu code
-	// polls in a loop exactly like this one.
+	// The loop asks about keys, and it asks two different questions.
+	//
+	// Escape and Alt+F4 are the stop key, tested exactly the way
+	// nvmidi_ui_keys.nvgt tests it everywhere else. Up and down move the
+	// selection. Both are listed as just a key read: key_pressed() is level
+	// triggered - it answers true for as long as the key is held - so holding
+	// an arrow would otherwise run the list away, and key_repeating() is the
+	// engine's own name for a key that is held down. Listing both is what the
+	// engine's own bundled form and menu scripts do.
+	//
+	// Enter is different on purpose. "Write it" is a step in a dialog, not a
+	// state: the whole run either wrote the file or did not, and writing it a
+	// second time before the second is over changes nothing. So enter is a
+	// plain read with no edge logic in front of it, and the settle timer is
+	// what keeps it to one write - the file is only touched while `entered`
+	// is still zero.
 	//
 	// 30 ms is not a guess either: the engine's own form and menu code call
 	// wait(5) per turn, and measured on the engine, key_pressed(KEY_SPACE)
@@ -191,32 +201,27 @@ void main() {
 	const double settle = 1000.0; // how long the last word is left to be spoken
 	const double frame = 30.0;
 	double entered = 0.0;
-	bool held_up = false;
-	bool held_down = false;
-	bool held_enter = false;
 	while (true) {
-		if (!ui_pump()) return; // Alt+F4 or escape: leave without writing
+		if (!ui_pump()) return; // escape or Alt+F4: leave without writing
+		if (stop_key()) return;
 
-		const bool up = key_pressed(KEY_UP) || key_repeating(KEY_UP);
-		const bool down = key_pressed(KEY_DOWN) || key_repeating(KEY_DOWN);
+		const bool up = a_key(KEY_UP);
+		const bool down = a_key(KEY_DOWN);
 		// Enter can come from either key; a keyboard without a numpad has
 		// only the main one.
-		const bool enter = key_pressed(KEY_RETURN) || key_repeating(KEY_RETURN)
-				|| key_pressed(KEY_NUMPAD_ENTER) || key_repeating(KEY_NUMPAD_ENTER);
+		const bool enter = a_key(KEY_RETURN) || a_key(KEY_NUMPAD_ENTER);
 
-		// One press, one step. Letting the reading repeat while the key is
-		// held is what typing a name does, and it does not belong here.
-		if (up && !held_up) {
+		if (up) {
 			chosen = (chosen - 1 + int(inputs)) % int(inputs); // wrap at the ends
 			announce_port(0, chosen, inputs);
 		}
-		if (down && !held_down) {
+		if (down) {
 			chosen = (chosen + 1) % int(inputs);
 			announce_port(0, chosen, inputs);
 		}
 
-		// The three cases are exclusive, and the file is only touched here,
-		// so a held key never writes twice.
+		// The file is only touched here, and only once, so nothing a held key
+		// does can write it twice.
 		if (enter && entered == 0.0) {
 			write_config(config_path, chosen);
 			ui_speak("Written to the config: input port " + chosen + ", " + bytes_of_input_port_name(chosen) + ". Closing in a second.");
@@ -224,9 +229,6 @@ void main() {
 		}
 		if (entered != 0.0 && ticks() - entered >= settle) return;
 
-		held_up = up;
-		held_down = down;
-		held_enter = enter;
 		wait(frame);
 	}
 }

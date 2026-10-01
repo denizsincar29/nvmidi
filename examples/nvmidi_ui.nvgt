@@ -6,7 +6,9 @@
 //   ui_speak(text)                      speak through the screen reader and
 //                                       print the same words
 //   ui_pump()                           keep the window alive; false once the
-//                                       user pressed Alt+F4 (or escape)
+//                                       user pressed Alt+F4 (or escape - see
+//                                       stop_key() in nvmidi_ui_keys.nvgt,
+//                                       which the examples test beside it)
 //   ui_play_background(synth, notes, step_ms, on_frame)
 //                                       play a group of notes in the
 //                                       background while the caller keeps
@@ -43,9 +45,7 @@ void ui_speak(const string&in text) {
 // key_pressed(KEY_F4).
 bool ui_pump() {
 	wait(5);
-	if ((keyboard_modifiers & KEYMOD_ALT) > 0 && key_pressed(KEY_F4)) return false;
-	if (key_pressed(KEY_ESCAPE)) return false;
-	return true;
+	return !stop_key();
 }
 
 // Plays a group of notes in the background, while the caller keeps running.

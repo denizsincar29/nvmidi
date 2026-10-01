@@ -1,0 +1,22 @@
+// nvmidi_ui_keys.nvgt - one helper the examples put in front of ui_pump: did
+// the user just ask to stop?
+//
+// The split from nvmidi_ui.nvgt is not cosmetic. ui_pump is the loop's own
+// heartbeat, and the examples call it once per frame; this is the question
+// asked once per key read. Keep them apart and a script can keep pumping the
+// window while it ignores the exit key.
+//
+// Escape is written the same way here as in the first version of
+// list_ports.nvgt, where it was measured to work: a plain key_pressed read.
+// key_held combines the two spellings the engine actually has - key_pressed is
+// true while the key is down, key_repeating adds the auto repeat - because
+// their names are all this repository could observe from the engine, and it is
+// their effect that has to hold on both a stuck alt and an ordinary press.
+bool a_key(const int k) {
+	return key_pressed(k) || key_repeating(k);
+}
+
+bool stop_key() {
+	if (key_pressed(KEY_ESCAPE)) return true;
+	return (keyboard_modifiers & KEYMOD_ALT) > 0 && a_key(KEY_F4);
+}

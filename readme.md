@@ -523,7 +523,7 @@ dropped rather than memory growing without bound.
 `examples/` holds the five demonstration scripts, all of which read
 `midi_config.txt` from that folder: `list_ports` (what is plugged in, and what
 the config picks), `echo_monitor` (speaks every incoming message),
-`keyboard_to_synth` (forwards one port to another, transposed), `play_chord`
+`octave-doubler` (forwards one port to another, transposed), `play_chord`
 (chords and patterns on the keyboard's own sound engine) and `music_quickstart`
 (the music API in the fewest lines). Each opens a window with `show_window`,
 speaks its messages through the screen reader as well as printing them, and
