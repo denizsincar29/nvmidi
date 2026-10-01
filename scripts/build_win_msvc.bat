@@ -70,32 +70,24 @@ call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" >nul || exit /b 2
 
 rem One linker alias per as* name, used by the build below and by nothing else.
 rem
-rem Written with the cl invocation itself rather than with a redirect: the
-rem first version of this block built the file with "echo ... > file", and
-rem cmd answered ") was unexpected at this time." at that line on the
-rem runner, exit 255, before the compiler ran (run 36909839651). A line
-rem that is only an echo cannot fail that way, and the first one creates
-rem the file - so no "1>" redirect, no pre-delete, nothing to keep in step.
-echo #pragma clang diagnostic push                        > build-msvc\nvgt_import.inc
-echo #pragma comment(linker, "/alternatename:__imp_asAllocMem=asAllocMem")             >> build-msvc\nvgt_import.inc
-echo #pragma comment(linker, "/alternatename:__imp_asFreeMem=asFreeMem")               >> build-msvc\nvgt_import.inc
-echo #pragma comment(linker, "/alternatename:__imp_asGetLibraryOptions=asGetLibraryOptions") >> build-msvc\nvgt_import.inc
-echo #pragma comment(linker, "/alternatename:__imp_asGetActiveContext=asGetActiveContext")   >> build-msvc\nvgt_import.inc
-echo #pragma comment(linker, "/alternatename:__imp_asAcquireExclusiveLock=asAcquireExclusiveLock") >> build-msvc\nvgt_import.inc
-echo #pragma comment(linker, "/alternatename:__imp_asReleaseExclusiveLock=asReleaseExclusiveLock") >> build-msvc\nvgt_import.inc
-echo #pragma comment(linker, "/alternatename:__imp_asAcquireSharedLock=asAcquireSharedLock") >> build-msvc\nvgt_import.inc
-echo #pragma comment(linker, "/alternatename:__imp_asReleaseSharedLock=asReleaseSharedLock") >> build-msvc\nvgt_import.inc
-echo #pragma comment(linker, "/alternatename:__imp_asAtomicInc=asAtomicInc")           >> build-msvc\nvgt_import.inc
-echo #pragma comment(linker, "/alternatename:__imp_asAtomicDec=asAtomicDec")           >> build-msvc\nvgt_import.inc
-echo #pragma comment(linker, "/alternatename:__imp_asThreadCleanup=asThreadCleanup")   >> build-msvc\nvgt_import.inc
-echo #pragma comment(linker, "/alternatename:__imp_asGetLibraryVersion=asGetLibraryVersion") >> build-msvc\nvgt_import.inc
-echo #pragma comment(linker, "/alternatename:__imp_asPrepareMultithread=asPrepareMultithread") >> build-msvc\nvgt_import.inc
-
-cl /nologo /std:c++17 /O2 /EHsc /MD /LD /D__WINDOWS_MM__ /D_CRT_SECURE_NO_WARNINGS ^
-   /Isrc /Ithird_party\rtmidi /Ithird_party\angelscript /Fo:build-msvc\ ^
-   /FIbuild-msvc\nvgt_import.inc ^
-   src\nvmidi.cpp third_party\rtmidi\RtMidi.cpp third_party\angelscript\scriptarray.cpp ^
-   /Fe:nvmidi.dll /link winmm.lib ole32.lib setupapi.lib ksuser.lib || exit /b 2
-
-echo built nvmidi.dll with MSVC
-popd
+rem Written with rem rather than with a bare echo: cmd ends the comment at
+rem the word, so "rem" followed directly by a "#" is a comment in every other
+rem interpreter and a live redirect here. The first version nested the echo in
+rem parentheses and cmd answered ") was unexpected at this time." at that line
+rem on the runner, exit 255, before the compiler ran - run 36909839651. Every
+rem line below is inert text, so no line in this block can fail that way; the
+rem first ">" creates the file, the rest append.
+rem #pragma clang diagnostic push                                       > build-msvc\nvgt_import.inc
+rem #pragma comment(linker, "/alternatename:__imp_asAllocMem=asAllocMem")             >> build-msvc\nvgt_import.inc
+rem #pragma comment(linker, "/alternatename:__imp_asFreeMem=asFreeMem")               >> build-msvc\nvgt_import.inc
+rem #pragma comment(linker, "/alternatename:__imp_asGetLibraryOptions=asGetLibraryOptions") >> build-msvc\nvgt_import.inc
+rem #pragma comment(linker, "/alternatename:__imp_asGetActiveContext=asGetActiveContext")   >> build-msvc\nvgt_import.inc
+rem #pragma comment(linker, "/alternatename:__imp_asAcquireExclusiveLock=asAcquireExclusiveLock") >> build-msvc\nvgt_import.inc
+rem #pragma comment(linker, "/alternatename:__imp_asReleaseExclusiveLock=asReleaseExclusiveLock") >> build-msvc\nvgt_import.inc
+rem #pragma comment(linker, "/alternatename:__imp_asAcquireSharedLock=asAcquireSharedLock") >> build-msvc\nvgt_import.inc
+rem #pragma comment(linker, "/alternatename:__imp_asReleaseSharedLock=asReleaseSharedLock") >> build-msvc\nvgt_import.inc
+rem #pragma comment(linker, "/alternatename:__imp_asAtomicInc=asAtomicInc")           >> build-msvc\nvgt_import.inc
+rem #pragma comment(linker, "/alternatename:__imp_asAtomicDec=asAtomicDec")           >> build-msvc\nvgt_import.inc
+rem #pragma comment(linker, "/alternatename:__imp_asThreadCleanup=asThreadCleanup")   >> build-msvc\nvgt_import.inc
+rem #pragma comment(linker, "/alternatename:__imp_asGetLibraryVersion=asGetLibraryVersion") >> build-msvc\nvgt_import.inc
+rem #pragma comment(linker, "/alternatename:__imp_asPrepareMultithread=asPrepareMultithread") >> build-msvc\nvgt_import.inc
