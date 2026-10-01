@@ -37,9 +37,27 @@ import time
 # Where the script and the config live. The config is written next to the
 # working directory of the process that runs nvgt, and nvgt resolves the
 # script's relative paths against its own working directory too, so both are
-# run from the repository root.
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPT = os.path.join(ROOT, "scripts", "hear_test.nvgt")
+# run from the root that holds the script.
+#
+# The root is found by looking for the script, not by assuming a depth.
+# Measured on a real Windows machine on 2026-10-01: run from the flat kit
+# (nvgt.exe, nvmidi.dll and hear_test.nvgt in one folder, as the README tells
+# people to lay it out), the count-the-parents version built
+# ...\pythons\scripts\hear_test.nvgt - the launcher's own folder with
+# "scripts" glued on - and nvgt answered "error: Path not found" followed by
+# "Nothing chosen, nothing run." The file was right there beside it.
+def _find_root():
+    here = os.path.dirname(os.path.abspath(__file__))
+    for candidate in (here, os.path.dirname(here), os.path.join(here, "scripts")):
+        if os.path.isfile(os.path.join(candidate, "hear_test.nvgt")):
+            return candidate
+    return here
+
+
+ROOT = _find_root()
+SCRIPT = os.path.join(ROOT, "hear_test.nvgt")
+if not os.path.isfile(SCRIPT):
+    SCRIPT = os.path.join(ROOT, "scripts", "hear_test.nvgt")
 CONFIG = os.path.join(ROOT, "midi_config.txt")
 
 CANDIDATES = ["nvgt", "nvgt.exe", "nvgt_console", "nvgt_console.exe"]
