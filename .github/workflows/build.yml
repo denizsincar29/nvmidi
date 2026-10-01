@@ -102,11 +102,16 @@ jobs:
                      Where-Object { $_.FullName -match '[\\/]Hostx64[\\/]x64[\\/]dumpbin\.exe$' } |
                      Select-Object -First 1
           if (-not $dumpbin) { throw "dumpbin.exe not found under $vs" }
-          $exports = (& $dumpbin.FullName /exports engine/nvgt.exe 2>&1 | Out-String)
-          if ($exports -notmatch 'asAllocMem') {
-            throw 'engine/nvgt.exe does not export asAllocMem, so this file is not the engine build the plugin links against'
+          $engineExe = Get-ChildItem engine -Recurse -Filter 'nvgt.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $engineExe) {
+            throw 'the downloaded tarball carries no nvgt.exe, so there is no export table to read'
           }
-          Write-Host 'engine/nvgt.exe exports the Angelscript symbols the plugin links against'
+          Write-Host "reading $($engineExe.FullName)"
+          $exports = (& $dumpbin.FullName /exports $engineExe.FullName 2>&1 | Out-String)
+          if ($exports -notmatch 'asAllocMem') {
+            throw "$($engineExe.Name) does not export asAllocMem, so this file is not the engine build the plugin links against"
+          }
+          Write-Host "$($engineExe.Name) exports the Angelscript symbols the plugin links against"
 
       - name: build nvmidi.dll with MSVC
         shell: cmd
