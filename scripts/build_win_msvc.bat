@@ -69,19 +69,19 @@ if not defined VSDIR (
 call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" >nul || exit /b 2
 
 rem One linker alias per as* name, used by the build below and by nothing else.
-> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asAllocMem=asAllocMem"))
->> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asFreeMem=asFreeMem"))
->> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asGetLibraryOptions=asGetLibraryOptions"))
->> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asGetActiveContext=asGetActiveContext"))
->> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asAcquireExclusiveLock=asAcquireExclusiveLock"))
->> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asReleaseExclusiveLock=asReleaseExclusiveLock"))
->> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asAcquireSharedLock=asAcquireSharedLock"))
->> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asReleaseSharedLock=asReleaseSharedLock"))
->> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asAtomicInc=asAtomicInc"))
->> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asAtomicDec=asAtomicDec"))
->> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asThreadCleanup=asThreadCleanup"))
->> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asGetLibraryVersion=asGetLibraryVersion"))
->> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asPrepareMultithread=asPrepareMultithread"))
+1> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asAllocMem=asAllocMem"))
+1>> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asFreeMem=asFreeMem"))
+1>> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asGetLibraryOptions=asGetLibraryOptions"))
+1>> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asGetActiveContext=asGetActiveContext"))
+1>> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asAcquireExclusiveLock=asAcquireExclusiveLock"))
+1>> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asReleaseExclusiveLock=asReleaseExclusiveLock"))
+1>> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asAcquireSharedLock=asAcquireSharedLock"))
+1>> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asReleaseSharedLock=asReleaseSharedLock"))
+1>> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asAtomicInc=asAtomicInc"))
+1>> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asAtomicDec=asAtomicDec"))
+1>> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asThreadCleanup=asThreadCleanup"))
+1>> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asGetLibraryVersion=asGetLibraryVersion"))
+1>> build-msvc\nvgt_import.inc (echo #pragma comment^(linker^, "/alternatename:__imp_asPrepareMultithread=asPrepareMultithread"))
 
 cl /nologo /std:c++17 /O2 /EHsc /MD /LD /D__WINDOWS_MM__ /D_CRT_SECURE_NO_WARNINGS ^
    /Isrc /Ithird_party\rtmidi /Ithird_party\angelscript /Fo:build-msvc\ ^
