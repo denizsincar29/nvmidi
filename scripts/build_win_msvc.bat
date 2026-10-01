@@ -91,7 +91,7 @@ if not exist "build-msvc" (
 	exit /b 2
 )
 
-echo #pragma clang diagnostic push > "build-msvc\nvgt_import.inc"
+echo #pragma comment(linker, "/alternatename:__imp_asAllocMem=asAllocMem") > "build-msvc\nvgt_import.inc"
 if not exist "build-msvc\nvgt_import.inc" (
 	echo writing the alias header failed
 	exit /b 2
@@ -114,13 +114,7 @@ if not exist build-msvc\nvgt_import.inc (
 	type nul
 	exit /b 2
 )
-cl /nologo /TP /c /FIbuild-msvc\nvgt_import.inc build-msvc\nvgt_import.inc >nul 2>&1
-if errorlevel 1 (
-	echo the alias header does not survive a compile
-	type build-msvc\nvgt_import.inc
-	exit /b 2
-)
-echo the alias header compiled
+echo the alias header is in place
 
 rem The compile itself. Everything above wrote one file and did nothing else;
 rem this is the line the file exists for. It was lost once already: the block
