@@ -56,13 +56,28 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $headers = @{ 'User-Agent' = 'nvmidi-ci' }
           $release = Invoke-RestMethod -Headers $headers -Uri 'https://api.github.com/repos/samtupy/nvgt/releases/tags/latest'
-          $asset = $release.assets | Where-Object { $_.name -like '*.exe' } | Select-Object -First 1
+          # The .tar.gz, not the .exe: this is the asset scripts/nvgt_pin.sh
+          # fetches, and the one the export table has to be read from. Picking
+          # the first .exe is not the same file - that one no longer exports
+          # asAllocMem, and the check below failed on a build the plugin is
+          # never linked against.
+          $asset = $release.assets | Where-Object { $_.name -like '*.tar.gz' } | Select-Object -First 1
           if (-not $asset) {
-            throw 'the nvgt release carries no .exe asset, so there is no engine to read an export table from'
+            throw 'the nvgt release carries no .tar.gz asset, so there is no engine to read an export table from'
           }
           Write-Host "engine: $($asset.name), $([math]::Round($asset.size / 1MB, 1)) MB"
           New-Item -ItemType Directory -Force engine | Out-Null
-          Invoke-WebRequest -Headers $headers -Uri $asset.browser_download_url -OutFile engine/nvgt.exe
+          Invoke-WebRequest -Headers $headers -Uri $asset.browser_download_url -OutFile engine/nvgt_engine.tar.gz
+          tar -xzf engine/nvgt_engine.tar.gz -C engine
+          Remove-Item engine/nvgt_engine.tar.gz
+          # The tarball unpacks into a version-named directory; flatten it, the
+          # same way nvgt_pin.sh does, so the rest of the job does not have to
+          # know the version number.
+          $inner = Get-ChildItem engine -Directory -Filter 'nvgt*' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($inner) {
+            Get-ChildItem $inner.FullName | Move-Item -Destination engine -Force
+            Remove-Item $inner.FullName -Recurse -Force
+          }
           # $home is not free: PowerShell holds HOME as a read-only variable and
           # assigns to it with a WriteError, which under $ErrorActionPreference =
           # 'Stop' ends the step. The value is a path, not the user's home.
