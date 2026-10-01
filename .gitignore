@@ -27,3 +27,8 @@ build-msvc/
 *.exp
 *.lib
 *.pdb
+
+# Packaged copies of the examples and tests, rebuilt by the release job.
+# They are products, not sources: an update that ships them back in makes a
+# fresh checkout of the tree, not of a build.
+*.zip

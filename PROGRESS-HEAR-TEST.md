@@ -5,13 +5,13 @@
 
 ## Что в репозитории
 
-- Ветка `master`, последний коммит `e0a2519`.
+- Ветка `master`, последний коммит `05f3a05`.
 - `scripts/hear_test.py` + `scripts/hear_test.nvgt` — приёмочный тест на слух.
   **Работа сделана и лежит в репозитории.** Готовый архив с DLL уже отправлен
   Денизу в Telegram.
 - `src/nvmidi.cpp` — плагин: `midi_input`, `midi_output`, `midi_message`,
   `midi_note`, `midi_duration`, `midi_config`, паттерны проигрывания.
-- `Makefile` — Linux (ALSA/dummy) и Windows (MinGW, winmm).
+- `Makefile` — Linux (ALSA/dummy) и Windows (MinGW, winmm); **MinGW-ветка Windows тупиковая**, рабочая — `scripts/build_win_msvc.bat`, см. грабли ниже.
 - `.github/workflows/` — `nvgt.yml` (компиляция скриптов движком), `windows.yml`
   (сборка DLL + e2e-пробы), `release.yml` (релиз по тегу `v*`), `pytest.yml`,
   `artifacts.yml`.
@@ -40,7 +40,7 @@
 
 Живая гипотеза: смерть садится в загрузочный путь, раньше вызова
 `midi_output_create()`. Что **измерено** новой пробой `detach_probe`
-(run 36780860938, коммит `e0a2519`): падение с detached-плагином — те же
+(run 36780860938, коммит `e0a2519` — на тот момент HEAD): падение с detached-плагином — те же
 0xC0000005, stdout 0 байт против 16 у `e2e_min` на той же машине. Значит
 умирает не зарегистрированный код плагина, а загрузка.
 
@@ -63,8 +63,18 @@
   отвергает. Порты передаются через `midi_config.txt`.
 - Плагин грузится движком по **bare name**, поэтому DLL должна лежать рядом с
   `nvgt.exe` или в `nu/lib`.
-- `-static` обязателен при линковке под Windows: без него DLL тянет
-  `libwinpthread-1.dll`, которого на машине пользователя нет, и Windows
-  отказывает библиотеке целиком — движок отвечает только
-  `failed to load plugin`.
+- **Собирать под Windows надо MSVC, не MinGW** (замерено на машине Дениза
+  01.10.2026, коммит `e8f6ede`; предыдущая запись здесь про `-static`/MinGW
+  снята). `nvgt.exe` — MSVC-сборка, тащит `msvcp_win.dll`. MinGW-плагин
+  получает `std::string` в чужом раскладке: «nord» пришёл как size=0
+  data=0x64726f6e (MSVC кладёт символы по смещению 0 и размер по 16,
+  libstdc++ ждёт указатель по 0 и размер по 8). Все строковые аргументы
+  пустые или мусорные, `midi_config::load()` падает на неверно прочитанном
+  указателе. Тот же код, собранный MSVC, получает size=4 первый байт=110, и
+  `midi_note_number("C4")` отвечает 60. Сборка — `scripts/build_win_msvc.bat`
+  (берёт `vswhere`, генерит импорт-библиотеку из таблицы экспорта движка, т.к.
+  MSVC нужны символы AngelScript на этапе линковки, а MinGW оставляет их
+  загрузчику). Побочная находка оттуда же: `-static` сам по себе вопрос
+  `libwinpthread-1.dll` не решает — он снимается только `-static-libgcc
+  -static-libstdc++`, а вся MinGW-ветка теперь тупиковая.
 - Нельзя судить о скрипте по exit code `--compile`: движок **исполняет** скрипт.

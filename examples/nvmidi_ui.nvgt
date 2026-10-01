@@ -6,9 +6,7 @@
 //   ui_speak(text)                      speak through the screen reader and
 //                                       print the same words
 //   ui_pump()                           keep the window alive; false once the
-//                                       user pressed Alt+F4 (or escape - see
-//                                       stop_key() in nvmidi_ui_keys.nvgt,
-//                                       which the examples test beside it)
+//                                       user pressed Alt+F4 or escape
 //   ui_play_background(synth, notes, step_ms, on_frame)
 //                                       play a group of notes in the
 //                                       background while the caller keeps
@@ -43,9 +41,18 @@ void ui_speak(const string&in text) {
 // unless a loop runs, and wait() is that loop's heartbeat. The Alt+F4
 // spelling is the engine manual's own: keyboard_modifiers & KEYMOD_ALT with
 // key_pressed(KEY_F4).
+//
+// The stop test is written out here rather than delegating to stop_key() in
+// nvmidi_ui_keys.nvgt, and that is measured: AngelScript gives every included
+// file its own compilation unit, so this helper cannot see a symbol from a
+// file the *including* script pulled in - the same rule the pragma below
+// exists for. A script that included only this file failed with "No matching
+// symbol 'stop_key'" on the ui_pump line. The two spellings below match
+// nvmidi_ui_keys.nvgt exactly, so both paths mean the same key.
 bool ui_pump() {
 	wait(5);
-	return !stop_key();
+	if (key_pressed(KEY_ESCAPE)) return false;
+	return !((keyboard_modifiers & KEYMOD_ALT) > 0 && (key_pressed(KEY_F4) || key_repeating(KEY_F4)));
 }
 
 // Plays a group of notes in the background, while the caller keeps running.

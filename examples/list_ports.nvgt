@@ -229,8 +229,16 @@ void main() {
 		// The file is only touched here, and only once, so nothing a held key
 		// does can write it twice.
 		if (enter && entered == 0.0) {
-			write_config(config_path, chosen);
-			ui_speak("Written to the config: input port " + chosen + ", " + bytes_of_input_port_name(chosen) + ". Closing in a second.");
+			// Ask the write, do not assume it. write_config returns false when
+			// the file cannot be opened - a read-only folder, or a name an
+			// engine has locked - and the line after this used to say "Written"
+			// whatever happened, which is a window that lies about the one
+			// thing it did.
+			if (write_config(config_path, chosen)) {
+				ui_speak("Written to the config: input port " + chosen + ", " + bytes_of_input_port_name(chosen) + ". Closing in a second.");
+			} else {
+				ui_speak("Could not write the config. Nothing was changed. Closing in a second.");
+			}
 			entered = ticks();
 		}
 		if (entered != 0.0 && ticks() - entered >= settle) return;

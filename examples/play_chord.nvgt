@@ -37,7 +37,18 @@ string char_of(uint b) {
 	return ".";
 }
 
-
+// The plugin hands its strings over as a count plus an indexed byte - see the
+// readme. These put them back together here, where the engine's own strings
+// were measured alive. This file has no working chord() helper to fall back on:
+// the plugin registers no such function, only the byte readers below.
+string bytes_of_last_error() {
+	string s = "";
+	for (int i = 0; i < midi_last_error_byte_count(); i++) {
+		int b = midi_last_error_byte(i);
+		s += char_of(b);
+	}
+	return s;
+}
 // play_chord.nvgt - play chords and patterns on the keyboard's own sound.
 //
 // This is the high level layer on its own: no synthesis, no second device.
@@ -50,6 +61,27 @@ string char_of(uint b) {
 // chord methods are registered on midi_output, so a midi_input either failed
 // to compile or, on a build where it did compile, sent nothing anywhere.
 // music_quickstart.nvgt always had this right, and this now reads like it.
+//
+// There is no chord() function, either. An earlier version of this file called
+// one - chord("60,64,67", 1000) and chord("60,64,67", 0) - and the engine said
+// "No matching symbol 'chord'" six times over. The plugin registers note
+// factories (nvmidi_note_create, four arities) and nothing that parses a
+// string of pitches, so the array is built by hand here, the way
+// music_quickstart.nvgt and scripts/e2e_midi.nvgt already build theirs.
+
+// The three notes of the chord this file plays, as one array. Every pattern
+// below is handed the same array, so the only thing that changes between runs
+// is the pattern itself.
+array<midi_note@>@ triad(midi_output@ out, double ms) {
+	array<midi_note@>@ notes = array<midi_note@>();
+	notes.insert_last(nvmidi_note_create(60, 100)); // middle C
+	notes.insert_last(nvmidi_note_create(64, 100));
+	notes.insert_last(nvmidi_note_create(67, 100));
+	for (uint i = 0; i < notes.length(); i++) {
+		notes[i].length = midi_duration(ms, MIDI_MS);
+	}
+	return notes;
+}
 
 void main() {
 	if (!show_window("nvmidi - chords")) {
@@ -72,7 +104,12 @@ void main() {
 		ui_speak("Cannot open: " + bytes_of_last_error());
 		return;
 	}
-	ui_speak("Playing on " + bytes_of_config(config) + ". Alt+F4 stops.");
+	// A midi_input's describe* carries the port the input side chose; on an
+	// output it comes back empty, which is why this reads the picked index
+	// instead of the config text. Measured: the same call works from
+	// list_ports.nvgt on a midi_input, and the input-only comment in the
+	// readme's chord section is what pointed at the difference.
+	ui_speak("Playing on output port " + port + ". Alt+F4 stops.");
 
 	// The tempo lives on the music class, so a note written as "a beat" means
 	// one beat here and not the 120 default. duration() reads that tempo for
@@ -80,7 +117,7 @@ void main() {
 	keyboard.tempo = 96.0;
 
 	// A major chord, all notes at once, held for a second.
-	keyboard.play_chord_wait(chord("60,64,67", 1000));
+	keyboard.play_chord_wait(triad(keyboard, 1000.0));
 
 	// The same chord in every unit the duration object understands: a beat
 	// at the class tempo, half a bar, and a length counted in MIDI ticks.
@@ -92,14 +129,14 @@ void main() {
 
 	ui_speak("At " + keyboard.tempo + " bpm a beat is " + beat.to_ms() + " milliseconds, half a bar is " + half_bar.to_ms() + ".");
 
-	array<midi_note@>@ held = chord("60,64,67", 0);
+	array<midi_note@>@ held = triad(keyboard, 0.0);
 	held[0].length = ticks;
 	keyboard.play_chord_wait(held);
 
 	// An explicitly qualified unit wins over the class tempo: MUSIC_BEATS_120
 	// is always a beat at 120, whatever keyboard.tempo says. Useful for a
 	// short test that should sound the same on every run.
-	array<midi_note@>@ steady = chord("60,64,67", 0);
+	array<midi_note@>@ steady = triad(keyboard, 0.0);
 	steady[0].length = keyboard.duration(1.0, MUSIC_BEATS_120);
 	keyboard.play_chord_wait(steady);
 
@@ -110,7 +147,7 @@ void main() {
 	for (uint i = 0; i < patterns.length(); i++) {
 		if (!ui_pump()) break;
 		ui_speak(patterns[i]);
-		keyboard.play_midi_chord_wait(chord("60,64,67,71", 220), patterns[i]);
+		keyboard.play_midi_chord_wait(triad(keyboard, 220.0), patterns[i]);
 	}
 
 	keyboard.close();
