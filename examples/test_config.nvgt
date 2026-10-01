@@ -10,7 +10,7 @@
 // inputs 0 MOTU M Series MIDI In 0, 1 Nord Piano 6 MIDI 1; outputs 0 Microsoft
 // GS Wavetable Synth 0, 1 MOTU M Series MIDI Out 1, 2 Nord Piano 6 MIDI 2.
 //
-// Startup cue: main() opens output port 2 once and plays C-E-G twice (the
+// Startup cue: main() opens output port 2 once and ripples C-E-G-E, one note at a time, twice (the
 // second after a short gap) before any check, so the person at the piano hears
 // that a run has begun. That port is opened only once and closed at the end.
 // If it cannot be opened the cue logs a FAIL and every check still runs.
@@ -69,14 +69,16 @@ string bytes_of_path(midi_config@ c) {
 // The startup cue: C-E-G on channel 1, held 800 ms, then the same again after
 // a short gap. Uses the object main() already opened; it never opens a port.
 void startup_cue(midi_output@ mo) {
+	// One note at a time, 60 ms each, instead of three struck together: note
+	// on C, wait 60, note off C, note on E, wait 60, note off E, and so on
+	// down and back up. Asked for on 2026-10-01, after the chord version was
+	// heard as a single stab that was easy to mistake for the arpeggios the
+	// tests themselves play. It runs twice, with a gap between.
 	for (int pass = 0; pass < 2; pass++) {
-		mo.send_note_on(1, 60, 100);
-		mo.send_note_on(1, 64, 100);
-		mo.send_note_on(1, 67, 100);
-		wait(800);
-		mo.send_note_off(1, 60, 0);
-		mo.send_note_off(1, 64, 0);
-		mo.send_note_off(1, 67, 0);
+		mo.send_note_on(1, 60, 100); wait(60); mo.send_note_off(1, 60, 0);
+		mo.send_note_on(1, 64, 100); wait(60); mo.send_note_off(1, 64, 0);
+		mo.send_note_on(1, 67, 100); wait(60); mo.send_note_off(1, 67, 0);
+		mo.send_note_on(1, 64, 100); wait(60); mo.send_note_off(1, 64, 0);
 		mo.all_notes_off();
 		if (pass == 0) wait(250);
 	}

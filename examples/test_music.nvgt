@@ -6,7 +6,7 @@
 // printed and appended to apitest.log. Playback goes to output port 2 (the
 // Nord); sound is expected and nothing audible is asserted.
 //
-// Startup cue: main() opens port 2 once and plays C-E-G twice (the second
+// Startup cue: main() opens port 2 once and ripples C-E-G-E, one note at a time, twice (the second
 // after a short gap) before any check, so the person at the piano hears that
 // a run has begun. That same midi_output object is reused by the checks
 // below - the port is opened only once. If it cannot be opened the cue logs a
@@ -76,14 +76,16 @@ string bytes_of_pitch_name(int pitch) {
 // The startup cue: C-E-G on channel 1, held 800 ms, then the same again after
 // a short gap. Uses the object main() already opened; it never opens a port.
 void startup_cue(midi_output@ mo) {
+	// One note at a time, 60 ms each, instead of three struck together: note
+	// on C, wait 60, note off C, note on E, wait 60, note off E, and so on
+	// down and back up. Asked for on 2026-10-01, after the chord version was
+	// heard as a single stab that was easy to mistake for the arpeggios the
+	// tests themselves play. It runs twice, with a gap between.
 	for (int pass = 0; pass < 2; pass++) {
-		mo.send_note_on(1, 60, 100);
-		mo.send_note_on(1, 64, 100);
-		mo.send_note_on(1, 67, 100);
-		wait(800);
-		mo.send_note_off(1, 60, 0);
-		mo.send_note_off(1, 64, 0);
-		mo.send_note_off(1, 67, 0);
+		mo.send_note_on(1, 60, 100); wait(60); mo.send_note_off(1, 60, 0);
+		mo.send_note_on(1, 64, 100); wait(60); mo.send_note_off(1, 64, 0);
+		mo.send_note_on(1, 67, 100); wait(60); mo.send_note_off(1, 67, 0);
+		mo.send_note_on(1, 64, 100); wait(60); mo.send_note_off(1, 64, 0);
 		mo.all_notes_off();
 		if (pass == 0) wait(250);
 	}
