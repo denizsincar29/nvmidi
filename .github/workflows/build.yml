@@ -78,8 +78,14 @@ jobs:
           if (-not (Test-Path $vswhere)) { throw 'no vswhere on this runner' }
           $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if (-not $vs) { throw 'this runner has no Visual Studio C++ tools' }
-          $dumpbin = Get-ChildItem (Join-Path $vs 'VC/Tools/MSVC') -Recurse -Filter dumpbin.exe -ErrorAction Stop |
-                     Where-Object { $_.FullName -like '*Hostx64/x64/dumpbin.exe' } | Select-Object -First 1
+          # Not (Join-Path $vs 'VC/Tools/MSVC'): on the current windows runners
+          # vswhere reports the Visual Studio 18 root, whose C++ tools do not
+          # live under that older sub-path, so the fixed join found nothing and
+          # the step threw 'dumpbin.exe not found'. Searching the install root
+          # for the host-native binary works on both layouts.
+          $dumpbin = Get-ChildItem $vs -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue |
+                     Where-Object { $_.FullName -match '[\\/]Hostx64[\\/]x64[\\/]dumpbin\.exe$' } |
+                     Select-Object -First 1
           if (-not $dumpbin) { throw "dumpbin.exe not found under $vs" }
           $exports = (& $dumpbin.FullName /exports engine/nvgt.exe 2>&1 | Out-String)
           if ($exports -notmatch 'asAllocMem') {
