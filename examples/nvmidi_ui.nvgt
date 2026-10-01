@@ -13,9 +13,14 @@
 //                                       updating other things; false if
 //                                       Alt+F4 interrupted it
 //
-// There is no #pragma plugin line here on purpose: the script that includes
-// this file asks for the plugin, and a file with no main() is not run on its
-// own.
+// The pragma below is not redundant with the one in the including script.
+// Measured: AngelScript gives every included file its own compilation unit, so
+// the included file never sees a plugin the *including* one loaded - the first
+// version of this helper had no pragma and all five examples that include it
+// failed with "Identifier 'midi_output' is not a data type in global
+// namespace" on line 60. A file that names a plugin type has to ask for the
+// plugin itself.
+#pragma plugin nvmidi
 //
 // The callback is an AngelScript function handle (funcdef ui_tick below).
 // Measured on this engine: a handler can be stored in a global and called

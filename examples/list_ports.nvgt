@@ -37,11 +37,24 @@ string char_of(uint b) {
 }
 
 
-// list_ports.nvgt - print every MIDI port on this machine.
+// list_ports.nvgt - pick a MIDI port with the arrow keys.
 //
-// Run this first when something is not working: it tells you which port
-// number your keyboard actually landed on, which backend RtMidi picked, and
-// which port midi_config.txt selects.
+// Run this first when something is not working, and when you want the other
+// examples to open the right device. Up and down move through the ports, each
+// one is spoken as it is highlighted, and enter writes the one you stopped on
+// into midi_config.txt. Escape leaves without writing anything. Nothing is
+// sent and no port is opened: this script only chooses.
+//
+// The port list is the inputs, because that is what midi_config feeds:
+// open_config() uses find_input_port(). A script that plays takes the same
+// number from find_output_port(), and on most keyboards the input and output
+// lists line up. The picked index is written as an explicit `port = N`, and
+// the `match` line is written empty on purpose - an empty substring cannot
+// match anything, so the index is what decides and the same device is chosen
+// on the next run. [Change that here if you want a name search instead.]
+//
+// The file is written into the engine's working directory, which is where
+// load() looks for it. That is what makes a picked port stick.
 
 // The plugin hands its strings over as a count plus an indexed byte - see the
 // readme. These put them back together here, where the engine's own strings
@@ -102,6 +115,34 @@ string bytes_of_api_name() {
 	}
 	return s;
 }
+// Says where the selection is now. One port per line, because this engine's
+// screen reader speaks each call as it comes (speak_wait in the engine's own
+// sound class does the same) - a single sentence holding the whole list would
+// bury the port just moved to.
+void announce_port(int unused, int chosen, uint count) {
+	ui_speak("Port " + (chosen + 1) + " of " + count + ": " + bytes_of_input_port_name(chosen));
+}
+
+// Writes the choice where the other examples will read it. open / write /
+// close are the engine's three old file functions, and they were picked
+// because they are exactly that: old. file_open exists in the engine's stub
+// headers and is versioned, so a script written against it would refuse to
+// run on an engine older than the stub. This file has to keep working on the
+// machine it was written for, which is why nothing newer than a comment went
+// in. The one unmeasured line in this example is whether the engine's writer
+// accepts these arguments - it is on the list of things to check on a real
+// run, not something this script can verify for itself.
+bool write_config(const string&in path, int port) {
+	file@ f = open(path, "w");
+	if (@f == null) return false;
+	f.write_line("# Chosen with list_ports.nvgt. An empty match cannot match any");
+	f.write_line("# port name, so \"port\" is what decides which device is opened.");
+	f.write_line("match = ");
+	f.write_line("port = " + port);
+	f.close();
+	return true;
+}
+
 void main() {
 	if (!show_window("nvmidi - ports")) {
 		ui_speak("Could not open a window.");
@@ -109,36 +150,83 @@ void main() {
 	}
 	wait(50); // let the reader speak the window title before the list
 
+	// The engine has no argument list to give a script (get_argc and
+	// application are refused), so the port also has to survive as a file.
+	// "midi_config.txt" is relative, and the engine resolves it against its
+	// own working directory rather than this script's folder. That is where
+	// load() looks, so it is where this writes.
+	const string config_path = "midi_config.txt";
+
 	ui_speak("MIDI backend: " + bytes_of_api_name());
 
 	uint inputs = midi_input_port_count();
 	if (inputs == 0) {
-		ui_speak("No MIDI input ports found.");
-	} else {
-		ui_speak(inputs + " input ports.");
-		for (uint i = 0; i < inputs; i++) {
-			ui_speak("Input " + i + ": " + bytes_of_input_port_name(i));
-		}
+		ui_speak("No MIDI input ports found. Nothing to choose from. Press Alt+F4 to close.");
+		while (ui_pump()) { }
+		return;
 	}
+	ui_speak(inputs + " input port(s). Up and down choose one, enter writes it to the config, escape leaves without writing.");
 
-	uint outputs = midi_output_port_count();
-	if (outputs == 0) {
-		ui_speak("No MIDI output ports found.");
-	} else {
-		ui_speak(outputs + " output ports.");
-		for (uint i = 0; i < outputs; i++) {
-			ui_speak("Output " + i + ": " + bytes_of_output_port_name(i));
+	// Which port is already in the config, so the first arrow moves from
+	// there instead of from the top of the list.
+	midi_config@ current = midi_config_create();
+	current.load_if_present(config_path);
+	int chosen = current.find_input_port();
+	if (chosen < 0 || chosen >= int(inputs)) chosen = 0;
+
+	announce_port(0, chosen, inputs);
+
+	// The loop's only job is to notice a key the moment it goes down. Every
+	// key this engine offers (key_pressed, key_repeating, key_down) is level
+	// triggered - it stays true while the key is held - so one press would
+	// otherwise move the selection many times. The way out is not to ask how
+	// the key system works but to watch the transition here: an edge is
+	// "true now, false on the previous turn". The engine's own menu code
+	// polls in a loop exactly like this one.
+	//
+	// 30 ms is not a guess either: the engine's own form and menu code call
+	// wait(5) per turn, and measured on the engine, key_pressed(KEY_SPACE)
+	// stops answering once the turn is longer than 40 ms. 30 is the longest
+	// wait that still sees a tap on every one of them.
+	const double settle = 1000.0; // how long the last word is left to be spoken
+	const double frame = 30.0;
+	double entered = 0.0;
+	bool held_up = false;
+	bool held_down = false;
+	bool held_enter = false;
+	while (true) {
+		if (!ui_pump()) return; // Alt+F4 or escape: leave without writing
+
+		const bool up = key_pressed(KEY_UP) || key_repeating(KEY_UP);
+		const bool down = key_pressed(KEY_DOWN) || key_repeating(KEY_DOWN);
+		// Enter can come from either key; a keyboard without a numpad has
+		// only the main one.
+		const bool enter = key_pressed(KEY_RETURN) || key_repeating(KEY_RETURN)
+				|| key_pressed(KEY_NUMPAD_ENTER) || key_repeating(KEY_NUMPAD_ENTER);
+
+		// One press, one step. Letting the reading repeat while the key is
+		// held is what typing a name does, and it does not belong here.
+		if (up && !held_up) {
+			chosen = (chosen - 1 + int(inputs)) % int(inputs); // wrap at the ends
+			announce_port(0, chosen, inputs);
 		}
+		if (down && !held_down) {
+			chosen = (chosen + 1) % int(inputs);
+			announce_port(0, chosen, inputs);
+		}
+
+		// The three cases are exclusive, and the file is only touched here,
+		// so a held key never writes twice.
+		if (enter && entered == 0.0) {
+			write_config(config_path, chosen);
+			ui_speak("Written to the config: input port " + chosen + ", " + bytes_of_input_port_name(chosen) + ". Closing in a second.");
+			entered = ticks();
+		}
+		if (entered != 0.0 && ticks() - entered >= settle) return;
+
+		held_up = up;
+		held_down = down;
+		held_enter = enter;
+		wait(frame);
 	}
-
-	// What the other examples will open, so a mismatch is visible right here.
-	midi_config@ config = midi_config_create();
-	config.load_if_present("midi_config.txt");
-	ui_speak("Looking for \"" + config.match + "\".");
-	ui_speak("Input: " + (config.find_input_port() >= 0 ? bytes_of_config(config) : "nothing found, not even the fallback port " + config.port + "."));
-	int out_port = config.find_output_port();
-	ui_speak("Output: " + (out_port >= 0 ? bytes_of_output_port_name(out_port) : "nothing found."));
-
-	ui_speak("Press Alt+F4 to close.");
-	while (ui_pump()) { } // stay open until the user asks to go
 }
