@@ -518,9 +518,9 @@ folder: `list_ports` (what is plugged in, and what the config picks),
 one port to another, transposed) and `play_chord` (chords and patterns on the
 keyboard's own sound engine).
 
-Three more are smoke tests rather than demonstrations, and each one opens the
-instrument's own output port and plays C-E-G twice before its first check, so
-the person sitting at the piano hears a run begin:
+Four more are smoke tests rather than demonstrations. The three that need
+nobody open the instrument's own output port and ripple C-E-G-E before their
+first check, so the person sitting at the piano hears a run begin:
 
 - `test_lowlevel` - the whole `midi_output` surface, the port functions and the
   byte pairs, one line of `TEST <name> PASS|FAIL` per call and a `RESULT` line
@@ -532,6 +532,13 @@ the person sitting at the piano hears a run begin:
   `describe` and `get_path`. Run it from a directory holding
   `midi_config.txt` (`match=zzzznope`, `port=1`) and `midi_config_named.txt`
   (`match=nord`, `port=0`) - the header says so too.
+
+- `test_input_live` - the one that does need a person. It ripples C-E-G-E on
+  middle C to say a run has started, then the *same ripple an octave down,
+  twice* to say "play the instrument now", listens for 30 seconds, prints and
+  counts every message that comes out of it, and sends each note back an octave
+  up. A low ripple once more at the end says the turn is over. Measured on
+  2026-10-01: 193 messages in, 97 note-ons, 193 events echoed, 0 failures.
 
 Each writes `apitest.log` next to itself as it goes, because the engine buffers
 `print()` until a clean exit and a crash would otherwise take the whole
