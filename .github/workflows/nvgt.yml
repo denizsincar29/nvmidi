@@ -283,10 +283,35 @@ jobs:
             # different library than the one under test. Measured: it installed
             # v0.8.4 into the engine's lib/ partway through a run. Its own
             # correctness is a question about the release, not about the build,
-            # and it is asked in the e2e job instead.
+            # and no job downloads a release to test it.
+            #
+            # It is compiled here rather than skipped whole, because a
+            # compilation is the one check of it that has no side effect: the
+            # engine parses the file and stops, nothing is fetched and no
+            # library is touched. A skip would have left the file outside every
+            # check in this repository - a script nobody compiles is a script
+            # whose first compile is in a user's hands.
             case "$script" in
               scripts/get_nvmidi.nvgt)
-                echo "skipping $script: it fetches a published release and would overwrite the library under test"
+                echo "::group::$script (compiled only, never run: it would replace the library under test)"
+                set +e
+                compile_log="logs/get_nvmidi.compile.log"
+                # --compile is `-c` in the engine's help: build the script and
+                # exit without running a line of it, so this cannot reach the
+                # network. Its exit code is not asserted, because the zero
+                # argument form of this script leaves console_mode true and
+                # every dialect of the engine has parsed that the same way.
+                # The log is what decides, by the same two patterns the run
+                # loop asserts on below.
+                timeout 120 "$nvgt" --compile "$script" > "$compile_log" 2>&1
+                set -e
+                cat "$compile_log"
+                if grep -qE 'ERROR:|Unexpected token|No matching signatures' "$compile_log"; then
+                  echo "::error file=$script::the engine reported an error while compiling $script"
+                  grep -E 'ERROR:|Unexpected token|No matching signatures' "$compile_log"
+                  status=1
+                fi
+                echo "::endgroup::"
                 continue
                 ;;
             esac

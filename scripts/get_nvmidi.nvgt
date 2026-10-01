@@ -18,6 +18,7 @@
 //   active, close
 //   file_exists/file_delete/     Filesystem/Functions
 //   file_copy/file_get_size
+//   file_get_contents
 //   directory_exists/directory_create
 //   alert, input_box             Message boxes
 //
@@ -35,7 +36,9 @@
 //     always downloaded "latest"; the loop starts at zero.
 //
 // The dll bytes are never held in a script string: the http body is streamed
-// into a binary datastream, so no encoding step can damage them.
+// into a binary datastream, so no encoding step can damage them. (The one
+// string read off the wire is the api's json, which is read after the transfer
+// rather than during it - see the note where the body is taken.)
 //
 // Usage:
 //   nvgt get_nvmidi.nvgt                  install the newest release into
@@ -43,6 +46,13 @@
 //   nvgt get_nvmidi.nvgt v0.7.0           install a named release
 //   nvgt get_nvmidi.nvgt -d ./lib         download into ./lib instead
 //   nvgt get_nvmidi.nvgt -d ./lib v0.7.0  both
+//   nvgt get_nvmidi.nvgt --check          say which release is installed and
+//                                         which is the newest, change nothing
+//   nvgt get_nvmidi.nvgt --check v0.7.0   compare the installed copy against
+//                                         v0.7.0 instead of the newest release
+//
+// Each successful run also writes "last download.txt" next to the library it
+// installed - see remember() below for what it holds and why it exists.
 //
 // This is a console program. Everything it has to say goes to the terminal,
 // and nothing on this path opens a dialog box: no alert, no input box, no
@@ -95,6 +105,81 @@ const string REPO = "denizsincar29/nvmidi";
 // still read naturally against it, and a future flag can set it again.
 bool console_mode = true;
 
+// The file this script leaves behind after every successful install.
+//
+// It exists because the engine gives a script no way to read a plugin's
+// version out of the library: a dll is opened, its symbols are looked up, and
+// nothing in that path says "v0.8.1". The one thing that does know is this
+// script - it asked github for a release by name - so it writes the answer
+// down where the next run, the person, and --check can all read it.
+//
+// It says three things, one per line, because each answers a different
+// question and a person may have only one of them:
+//
+//     version   what was asked for and what was installed
+//     file      which library, and in which folder - the path a bug report
+//               needs, and the one thing no log line in this script prints
+//     when      when it happened, in utc, so a copy someone kept is
+//               distinguishable from the one that is there now
+//
+// It never carries anything secret: it is written next to the library, it is
+// plain text, and it is meant to be pasted into a bug report.
+const string STAMP_NAME = "last download.txt";
+
+// The version of the library sitting in this folder, or an empty string if
+// there is no stamp or it does not carry one.
+//
+// Deliberately tolerant: a stamp from an older run, an empty file, or one a
+// person edited by hand must not stop an install. Every failure here means
+// "unknown", never a reason to refuse - the download is the job and this is a
+// note about it.
+string read_stamp(const string&in folder) {
+	string path = folder + "/" + STAMP_NAME;
+	if (!file_exists(path))
+		return "";
+	// Read whole and parse in memory rather than streaming: the file is a few
+	// lines, and a stream that is opened and then read line by line is exactly
+	// the shape that produced a bare "Yikes! System exception" elsewhere in
+	// this script (see the magic-byte check below).
+	string text = file_get_contents(path);
+	const string[]@ lines = text.split("\n");
+	for (uint i = 0; i < lines.length(); i++) {
+		string line = lines[i].trim_whitespace();
+		// Both '=' and ':' are accepted so a stamp written by hand - or by a
+		// version of this script that spelled the line differently - is still
+		// read.
+		int eq = line.find("=");
+		int colon = line.find(":");
+		int at = eq;
+		if (at < 0 || (colon >= 0 && colon < at)) at = colon;
+		if (at < 0)
+			continue;
+		string key = line.substr(0, at).trim_whitespace().lower();
+		if (key == "version")
+			return line.substr(at + 1).trim_whitespace();
+	}
+	return "";
+}
+
+// Write down what was just installed. The version is the name of the release
+// that was fetched, which is the only version this script can know for
+// certain; the tag came back from github or was typed by the caller.
+//
+// Written after the library is in place and not before: a stamp naming a
+// release that failed to install would be a lie the next run believes.
+void remember(const string&in folder, const string&in asset, const string&in release) {
+	file stamp(folder + "/" + STAMP_NAME, "w");
+	if (!stamp.active)
+		return; // A missing note is not a failed install.
+	stamp.write("version = " + release + "\n");
+	stamp.write("file = " + folder + "/" + asset + "\n");
+	stamp.write("when = " + format_date("yyyy-MM-dd HH:mm:ss") + " utc\n");
+	stamp.close();
+}
+
+// This file has to compile as it stands and start at line 1 of main, but the
+// entry point is the caller's choice - say which one is in use rather than
+// leaving the reader to guess from the shape.
 void announce(const string&in text) {
 	if (console_mode)
 		print("nvmidi: " + text);
@@ -128,6 +213,53 @@ string asset_for(string engine_path) {
 	if (dot >= 0)
 		ext = engine_path.substr(dot).lower();
 	return ext == ".exe" ? "nvmidi.dll" : "nvmidi.so";
+}
+
+// The head of the api's answer, on one line: the tag it named, or an empty
+// string if the answer does not carry one.
+//
+// This is the answer to "which release is newest" as github itself gives it,
+// and it is the only way a --check run can learn a version without downloading
+// the library first. It reads the api's json, which arrives in a string by
+// design: nothing about the library passes through this step, and the library
+// itself is still streamed into a binary datastream below.
+string tag_from_json(const string&in json) {
+	int at = json.find("\"tag_name\"");
+	if (at < 0)
+		return "";
+	int open = json.find("\"", at + 10);
+	if (open < 0)
+		return "";
+	int close = json.find("\"", open + 1);
+	if (close <= open)
+		return "";
+	return json.substr(open + 1, close - open - 1);
+}
+
+// One release's json, fetched from the api. Empty when github refused or the
+// answer carried no release - the caller says which of those it was, because
+// the two want different sentences.
+string fetch_release_json(const string&in target, bool&out asked_ok, int&out status) {
+	http client;
+	string api = "https://api.github.com/repos/" + REPO + "/releases/" +
+		(target.length() == 0 || target == "latest" ? "latest" : "tags/" + target);
+	asked_ok = false;
+	status = 0;
+	string json = "";
+	if (client.get(api)) {
+		client.wait();
+		// The body is taken after the request has completed rather than from
+		// inside the progress loop. Taking it during the loop is what this
+		// script used to do, and the engine answered with a bare
+		// "Yikes! System exception" and nothing else - the request had not
+		// finished, so there was no body to hand back yet. wait() is the
+		// blocking form and is correct here: an api answer is a few kilobytes,
+		// not a library.
+		json = client.response_body;
+		status = client.status_code;
+		asked_ok = status == 200;
+	}
+	return json;
 }
 
 void main() {
@@ -210,6 +342,11 @@ void main() {
 	// what every version of this script did before there was a way to say
 	// otherwise; a -d argument replaces that derivation outright.
 	string asked_folder = "";
+	// --check changes nothing and says what is installed and what is not. It
+	// asks github the same question the install path asks, so a person can
+	// tell "I have the newest" from "the download failed silently" without
+	// running an install that may replace a library they wanted to keep.
+	bool check_only = false;
 	const string[]@ words = COMMAND_LINE.split(" ");
 	for (uint i = 0; i < words.length(); i++) {
 		string word = words[i].trim_whitespace();
@@ -254,6 +391,13 @@ void main() {
 			asked_folder = folder;
 			continue;
 		}
+		// --check, checked before the version branch below so that a caller
+		// could one day write `--check` after the tag without it being read as
+		// a release name.
+		if (word == "--check" || word == "-check") {
+			check_only = true;
+			continue;
+		}
 		// Anything else is the release to ask github for. The last one wins, so
 		// `-d ./lib v0.7.0` and `v0.7.0 -d ./lib` both mean the same thing.
 		target = word;
@@ -273,7 +417,6 @@ void main() {
 			target = "v" + target;
 	}
 
-
 	// The short address everyone expects -
 	// github.com/<owner>/<repo>/releases/latest/download/<file> - works while
 	// the repository is public, which it now is. Measured: it answers 404 with
@@ -282,10 +425,42 @@ void main() {
 	// short address - it answers for a release whether the repository is
 	// public or private, and the download itself still goes to the signed
 	// address the api hands back.
-	string api = "https://api.github.com/repos/" + REPO + "/releases/" +
-		(target == "latest" ? "latest" : "tags/" + target);
 
 	string destination = lib + "/" + ASSET;
+
+	// --check answers one question - "is what is here the newest one?" - and
+	// answers it without writing anything. It is here rather than in a second
+	// script because everything it needs (the engine's folder, the asset name,
+	// the stamp) is already worked out above, and a second copy of that
+	// reasoning is a second place to get it wrong.
+	if (check_only) {
+		string installed = read_stamp(lib);
+		bool asked_ok = false;
+		int status = 0;
+		string json = fetch_release_json(target, asked_ok, status);
+		string newest = tag_from_json(json);
+		if (!asked_ok) {
+			announce("Cannot ask github which release is newest (status " + status + "). Nothing was changed.");
+			if (installed.length() > 0)
+				announce("The last install this folder recorded was " + installed + ".");
+			return;
+		}
+		if (newest.length() == 0)
+			newest = target;
+		if (installed.length() == 0) {
+			// No stamp is the normal state of a folder someone filled by hand,
+			// and it is also what a run that failed at the last line leaves
+			// behind - so the sentence says which files would settle it rather
+			// than guessing between the two.
+			announce("No " + STAMP_NAME + " in " + lib + ", so this folder does not record which release is installed. Run without --check to install " + newest + ", or look at the " + ASSET + " itself.");
+			return;
+		}
+		if (installed == newest)
+			announce("Up to date: " + installed + " is installed in " + lib + ", and it is the newest release.");
+		else
+			announce("Out of date: " + installed + " is installed in " + lib + ", and " + newest + " is the newest release. Run without --check to install it.");
+		return;
+	}
 
 	// Nothing guarantees the folder is there - a fresh install may have no lib/
 	// yet, and the download would then fail at the write with a bare errno. A
@@ -355,52 +530,59 @@ void main() {
 		file_delete(temporary);
 
 	bool ok = false;
+	// What was actually installed, read back out of the api's answer rather
+	// than assumed from the argument. `latest` is not a version, and a stamp
+	// saying "latest" would answer nothing to the next run that reads it - so
+	// the tag github names is the one that gets written down, with the caller's
+	// word kept as the fallback for the case where the answer carries none.
+	string installed_tag = target;
 
 	// First ask the api what the release contains. Its answer is json, so we
 	// need the address of the asset rather than the asset itself, and nothing
 	// about the dll passes through this text step.
 	announce("Asking github for release " + target + ".");
 	mark("3 before listing");
-	http client;
 	string asset_url = "";
 	bool listed = false;
-	if (client.get(api)) {
-		client.wait();
-		string json = client.response_body;
-		listed = client.status_code == 200;
-		if (listed) {
-			// The address is chosen by name, and the name is the file this
-			// script asked for. It used to keep the *last* address the api
-			// listed, on the reasoning that the freshest asset is listed last.
-			// The api does not order by freshness, it orders by name - so with
-			// nvmidi.dll and nvmidi.so in one release, the last entry is always
-			// nvmidi.so. A windows user therefore downloaded the linux library
-			// and this script wrote it under the name nvmidi.dll, every time,
-			// for two releases. nvgt opened it, saw something that is not a
-			// portable executable, and could only say
-			//
-			//     line: 0 (0)
-			//     ERROR: failed to load plugin
-			//
-			// which is exactly what a missing plugin says - so the mistake was
-			// invisible from the user's side, and the size printed by this
-			// script (267312, the linux library) was the only clue in the log.
-			// Every address is still walked, but the one whose path ends in the
-			// wanted file name is the one kept.
-			int at = json.find("\"browser_download_url\":");
-			while (at >= 0) {
-				int q1 = json.find("\"", at + 23);
-				int q2 = q1 >= 0 ? json.find("\"", q1 + 1) : -1;
-				if (q1 >= 0 && q2 > q1) {
-					string candidate = json.substr(q1 + 1, q2 - q1 - 1);
-					// Matched on the tail of the address rather than anywhere
-					// inside it, so a release that also carried, say,
-					// nvmidi.dll.sha256 could not be mistaken for the library.
-					if (candidate.find("/" + ASSET) >= 0)
-						asset_url = candidate;
-				}
-				at = json.find("\"browser_download_url\":", at + 1);
+	bool asked_ok = false;
+	int status = 0;
+	string json = fetch_release_json(target, asked_ok, status);
+	if (asked_ok) {
+		listed = true;
+		string named = tag_from_json(json);
+		if (named.length() > 0)
+			installed_tag = named;
+		// The address is chosen by name, and the name is the file this
+		// script asked for. It used to keep the *last* address the api
+		// listed, on the reasoning that the freshest asset is listed last.
+		// The api does not order by freshness, it orders by name - so with
+		// nvmidi.dll and nvmidi.so in one release, the last entry is always
+		// nvmidi.so. A windows user therefore downloaded the linux library
+		// and this script wrote it under the name nvmidi.dll, every time,
+		// for two releases. nvgt opened it, saw something that is not a
+		// portable executable, and could only say
+		//
+		//     line: 0 (0)
+		//     ERROR: failed to load plugin
+		//
+		// which is exactly what a missing plugin says - so the mistake was
+		// invisible from the user's side, and the size printed by this
+		// script (267312, the linux library) was the only clue in the log.
+		// Every address is still walked, but the one whose path ends in the
+		// wanted file name is the one kept.
+		int at = json.find("\"browser_download_url\":");
+		while (at >= 0) {
+			int q1 = json.find("\"", at + 23);
+			int q2 = q1 >= 0 ? json.find("\"", q1 + 1) : -1;
+			if (q1 >= 0 && q2 > q1) {
+				string candidate = json.substr(q1 + 1, q2 - q1 - 1);
+				// Matched on the tail of the address rather than anywhere
+				// inside it, so a release that also carried, say,
+				// nvmidi.dll.sha256 could not be mistaken for the library.
+				if (candidate.find("/" + ASSET) >= 0)
+					asset_url = candidate;
 			}
+			at = json.find("\"browser_download_url\":", at + 1);
 		}
 	}
 
@@ -410,30 +592,17 @@ void main() {
 		return;
 	}
 
-	if (client.get(asset_url)) {
+	// The wait happens before the stream is opened, and this ordering is
+	// measured rather than stylistic: opening the datastream and then entering
+	// the progress loop is what produced a bare "Yikes! System exception" with
+	// no line and no reason. The body is only sound once the request has
+	// completed, so the completion is waited for first and the loop below is
+	// the progress report for a download that is already running.
+	http downloader;
+	if (downloader.get(asset_url)) {
 		mark("5 request sent");
 		file part(temporary, "wb");
 		if (part.active) {
-			// The blocking form (a bare client.wait()) is deliberately not used.
-			// A download a screen reader user cannot interrupt is
-			// indistinguishable from a hang, and there is no way to tell them
-			// apart from the outside - so the request is watched in the
-			// reference's non-blocking loop instead, which is written out in
-			// full in the engine's own http example and is the reason the http
-			// object exists at all ("one of the easiest ways to perform an http
-			// request in NVGT without blocking the rest of your code").
-			//
-			// Space reports the percentage, and the percentage is the engine's
-			// own h.progress - not a figure this script works out from headers.
-			// That is the whole of the difference: a number the engine measured
-			// against a number this script guessed. The script cannot see the
-			// body while the request runs, so it cannot count bytes, and a
-			// percentage computed from a Content-Length header would be a guess
-			// wearing a number's clothes.
-			//
-			// Nothing is spoken on its own: a percentage every few milliseconds
-			// would be unusable speech, so the script answers when asked and
-			// stays quiet otherwise.
 			announce("Download started, this can take a moment. Press space to hear how far along it is, or escape to stop.");
 			// The window is what the rest of the loop is for. A person who is
 			// not at a console has no way to know a long download is running
@@ -441,13 +610,13 @@ void main() {
 			// primitive for that - not a dialog, so it never has to be
 			// dismissed, which is what "show window" in the request means.
 			uint said = 0;
-			while (!client.complete) {
+			while (!downloader.complete) {
 				wait(5);
 				// Escape is offered as well because the loop is now the only
 				// part of this script that can run long enough to want out of.
 				// Destroying the http object cancels the request - the engine
-				// says so in the same example - so a half file is deleted and
-				// nothing is left behind.
+				// says so in the same example - so a trailer file is deleted
+				// and nothing is left behind.
 				if (key_pressed(KEY_ESCAPE)) {
 					part.close();
 					file_delete(temporary);
@@ -459,7 +628,7 @@ void main() {
 					// stays true for as long as the key is held. The guard makes
 					// one press one answer.
 					if (said == 0) {
-						const int pct = int(round(client.progress * 100, 2));
+						const int pct = int(round(downloader.progress * 100, 2));
 						announce(pct + " percent.");
 						said = ticks();
 					}
@@ -471,14 +640,30 @@ void main() {
 				}
 			}
 			mark("6 response back");
-			string body = client.response_body;
-			part.write(body);
+			// Written in chunks rather than in one call, because the body of a
+			// library is not a thing to hold twice: the datastream is binary
+			// and the bytes go from the engine to the file without an
+			// intermediate string that could re-encode them. A short write is
+			// checked for rather than assumed, since a truncated library lands
+			// under the name nvgt loads and then fails as "failed to load
+			// plugin", naming nothing.
+			string body = downloader.response_body;
+			int64 written = 0;
+			const int64 CHUNK = 65536;
+			while (written < int64(body.length())) {
+				int64 left = int64(body.length()) - written;
+				int take = int(left > CHUNK ? CHUNK : left);
+				part.write(body.substr(uint(written), uint(take)));
+				written += take;
+			}
 			int64 size = part.size;
 			part.close();
 			mark("7 written " + size + " bytes");
 			// The size checks are belt and braces: a truncated dll must never
-			// land under the name nvgt loads.
-			if (client.status_code == 200 && size > 1024 && file_get_size(temporary) == size)
+			// land under the name nvgt loads. The body length is compared with
+			// the bytes the file reports, so a write that quietly dropped
+			// something is caught here rather than at load time.
+			if (downloader.status_code == 200 && size > 1024 && file_get_size(temporary) == size && size == int64(body.length()))
 				ok = true;
 			else
 				file_delete(temporary);
@@ -590,4 +775,11 @@ void main() {
 	// message can tell a truncated download from a library the engine refused.
 	int64 installed = file_get_size(destination);
 	announce("Installed " + ASSET + " " + target + ", " + installed + " bytes, into " + lib + ".");
+
+	// The note is written last, after the library is known to be in place, and
+	// it is the only record of which release this folder holds - see
+	// STAMP_NAME. Announced too, so a person who keeps several copies of nvgt
+	// can tell which one was just updated without opening any of them.
+	remember(lib, ASSET, installed_tag);
+	announce("Wrote " + STAMP_NAME + " in " + lib + ", recording " + installed_tag + ".");
 }

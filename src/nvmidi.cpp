@@ -1443,7 +1443,7 @@ bool midi_output::play_midi_chord(CScriptArray& notes, const std::string& patter
 
 // One after another, each for its own length - the same schedule midi_input
 // runs, because a sequence is a pattern like any other. Declared in the
-// header and promised by doc/api.md from the start, and never defined or
+// header and promised by doc/API.md from the start, and never defined or
 // registered until the example suite called it on 2026-10-01 and the
 // engine answered "No matching symbol 'play_sequence'".
 bool midi_output::play_sequence(CScriptArray& notes) {
@@ -2704,7 +2704,7 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectProperty("midi_note", "int velocity", asOFFSET(midi_note, velocity)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_note", "int channel", asOFFSET(midi_note, channel)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_note", "midi_duration length", asOFFSET(midi_note, length)), "RegisterObjectProperty", __LINE__);
-	// A method, because that is what doc/api.md has always said and what a
+	// A method, because that is what doc/API.md has always said and what a
 	// script needs. The property that used to be registered here was bound to
 	// length.amount, so it answered 1 for a one-beat note instead of the 500 ms
 	// that beat lasts - the example suite read exactly that on 2026-10-01. A
@@ -2715,7 +2715,7 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	// name midi_note: nvgt is an audio toolkit with its own midi support and
 	// its engine already owns that name, so RegisterGlobalFunction reports
 	// asNAME_TAKEN (-9) and the whole interface is rejected. The names below
-	// are the ones doc/api.md told scripts to call all along.
+	// are the ones doc/API.md told scripts to call all along.
 	// asFUNCTIONPR is required for the overloaded C++ helper: an overloaded
 	// name cannot be resolved by asFUNCTION, only by its parameter list.
 	// The name the engine will not give us is the bare `midi_note` - it already
@@ -2736,7 +2736,7 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterGlobalFunction("int midi_note_number(const string&in name)", asFUNCTION(midi_note_number), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("int midi_note_name_byte_count(int pitch)", asFUNCTION(midi_note_pitch_name_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("int midi_note_name_byte(int pitch, uint index)", asFUNCTION(midi_note_pitch_name_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	// doc/api.md has called these midi_note_pitch_name_byte_count/_byte since
+	// doc/API.md has called these midi_note_pitch_name_byte_count/_byte since
 	// before either name existed. The example suite asked for the documented
 	// name on 2026-10-01 and got "No matching symbol". The short name stays, so
 	// nothing that already found it breaks.

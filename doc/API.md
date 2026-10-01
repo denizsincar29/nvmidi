@@ -245,7 +245,7 @@ a name may contain one — so the end of the text stays distinguishable from a
 byte inside it.
 
 ```angelscript
-// See readme.md - never walk a table with substr() on this engine. In short:
+// See TECHNICAL.md - never walk a table with substr() on this engine. In short:
 const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
 const string digits = "0123456789";
 string char_of(uint b) {

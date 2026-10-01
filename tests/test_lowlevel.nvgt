@@ -12,7 +12,7 @@
 // the sound it asserts on.
 
 // A whole byte back as one character. Only the ranges this engine reads
-// correctly are used, and every bound is a number - see readme.md.
+// correctly are used, and every bound is a number - see TECHNICAL.md.
 const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
 const string digits = "0123456789";
 string char_of(uint b) {
