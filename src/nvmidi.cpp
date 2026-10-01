@@ -579,7 +579,7 @@ midi_note* midi_note_create_ms(int pitch, int velocity, double duration_ms) {
 
 midi_input::midi_input()
 	: midi_in(nullptr), port_index(-1), ignore_sysex(true), ignore_timing(true),
-	  queue_limit(4096), opened_at(0.0) { tempo = 120.0; } // tempo was never initialised; the docs promise 120 bpm
+	  queue_limit(4096), opened_at(0.0), sustain(0), sostenuto(0), soft(0) { tempo = 120.0; } // tempo and the pedals are initialised; a fresh object used to read back garbage
 
 midi_input::~midi_input() { close(); }
 
@@ -754,7 +754,28 @@ void midi_input::push_message(const unsigned char* bytes, size_t count, double d
 	std::lock_guard<std::mutex> lock(queue_mutex);
 	if (queue.size() >= queue_limit) queue.pop_front(); // drop the oldest rather than grow without bound
 	queue.push_back(message);
+	// Pedal state, updated here because this is the one place an incoming
+	// message is seen. A control change is status 0xB0, controller in data1
+	// and value in data2; 64/66/67 are sustain, sostenuto and soft.
+	//
+	// Is the queue mutex needed for this write? No. These are single aligned
+	// ints, so one store is one machine word and a reader on the script thread
+	// sees the old value or the new one, never a torn one. The engine reads
+	// the property straight out of the object and takes no lock, so the lock
+	// is not what makes that read safe - the word sized store is. The writes
+	// sit inside the existing critical section anyway, because the callback
+	// already holds it and it costs nothing, and doing so keeps the pedal
+	// value and the message that carried it in one order.
+	if ((message.status & 0xf0) == 0xb0) {
+		if (message.data1 == 64) sustain = message.data2;
+		else if (message.data1 == 66) sostenuto = message.data2;
+		else if (message.data1 == 67) soft = message.data2;
+	}
 }
+
+int midi_input::get_sustain() const { return sustain; }
+int midi_input::get_sostenuto() const { return sostenuto; }
+int midi_input::get_soft() const { return soft; }
 
 // Static trampoline: RtMidi gives us a C-style callback plus our user data.
 void midi_input_callback(double delta, std::vector<unsigned char>* message, void* user_data) {
@@ -952,7 +973,7 @@ bool midi_input::play_note_wait(const midi_note& note) {
 // midi_output
 // ---------------------------------------------------------------------------
 
-midi_output::midi_output() : midi_out(nullptr), port_index(-1), virtual_port(false) { tempo = 120.0; } // same as midi_input: a fresh object used to read back garbage
+midi_output::midi_output() : midi_out(nullptr), port_index(-1), virtual_port(false), sustain(0), sostenuto(0), soft(0) { tempo = 120.0; } // same as midi_input: a fresh object used to read back garbage
 
 midi_output::~midi_output() { close(); }
 
@@ -1117,6 +1138,32 @@ void midi_output::send_note_off(unsigned int channel, unsigned int note, unsigne
 
 void midi_output::send_control_change(unsigned int channel, unsigned int controller, unsigned int value) {
 	send(0xb0 | ((channel - 1) & 0x0f), controller, value);
+}
+
+// ---------------------------------------------------------------------------
+// The three pedal properties
+// ---------------------------------------------------------------------------
+//
+// Writable, unlike the input side's read only pair: the setter stores the
+// value and sends it as the matching control change on channel 1, so
+// `out.sustain = 127` is a pedal going down rather than a number a script
+// could read back. A value outside 0..127 is clamped rather than wrapped -
+// wrapping 128 to 0 would read as "released" when it was meant as "fully down".
+int midi_output::get_sustain() const { return sustain; }
+int midi_output::get_sostenuto() const { return sostenuto; }
+int midi_output::get_soft() const { return soft; }
+
+void midi_output::set_sustain(int value) {
+	sustain = value < 0 ? 0 : (value > 127 ? 127 : value);
+	send_control_change(1, 64, static_cast<unsigned int>(sustain));
+}
+void midi_output::set_sostenuto(int value) {
+	sostenuto = value < 0 ? 0 : (value > 127 ? 127 : value);
+	send_control_change(1, 66, static_cast<unsigned int>(sostenuto));
+}
+void midi_output::set_soft(int value) {
+	soft = value < 0 ? 0 : (value > 127 ? 127 : value);
+	send_control_change(1, 67, static_cast<unsigned int>(soft));
 }
 
 void midi_output::send_program_change(unsigned int channel, unsigned int program) {
@@ -2556,6 +2603,12 @@ void register_midi_input(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool play_sequence(array<midi_note@>&in notes)", asMETHOD(midi_input, play_sequence), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "midi_duration duration(double amount, int unit) const", asMETHOD(midi_input, duration), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_input", "double tempo", asOFFSET(midi_input, tempo)), "RegisterObjectProperty", __LINE__);
+	// The pedal state the input callback keeps. A getter is registered as a
+	// method and the engine exposes it to the script as a read-only property,
+	// so `in.sustain` is the last CC 64 value with no midi_message in sight.
+	reg->check( engine->RegisterObjectMethod("midi_input", "int get_sustain() const", asMETHOD(midi_input, get_sustain), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "int get_sostenuto() const", asMETHOD(midi_input, get_sostenuto), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "int get_soft() const", asMETHOD(midi_input, get_soft), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 }
 
 void register_midi_output(asIScriptEngine* engine, registration* reg) {
@@ -2608,6 +2661,15 @@ void register_midi_output(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectMethod("midi_output", "void set_virtual_port(bool value)", asMETHOD(midi_output, set_virtual_port), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "midi_duration duration(double amount, int unit) const", asMETHOD(midi_output, duration), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_output", "double tempo", asOFFSET(midi_output, tempo)), "RegisterObjectProperty", __LINE__);
+	// The pedal properties, writable: a getter plus a setter makes the engine
+	// expose `out.sustain = 127` as a property assignment, and the setter
+	// sends CC 64/66/67 = 127 as well as storing the value.
+	reg->check( engine->RegisterObjectMethod("midi_output", "int get_sustain() const", asMETHOD(midi_output, get_sustain), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "void set_sustain(int value)", asMETHOD(midi_output, set_sustain), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "int get_sostenuto() const", asMETHOD(midi_output, get_sostenuto), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "void set_sostenuto(int value)", asMETHOD(midi_output, set_sostenuto), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "int get_soft() const", asMETHOD(midi_output, get_soft), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "void set_soft(int value)", asMETHOD(midi_output, set_soft), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 }
 
 void register_midi_note(asIScriptEngine* engine, registration* reg) {
@@ -2877,6 +2939,26 @@ registration_result register_nvmidi(asIScriptEngine* engine) {
 	fflush(stderr);
 	g_engine = engine;
 	registration reg(engine);
+
+	// The pedal properties on the output class are accessor properties: the
+	// script writes `out.sustain = 127`, and the engine reaches the registered
+	// get_sustain/set_sustain methods rather than a memory offset, so the
+	// setter can also send the control change. AngelScript only recognises
+	// application-registered accessors in some of its property accessor modes:
+	// 0 disables them, 3 accepts only functions carrying the script `property`
+	// flag, and 1 or 2 look at registered get_/set_ methods. The engine
+	// defaults to 3, under which the accessors below register cleanly and then
+	// stay invisible - measured, the first build of this change answered
+	// "'sustain' is not a member of 'midi_output'" at compile time. Mode 2 is
+	// chosen over 1 because 2 keeps script-defined accessors working as well;
+	// 1 would switch those off engine-wide. The current value is read first,
+	// so a host that already sits in 1 or 2 is left untouched.
+{
+	const asPWORD accessor_mode = engine->GetEngineProperty(asEP_PROPERTY_ACCESSOR_MODE);
+	if (accessor_mode != 1 && accessor_mode != 2) {
+		engine->SetEngineProperty(asEP_PROPERTY_ACCESSOR_MODE, 2);
+	}
+}
 
 	// The array add-on, before any type that names array<> in a signature.
 	//

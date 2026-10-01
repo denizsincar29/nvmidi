@@ -149,6 +149,7 @@ void main() {
 	// -- midi_output: the cue already opened it; check that state ---------
 	midi_output@ fresh = midi_output_create();
 	check("output_create_closed_port", fresh.get_port() == -1, "port=" + fresh.get_port());
+	check("output_pedals_fresh_zero", fresh.sustain == 0 && fresh.sostenuto == 0 && fresh.soft == 0, "sustain=" + fresh.sustain + " sostenuto=" + fresh.sostenuto + " soft=" + fresh.soft);
 	check("output_create_not_open", !fresh.is_open(), "is_open=" + bstr(fresh.is_open()));
 	check("output_open_port2_at_cue", mo.is_open() && mo.get_port() == 2, "is_open=" + bstr(mo.is_open()) + " port=" + mo.get_port());
 	check("output_is_open", mo.is_open(), "is_open=" + bstr(mo.is_open()));
@@ -199,6 +200,25 @@ void main() {
 	mo.reset();
 	check("reset", midi_last_error_byte_count() == 0, "last_error=" + bytes_of_last_error());
 
+	// -- pedals: the properties the user asked for ------------------------
+	// mo is open on port 2, so each assignment is a real control change on
+	// the wire, not only a number kept on the object. Every value is put
+	// back to 0 before the next one, so no pedal is left holding the tests
+	// that follow.
+	mo.sustain = 100;
+	check("output_sustain_holds_assigned", mo.sustain == 100, "sustain=" + mo.sustain);
+	check("output_sustain_assign_no_error", midi_last_error_byte_count() == 0, "last_error=" + bytes_of_last_error());
+	mo.sustain = 0;
+	mo.sostenuto = 127;
+	check("output_sostenuto_holds_assigned", mo.sostenuto == 127, "sostenuto=" + mo.sostenuto);
+	check("output_sostenuto_assign_no_error", midi_last_error_byte_count() == 0, "last_error=" + bytes_of_last_error());
+	mo.sostenuto = 0;
+	mo.soft = 64;
+	check("output_soft_holds_assigned", mo.soft == 64, "soft=" + mo.soft);
+	check("output_soft_assign_no_error", midi_last_error_byte_count() == 0, "last_error=" + bytes_of_last_error());
+	mo.soft = 0;
+	wait(250); // space the pedal events out, as the note events above are spaced
+
 	// -- tempo and duration() on the output class -------------------------
 	mo.tempo = 96.0;
 	check("output_tempo_roundtrip", mo.tempo == 96.0, "tempo=" + mo.tempo);
@@ -237,6 +257,7 @@ void main() {
 	// -- midi_input: everything exercisable without a human playing --------
 	midi_input@ mi = midi_input_create();
 	check("input_create_closed_port", mi.get_port() == -1, "port=" + mi.get_port());
+	check("input_pedals_fresh_zero", mi.sustain == 0 && mi.sostenuto == 0 && mi.soft == 0, "sustain=" + mi.sustain + " sostenuto=" + mi.sostenuto + " soft=" + mi.soft);
 	bool iopened = mi.open(p1);
 	check("input_open_port1", iopened, "returned=" + bstr(iopened) + " error=" + bytes_of_last_error());
 	check("input_is_open", mi.is_open(), "is_open=" + bstr(mi.is_open()));

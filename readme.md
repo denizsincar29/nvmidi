@@ -462,6 +462,10 @@ aware code (`n.duration()`) already has the class tempo written into it, so
 - `double tempo` — beats per minute, 120 by default, and
   `midi_duration duration(double amount, int unit)` — a length already
   resolved against that tempo.
+- `int sustain`, `int sostenuto`, `int soft` — the value of CC 64, 66 and 67
+  as they arrive from the port, 0..127, and 0 until the instrument sends one.
+  Read-only: a script asks whether the pedal is down instead of watching the
+  queue for the controller itself.
 - `uint stop_all_notes()`, `uint get_active_notes()`.
 - `void set_ignore_sysex(bool)` / `bool get_ignore_sysex()` — default true.
   Sysex dumps are large and rarely useful in a game.
@@ -492,6 +496,10 @@ Changing either filter takes effect immediately on an open port.
   and `play_sequence(notes)`.
 - `double tempo` and `midi_duration duration(double amount, int unit)` — the
   same pair `midi_input` has.
+- `int sustain`, `int sostenuto`, `int soft` — the same three pedals, readable
+  *and* writable here: assigning sends that controller on channel 1 and keeps
+  the value, so `midi_out.sustain = 127` is the pedal going down and `= 0` is it
+  coming up. Values are clamped to 0..127.
 - `uint stop_all_notes()`, `uint get_active_notes()` — what the high level
   layer is currently holding sounding.
 

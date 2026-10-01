@@ -307,6 +307,20 @@ public:
 	// Beats per minute, used when a note's length is written in beats, bars or
 	// ticks. Milliseconds ignore it. Defaults to 120.
 	double tempo;
+
+	// -----------------------------------------------------------------
+	// Pedal state
+	// -----------------------------------------------------------------
+	//
+	// The three pedals, 0..127, read straight off the port: the last CC 64
+	// (sustain), 66 (sostenuto) and 67 (soft) the input callback stored, 0
+	// until one arrives. A script reads them as the properties `sustain`,
+	// `sostenuto` and `soft`; the get_* methods below are what the engine
+	// actually registers, and it exposes those as the properties.
+	int get_sustain() const;
+	int get_sostenuto() const;
+	int get_soft() const;
+
 	// Releases everything this port is holding sounding, returns how many.
 	unsigned int stop_all_notes();
 	unsigned int get_active_notes() const;
@@ -367,6 +381,12 @@ private:
 	bool playing;
 	// The notes the high level layer is holding sounding.
 	std::vector<midi_note> sounding;
+	// Last pedal values seen, 0..127. Written from the RtMidi callback and
+	// read by the get_* methods above; push_message carries the note about
+	// whether the queue mutex is what makes a reader safe (it is not).
+	int sustain;
+	int sostenuto;
+	int soft;
 };
 
 // An open MIDI output port.
@@ -424,6 +444,21 @@ public:
 	// Beats per minute, used when a note's length is written in beats, bars or
 	// ticks. Milliseconds ignore it. Defaults to 120.
 	double tempo;
+
+	// -----------------------------------------------------------------
+	// Pedal properties
+	// -----------------------------------------------------------------
+	//
+	// Writable, unlike the input side: `out.sustain = 127` stores the value
+	// and sends CC 64 = 127 out of the open port, `= 0` releases it. The
+	// getter is what makes the property readable, so the assignment is a
+	// real send rather than a number kept to one side.
+	int get_sustain() const;
+	void set_sustain(int value);
+	int get_sostenuto() const;
+	void set_sostenuto(int value);
+	int get_soft() const;
+	void set_soft(int value);
 
 	// Releases everything the high level layer has sounding right now, and
 	// returns how many notes that was.
@@ -495,6 +530,10 @@ private:
 	void release_one(const midi_note& note);
 	// The chord the high level layer is currently holding sounding.
 	std::vector<midi_note> sounding;
+	// The pedal values last assigned or sent, 0..127.
+	int sustain;
+	int sostenuto;
+	int soft;
 };
 
 // The names nvgt registers with Angelscript, so the script can reach this
