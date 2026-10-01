@@ -175,18 +175,45 @@ void main() {
 	// The file is read here, not written here: on Windows the launcher is a
 	// Python process and this script cannot see its temporary file, so the
 	// launcher owns the file and this script only reports what it contains.
+	// Which ports to use. The launcher writes midi_config.txt before this
+	// runs; when it did not, the plugin's own default applies and `match` is
+	// "nord", so the instrument is found by name rather than by the order the
+	// operating system happens to enumerate devices in.
+	//
+	// This block used to take port 0 of each list, and that was a bug worth
+	// naming. On the machine this test was written for the Nord is input 1
+	// and output 2 with the MOTU interface first in both lists, so the script
+	// listened on a port with no keyboard behind it, heard nothing, and
+	// reported zero messages - a green run of the wrong test. The launcher's
+	// config was also being overwritten here with that same port 0 name.
+	midi_config@ ports = midi_config_create();
+	ports.load_if_present("midi_config.txt");
+	int in_port = ports.find_input_port();
+	if (in_port < 0) {
+		in_port = midi_find_input_port("nord");
+		if (in_port >= 0) say("midi_config.txt matched nothing; fell back to the port named nord");
+	}
+	if (in_port < 0 && ins > 0) in_port = 0;
+	int out_port = ports.find_output_port();
+	if (out_port < 0) out_port = midi_find_output_port("nord");
+	if (out_port < 0 && outs > 0) out_port = 0;
+
 	string in_name = "";
-	if (ins > 0) {
+	if (in_port >= 0) {
 		string s0 = "";
-		for (int i = 0; i < midi_input_port_name_byte_count(0); i++) s0 += char_of(midi_input_port_name_byte(0, i));
+		uint ip = uint(in_port);
+		for (int i = 0; i < midi_input_port_name_byte_count(ip); i++) s0 += char_of(midi_input_port_name_byte(ip, i));
 		in_name = s0;
 	}
-	string out_name = in_name;
-	if (outs > 0) {
+	string out_name = "";
+	if (out_port >= 0) {
 		string s0 = "";
-		for (int i = 0; i < midi_output_port_name_byte_count(0); i++) s0 += char_of(midi_output_port_name_byte(0, i));
+		uint op = uint(out_port);
+		for (int i = 0; i < midi_output_port_name_byte_count(op); i++) s0 += char_of(midi_output_port_name_byte(op, i));
 		out_name = s0;
 	}
+	print("HEAR_IN_PORT_INDEX " + in_port);
+	print("HEAR_OUT_PORT_INDEX " + out_port);
 	print("HEAR_IN " + in_name);
 	print("HEAR_OUT " + out_name);
 
@@ -232,7 +259,7 @@ void main() {
 	// is the feature that was asked for, and the reason the two halves cannot
 	// share one port - playing into the port being read would read the echo
 	// back as input and never stop.
-	if (heard > 0 && out_name != "" && out_name != in_name) {
+	if (heard > 0 && out_name != "") {
 		// Phase two wants a different port for each direction - the bytes come
 		// in from the keyboard and go out to the synth - so the file is
 		// rewritten before the two objects are created. The input is reopened
@@ -245,10 +272,14 @@ void main() {
 		// then the speaker would send into the port the reader is reading - the
 		// echo would come straight back as input and the loop would never stop.
 		// A run that cannot be told apart from its own echo is not a test.
-		write_config(in_name, true);
+		// One match line names the instrument and the plugin's own search
+		// resolves it in each direction, because midi_config keeps a single
+		// `match` string and the last line in the file wins. The earlier
+		// version appended a second match line for the output, which meant the
+		// output's name was also the one searched for in the input list.
+		write_config(in_name, false);
 		midi_config@ for_input2 = midi_config_create();
 		for_input2.load_if_present("midi_config.txt");
-		write_config(out_name, true);
 		midi_config@ for_output = midi_config_create();
 		for_output.load_if_present("midi_config.txt");
 
@@ -289,7 +320,7 @@ void main() {
 			print("HEAR_ECHOES " + echoes);
 		}
 	} else if (heard > 0) {
-		say("Inbound measured. The echo half wants an output port that is not the input; " + in_name + " was the only one on offer, so nothing was played back.");
+		say("Inbound measured, but no output port to play the echo into, so nothing was sent back.");
 	}
 	say("Test finished.");
 	// wait() lets the last lines reach the console before the process goes away.
