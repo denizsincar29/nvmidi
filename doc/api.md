@@ -91,9 +91,14 @@ stand: `match` is `"nord"`, `port` is 0.
 - `int find_input_port() const` / `int find_output_port() const` — the index
   to open, or -1 when neither the name nor the fallback index finds anything
 - `int get_last_port() const` — where the last search ended
-- `string describe() const` — `"Nord Piano 6"` when the search matched by name,
-  `"port 0 (fallback)"` when it fell back. Meant to be spoken
-- `string get_path() const`
+- `int describe_byte_count() const`, `int describe_byte(index) const` — the port
+  the last search settled on, in words: `"Nord Piano 6 MIDI 2"` when the name
+  matched, `"MOTU M Series MIDI In 0 (fallback port 0)"` when the search fell
+  back to the index. Taken from the list that was searched, so an output search
+  names an output port. Meant to be spoken; a string cannot cross this boundary
+  back into the script, which is why it is a byte pair
+- `int get_path_byte_count() const`, `int get_path_byte(index) const` — the file
+  the configuration was loaded from, as bytes
 
 Members `string match` and `int port` can also be set from the script instead
 of a file. Create one with `midi_config_create()`.

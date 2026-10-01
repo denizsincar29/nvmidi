@@ -579,7 +579,7 @@ midi_note* midi_note_create_ms(int pitch, int velocity, double duration_ms) {
 
 midi_input::midi_input()
 	: midi_in(nullptr), port_index(-1), ignore_sysex(true), ignore_timing(true),
-	  queue_limit(4096), opened_at(0.0) {}
+	  queue_limit(4096), opened_at(0.0) { tempo = 120.0; } // tempo was never initialised; the docs promise 120 bpm
 
 midi_input::~midi_input() { close(); }
 
@@ -952,7 +952,7 @@ bool midi_input::play_note_wait(const midi_note& note) {
 // midi_output
 // ---------------------------------------------------------------------------
 
-midi_output::midi_output() : midi_out(nullptr), port_index(-1), virtual_port(false) {}
+midi_output::midi_output() : midi_out(nullptr), port_index(-1), virtual_port(false) { tempo = 120.0; } // same as midi_input: a fresh object used to read back garbage
 
 midi_output::~midi_output() { close(); }
 
@@ -1394,6 +1394,15 @@ bool midi_output::play_midi_chord(CScriptArray& notes, const std::string& patter
 	return play_midi_chord_wait(notes, pattern);
 }
 
+// One after another, each for its own length - the same schedule midi_input
+// runs, because a sequence is a pattern like any other. Declared in the
+// header and promised by doc/api.md from the start, and never defined or
+// registered until the example suite called it on 2026-10-01 and the
+// engine answered "No matching symbol 'play_sequence'".
+bool midi_output::play_sequence(CScriptArray& notes) {
+	return play_midi_chord(notes, "sequence");
+}
+
 bool midi_output::play_midi_chord_wait(CScriptArray& notes, const std::string& pattern) {
 	clear_error();
 	if (!midi_out) {
@@ -1520,7 +1529,7 @@ int midi_find_output_port(const std::string& substring) {
 	return -1;
 }
 
-midi_config::midi_config() : match("nord"), port(0), last_port(-1) {}
+midi_config::midi_config() : match("nord"), port(0), last_port(-1), last_name() {}
 
 bool midi_config::load(const std::string& path) {
 	clear_error();
@@ -1567,15 +1576,15 @@ int midi_config::pick(bool input) {
 	clear_error();
 	const int found = input ? midi_find_input_port(match) : midi_find_output_port(match);
 	if (found >= 0) {
-		last_port = found;
+		last_port = found; last_name = input ? midi_input_port_name((unsigned int)found) : midi_output_port_name((unsigned int)found);
 		return found;
 	}
 	const unsigned int count = input ? midi_input_port_count() : midi_output_port_count();
 	if (port >= 0 && static_cast<unsigned int>(port) < count) {
-		last_port = port;
+		last_port = port; last_name = input ? midi_input_port_name((unsigned int)port) : midi_output_port_name((unsigned int)port);
 		return port;
 	}
-	last_port = -1;
+	last_port = -1; last_name.clear();
 	return -1;
 }
 
@@ -1585,7 +1594,7 @@ int midi_config::find_output_port() const { return const_cast<midi_config*>(this
 
 std::string midi_config::describe() const {
 	if (last_port < 0) return "nothing matched \"" + match + "\"";
-	const std::string name = midi_input_port_name(static_cast<unsigned int>(last_port));
+	const std::string& name = last_name; // the list that was searched - this used to read the input list even after an output search
 	if (contains_ci(name, match)) return name;
 	return name + " (fallback port " + std::to_string(last_port) + ")";
 }
@@ -2563,6 +2572,7 @@ void register_midi_output(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_chord_wait(array<midi_note@>&in notes)", asMETHOD(midi_output, play_chord_wait), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_midi_chord(array<midi_note@>&in notes, const string&in pattern)", asMETHOD(midi_output, play_midi_chord), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_midi_chord_wait(array<midi_note@>&in notes, const string&in pattern)", asMETHOD(midi_output, play_midi_chord_wait), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_sequence(array<midi_note@>&in notes)", asMETHOD(midi_output, play_sequence), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_note(const midi_note&in note)", asMETHOD(midi_output, play_note), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "bool play_note_wait(const midi_note&in note)", asMETHOD(midi_output, play_note_wait), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_output", "uint stop_all_notes()", asMETHOD(midi_output, stop_all_notes), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
@@ -2632,7 +2642,13 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectProperty("midi_note", "int velocity", asOFFSET(midi_note, velocity)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_note", "int channel", asOFFSET(midi_note, channel)), "RegisterObjectProperty", __LINE__);
 	reg->check( engine->RegisterObjectProperty("midi_note", "midi_duration length", asOFFSET(midi_note, length)), "RegisterObjectProperty", __LINE__);
-	reg->check( engine->RegisterObjectProperty("midi_note", "double duration_ms", asOFFSET(midi_note, length) + offsetof(midi_duration, amount)), "RegisterObjectProperty", __LINE__);
+	// A method, because that is what doc/api.md has always said and what a
+	// script needs. The property that used to be registered here was bound to
+	// length.amount, so it answered 1 for a one-beat note instead of the 500 ms
+	// that beat lasts - the example suite read exactly that on 2026-10-01. A
+	// property and a method cannot share the name, so the property is gone; the
+	// raw amount is still reachable as n.length.amount.
+	reg->check( engine->RegisterObjectMethod("midi_note", "double duration_ms() const", asMETHOD(midi_note, duration_ms), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	// A factory per arity, because the engine will not give this plugin the
 	// name midi_note: nvgt is an audio toolkit with its own midi support and
 	// its engine already owns that name, so RegisterGlobalFunction reports
@@ -2658,6 +2674,12 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterGlobalFunction("int midi_note_number(const string&in name)", asFUNCTION(midi_note_number), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("int midi_note_name_byte_count(int pitch)", asFUNCTION(midi_note_pitch_name_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 	reg->check( engine->RegisterGlobalFunction("int midi_note_name_byte(int pitch, uint index)", asFUNCTION(midi_note_pitch_name_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	// doc/api.md has called these midi_note_pitch_name_byte_count/_byte since
+	// before either name existed. The example suite asked for the documented
+	// name on 2026-10-01 and got "No matching symbol". The short name stays, so
+	// nothing that already found it breaks.
+	reg->check( engine->RegisterGlobalFunction("int midi_note_pitch_name_byte_count(int pitch)", asFUNCTION(midi_note_pitch_name_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_note_pitch_name_byte(int pitch, uint index)", asFUNCTION(midi_note_pitch_name_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
 
 	// Unit constants, so a script never has to remember 0..3.
 	reg->check( engine->RegisterGlobalProperty("const int MIDI_MS", (void*)&g_unit_ms), "RegisterGlobalProperty", __LINE__);

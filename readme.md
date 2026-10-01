@@ -32,13 +32,42 @@ libasound2-dev`). The result is `nvmidi.so`, which links against
 
 **Windows**
 
-Install MinGW-w64, then:
+Windows is built with MSVC — run `scripts\build_win_msvc.bat` — and not with
+MinGW, and that is a measurement rather than a preference.
 
-```
-mingw32-make
-```
+`nvgt.exe` on Windows is an MSVC build: it loads `msvcp_win.dll` and
+`ucrtbase.dll`. A MinGW build of this plugin carries libstdc++'s `std::string`
+while the engine carries MSVC's, and the two do not agree on where a string
+keeps its data. Measured on 2026-10-01, with a MinGW-built `nvmidi.dll`
+installed into a real nvgt:
 
-The result is `nvmidi.dll`, linking against `winmm`.
+    midi_find_input_port("nord")       -> -1    (the port is there)
+    midi_note_number("C4")             -> -1    (C4 is 60)
+    midi_config::load_if_present(...)  -> access violation
+    what the plugin received for "nord": size=0 data=0x64726f6e capacity=4
+
+That last line is the whole story. MSVC keeps a short string's characters at
+offset 0, its length at offset 16 and its capacity at offset 24; libstdc++
+expects the pointer at offset 0, the length at offset 8 and its buffer at
+offset 16. The plugin was reading a *length* out of the middle of the text, so
+every string argument arrived empty or as garbage - and a pointer-shaped
+argument that reaches `std::ifstream` faults, which is what the crash was. The
+same source built with MSVC receives `size=4 first byte=110` for "nord",
+answers 60 for "C4", and returns true from `load_if_present()`.
+
+`scripts\build_win_msvc.bat` does three things beyond calling the compiler:
+
+- finds the C++ tools through `vswhere`;
+- generates an import library from the *running engine's* export table
+  (`dumpbin /exports nvgt.exe`, then `lib /def:`), because MSVC wants the
+  Angelscript runtime symbols (`asAllocMem`, `asGetLibraryOptions`, ...) at
+  link time, where MinGW leaves them undefined for the loader to fill in;
+- links `winmm`, `ole32`, `setupapi` and `ksuser`, and writes `nvmidi.dll`.
+
+Set `NVGT_HOME` to the folder holding `nvgt.exe` if it is not on `PATH`. The
+MinGW path in the `Makefile` still builds, and the library it produces still
+enumerates ports and still moves MIDI bytes; it just cannot receive a string.
+Do not ship it.
 
 `src/nvgt_plugin.h` is vendored from NVGT and pins the plugin API version
 (currently 5). If NVGT bumps that version, copy the new header in from the
@@ -287,6 +316,15 @@ in the same second, reading the same value both ways:
 
 So the rule for this plugin: **integers cross the boundary, strings do not.**
 
+One qualifier, added 2026-10-01 and worth a line of its own: that rule is about
+text coming *out*. Text going *in* is fine. The `const string&in` parameters
+these functions take - `midi_find_input_port("nord")`, `midi_note_number("C4")`,
+`open_by_name`, `midi_config::load` - do arrive intact, measured on a machine
+with a real Nord attached, once the library is built the way *Windows* above
+describes. What has no way out is only the *return* value, because the engine
+publishes no string factory and a plugin cannot build a string the engine will
+accept.
+
 For every string surface there is a pair — a count and an indexed byte:
 
     int midi_api_name_byte_count()          // how long the text is
@@ -479,6 +517,25 @@ folder: `list_ports` (what is plugged in, and what the config picks),
 `echo_monitor` (speaks every incoming message), `keyboard_to_synth` (forwards
 one port to another, transposed) and `play_chord` (chords and patterns on the
 keyboard's own sound engine).
+
+Three more are smoke tests rather than demonstrations, and each one opens the
+instrument's own output port and plays C-E-G twice before its first check, so
+the person sitting at the piano hears a run begin:
+
+- `test_lowlevel` - the whole `midi_output` surface, the port functions and the
+  byte pairs, one line of `TEST <name> PASS|FAIL` per call and a `RESULT` line
+  at the end;
+- `test_music` - `midi_note` and `midi_duration` fields, every unit constant,
+  `tempo`, and `play_note` / `play_chord` / `play_midi_chord` / `play_sequence`
+  with every pattern name;
+- `test_config` - `midi_config`: load, the two searches, `get_last_port`,
+  `describe` and `get_path`. Run it from a directory holding
+  `midi_config.txt` (`match=zzzznope`, `port=1`) and `midi_config_named.txt`
+  (`match=nord`, `port=0`) - the header says so too.
+
+Each writes `apitest.log` next to itself as it goes, because the engine buffers
+`print()` until a clean exit and a crash would otherwise take the whole
+transcript with it.
 
 ## Installing the dll
 

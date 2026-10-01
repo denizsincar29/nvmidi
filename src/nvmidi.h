@@ -633,6 +633,10 @@ private:
 	int pick(bool input);
 	std::string path;
 	int last_port;
+	// The name of the port the last search settled on, taken from the list that
+	// was searched. describe() used to look the port up in the *input* list no
+	// matter which search had run.
+	std::string last_name;
 };
 
 midi_config* midi_config_create();

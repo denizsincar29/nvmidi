@@ -1,0 +1,279 @@
+#pragma plugin nvmidi
+
+// test_music.nvgt - end to end smoke test of the music layer: midi_note,
+// midi_duration, the unit constants, midi_note_number / pitch names, and the
+// playing functions on both midi_output and midi_input. One line per check,
+// printed and appended to apitest.log. Playback goes to output port 2 (the
+// Nord); sound is expected and nothing audible is asserted.
+//
+// Startup cue: main() opens port 2 once and plays C-E-G twice (the second
+// after a short gap) before any check, so the person at the piano hears that
+// a run has begun. That same midi_output object is reused by the checks
+// below - the port is opened only once. If it cannot be opened the cue logs a
+// FAIL and every API check still runs.
+
+const string byte_letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/._-+ ";
+const string digits = "0123456789";
+string char_of(uint b) {
+	if (b >= 48 && b <= 57) return digits.substr(b - 48, 1);
+	if (b >= 65 && b <= 90) return byte_letters.substr(b - 65 + 10, 1);
+	if (b >= 97 && b <= 122) return byte_letters.substr(b - 97 + 36, 1);
+	if (b == 47) return "/";
+	if (b == 46) return ".";
+	if (b == 95) return "_";
+	if (b == 45) return "-";
+	if (b == 43) return "+";
+	if (b == 32) return " ";
+	// The plugin does emit brackets - a fallback description is
+	// "MOTU ... (fallback port 0)" - and without these two lines the
+	// reconstruction turns them into dots and every comparison against a
+	// bracketed string fails for a reason that is not the plugin.
+	if (b == 40) return "(";
+	if (b == 41) return ")";
+	return ".";
+}
+
+int g_pass = 0;
+int g_fail = 0;
+
+string bstr(bool b) { if (b) return "true"; return "false"; }
+
+void check(const string&in name, bool ok, const string&in detail) {
+	string verdict = ok ? "PASS" : "FAIL";
+	string line = "TEST " + name + " " + verdict + " " + detail;
+	file_put_contents("apitest.log", line + "\n", true);
+	print(line + "\n");
+	if (ok) g_pass += 1;
+	else g_fail += 1;
+}
+
+string bytes_of_last_error() {
+	string s = "";
+	for (int i = 0; i < midi_last_error_byte_count(); i++) s += char_of(midi_last_error_byte(i));
+	return s;
+}
+string bytes_of_output_port(midi_output@ o) {
+	string s = "";
+	for (int i = 0; i < o.get_port_name_byte_count(); i++) s += char_of(o.get_port_name_byte(i));
+	return s;
+}
+string bytes_of_note(midi_note@ n) {
+	string s = "";
+	for (int i = 0; i < n.to_string_byte_count(); i++) s += char_of(n.to_string_byte(i));
+	return s;
+}
+string bytes_of_duration(midi_duration d) {
+	string s = "";
+	for (int i = 0; i < d.to_string_byte_count(); i++) s += char_of(d.to_string_byte(i));
+	return s;
+}
+string bytes_of_pitch_name(int pitch) {
+	string s = "";
+	for (int i = 0; i < midi_note_name_byte_count(pitch); i++) s += char_of(midi_note_name_byte(pitch, i));
+	return s;
+}
+
+// The startup cue: C-E-G on channel 1, held 800 ms, then the same again after
+// a short gap. Uses the object main() already opened; it never opens a port.
+void startup_cue(midi_output@ mo) {
+	for (int pass = 0; pass < 2; pass++) {
+		mo.send_note_on(1, 60, 100);
+		mo.send_note_on(1, 64, 100);
+		mo.send_note_on(1, 67, 100);
+		wait(800);
+		mo.send_note_off(1, 60, 0);
+		mo.send_note_off(1, 64, 0);
+		mo.send_note_off(1, 67, 0);
+		mo.all_notes_off();
+		if (pass == 0) wait(250);
+	}
+}
+
+array<midi_note@>@ newChord(double length_ms) {
+	array<midi_note@>@ notes = array<midi_note@>();
+	midi_note@ a = nvmidi_note_create(60, 100); a.length = midi_duration_create(length_ms, MIDI_MS); notes.insert_last(a);
+	midi_note@ b = nvmidi_note_create(64, 100); b.length = midi_duration_create(length_ms, MIDI_MS); notes.insert_last(b);
+	midi_note@ c = nvmidi_note_create(67, 100); c.length = midi_duration_create(length_ms, MIDI_MS); notes.insert_last(c);
+	return notes;
+}
+
+void main() {
+	file_put_contents("apitest.log", "", false);
+
+	// -- startup cue: open port 2 and beep C-E-G twice, before any check ---
+	midi_output@ mo = midi_output_create();
+	bool cue_open = mo.open(uint(2));
+	if (!cue_open) {
+		check("startup_cue", false, "cannot open output port 2: " + bytes_of_last_error());
+	} else {
+		startup_cue(mo);
+		check("startup_cue", true, "opened output port 2 " + bytes_of_output_port(mo));
+	}
+
+	// -- midi_note factories and fields ----------------------------------
+	midi_note@ n0 = nvmidi_note_create();
+	check("note_create_default", n0.pitch == 60 && n0.velocity == 100 && n0.channel == 1, "pitch=" + n0.pitch + " velocity=" + n0.velocity + " channel=" + n0.channel);
+	midi_note@ n1 = nvmidi_note_create(64, 90);
+	check("note_create_pitch_velocity", n1.pitch == 64 && n1.velocity == 90 && n1.channel == 1, "pitch=" + n1.pitch + " velocity=" + n1.velocity + " channel=" + n1.channel);
+	midi_note@ n2 = nvmidi_note_create(64, 90, 3);
+	check("note_create_full_channel", n2.channel == 3, "channel=" + n2.channel);
+	midi_note@ n3 = nvmidi_note_create_ms(60, 100, 500.0);
+	// midi_note.duration_ms is documented as a method (n.duration_ms()) but
+// does not compile here either way - see the probe in the notes. The length
+// is read through .length, which does.
+	check("note_create_ms", n3.length.unit == MIDI_MS && n3.length.amount == 500.0, "unit=" + n3.length.unit + " amount=" + n3.length.amount);
+	// The documented form, which only became callable on 2026-10-01: it used to
+	// be registered as a property bound to the raw amount, which answered 500
+	// for a millisecond note and 1 for a one-beat one.
+	check("note_duration_ms_method", n3.duration_ms() == 500.0, "duration_ms()=" + n3.duration_ms());
+
+	midi_note@ n4 = nvmidi_note_create(60, 100);
+	check("note_default_length_unit_ms", n4.length.unit == MIDI_MS, "unit=" + n4.length.unit);
+	double n4def = n4.length.to_ms();
+	check("note_default_length_ms_220", n4def == 220.0, "duration_ms=" + n4def);
+
+	n4.length = midi_duration_create(1.0, MIDI_BEATS);
+	check("note_length_assign_fields", n4.length.amount == 1.0 && n4.length.unit == MIDI_BEATS && n4.length.tempo == 120.0 && n4.length.ppq == 96.0, "amount=" + n4.length.amount + " unit=" + n4.length.unit + " tempo=" + n4.length.tempo + " ppq=" + n4.length.ppq);
+	double n4beat = n4.length.to_ms();
+	check("note_duration_ms_after_beats", n4beat > 499.9 && n4beat < 500.1, "duration_ms=" + n4beat);
+
+	n4.length = midi_duration_create(0.0, MIDI_MS);
+	check("note_to_string_bytes", n4.to_string_byte_count() == 38, "count=" + n4.to_string_byte_count() + " text=" + bytes_of_note(n4));
+
+	// -- midi_duration fields, to_ms(), to_string -------------------------
+	midi_duration d1 = midi_duration_create(2.0, MIDI_BEATS, 90.0);
+	check("duration_fields", d1.amount == 2.0 && d1.unit == MIDI_BEATS && d1.tempo == 90.0 && d1.ppq == 96.0, "amount=" + d1.amount + " unit=" + d1.unit + " tempo=" + d1.tempo + " ppq=" + d1.ppq);
+	double d1ms = d1.to_ms();
+	check("duration_to_ms_beats_90", d1ms > 1333.2 && d1ms < 1333.5, "to_ms=" + d1ms);
+	double dms = midi_duration_create(250.0, MIDI_MS).to_ms();
+	check("duration_to_ms_ms", dms == 250.0, "to_ms=" + dms);
+	double dtk = midi_duration_create(96.0, MIDI_TICKS).to_ms();
+	check("duration_to_ms_ticks_500", dtk > 499.9 && dtk < 500.1, "to_ms=" + dtk);
+	double dbar = midi_duration_create(1.0, MIDI_BARS).to_ms();
+	check("duration_to_ms_bars_2000", dbar > 1999.9 && dbar < 2000.1, "to_ms=" + dbar);
+	midi_duration d2 = midi_duration_create(2.0, MIDI_BEATS, 120.0);
+	check("duration_to_string_bytes", d2.to_string_byte_count() == 28, "count=" + d2.to_string_byte_count() + " text=" + bytes_of_duration(d2));
+
+	// -- unit constants ----------------------------------------------------
+	check("unit_constants_ms_pair", MIDI_MS == MUSIC_MS, "MIDI_MS=" + MIDI_MS + " MUSIC_MS=" + MUSIC_MS);
+	check("unit_constants_ticks_pair", MIDI_TICKS == MUSIC_TICKS, "MIDI_TICKS=" + MIDI_TICKS + " MUSIC_TICKS=" + MUSIC_TICKS);
+	check("unit_constants_beats_pair", MIDI_BEATS == MUSIC_BEATS, "MIDI_BEATS=" + MIDI_BEATS + " MUSIC_BEATS=" + MUSIC_BEATS);
+	check("unit_constants_bars_pair", MIDI_BARS == MUSIC_BARS, "MIDI_BARS=" + MIDI_BARS + " MUSIC_BARS=" + MUSIC_BARS);
+	check("unit_constants_0_1_2_3", MIDI_MS == 0 && MIDI_TICKS == 1 && MIDI_BEATS == 2 && MIDI_BARS == 3, "values=" + MIDI_MS + "," + MIDI_TICKS + "," + MIDI_BEATS + "," + MIDI_BARS);
+	check("beats_alias_120", MUSIC_BEATS_120 != MIDI_BEATS, "MUSIC_BEATS_120=" + MUSIC_BEATS_120 + " MIDI_BEATS=" + MIDI_BEATS);
+	check("beats_aliases_distinct", MUSIC_BEATS_90 != MUSIC_BEATS_100 && MUSIC_BEATS_100 != MUSIC_BEATS_120 && MUSIC_BEATS_120 != MUSIC_BEATS_140, "values=" + MUSIC_BEATS_90 + "," + MUSIC_BEATS_100 + "," + MUSIC_BEATS_120 + "," + MUSIC_BEATS_140);
+
+	// -- midi_note_number and pitch names ---------------------------------
+	check("note_number_c4", midi_note_number("C4") == 60, "value=" + midi_note_number("C4"));
+	check("note_number_fsharp3", midi_note_number("F#3") == 54, "value=" + midi_note_number("F#3"));
+	check("note_number_bb5", midi_note_number("Bb5") == 82, "value=" + midi_note_number("Bb5"));
+	check("note_number_invalid", midi_note_number("X9") == -1, "value=" + midi_note_number("X9"));
+	check("note_name_60_bytes", midi_note_name_byte_count(60) == 2, "count=" + midi_note_name_byte_count(60) + " text=" + bytes_of_pitch_name(60));
+
+	// -- the music class: tempo and duration() ----------------------------
+	check("music_output_open_after_cue", mo.is_open() && mo.get_port() == 2, "is_open=" + bstr(mo.is_open()) + " port=" + mo.get_port());
+	check("music_default_tempo_120", mo.tempo == 120.0, "tempo=" + mo.tempo);
+
+	double b120 = mo.duration(1.0, MIDI_BEATS).to_ms();
+	check("duration_default_beats_120", b120 > 499.9 && b120 < 500.1, "to_ms=" + b120);
+	mo.tempo = 96.0;
+	check("music_tempo_set_96", mo.tempo == 96.0, "tempo=" + mo.tempo);
+	double b96 = mo.duration(1.0, MIDI_BEATS).to_ms();
+	check("duration_beats_96", b96 > 624.9 && b96 < 625.1, "to_ms=" + b96);
+	double bar96 = mo.duration(1.0, MIDI_BARS).to_ms();
+	check("duration_bars_96", bar96 > 2499.9 && bar96 < 2500.1, "to_ms=" + bar96);
+	double tick96 = mo.duration(96.0, MIDI_TICKS).to_ms();
+	check("duration_ticks_96", tick96 > 624.9 && tick96 < 625.1, "to_ms=" + tick96);
+	double msign = mo.duration(250.0, MIDI_MS).to_ms();
+	check("duration_ms_ignores_tempo", msign == 250.0, "to_ms=" + msign);
+	double mbeats = mo.duration(1.0, MUSIC_BEATS).to_ms();
+	check("duration_music_beats_alias", mbeats > 624.9 && mbeats < 625.1, "to_ms=" + mbeats);
+	double mbars = mo.duration(0.5, MUSIC_BARS).to_ms();
+	check("duration_music_bars_half", mbars > 1249.9 && mbars < 1250.1, "to_ms=" + mbars);
+	double mtick = mo.duration(96.0, MUSIC_TICKS).to_ms();
+	check("duration_music_ticks", mtick > 624.9 && mtick < 625.1, "to_ms=" + mtick);
+	double mms = mo.duration(250.0, MUSIC_MS).to_ms();
+	check("duration_music_ms", mms == 250.0, "to_ms=" + mms);
+
+	mo.tempo = 200.0;
+	double e90 = mo.duration(1.0, MUSIC_BEATS_90).to_ms();
+	check("duration_beats_90", e90 > 666.5 && e90 < 666.8, "to_ms=" + e90);
+	double e100 = mo.duration(1.0, MUSIC_BEATS_100).to_ms();
+	check("duration_beats_100", e100 > 599.9 && e100 < 600.1, "to_ms=" + e100);
+	double e120 = mo.duration(1.0, MUSIC_BEATS_120).to_ms();
+	check("duration_beats_120", e120 > 499.9 && e120 < 500.1, "to_ms=" + e120);
+	double e140 = mo.duration(1.0, MUSIC_BEATS_140).to_ms();
+	check("duration_beats_140", e140 > 428.5 && e140 < 428.7, "to_ms=" + e140);
+	mo.tempo = 120.0;
+
+	// -- playing a note and a chord ---------------------------------------
+	midi_note@ pnote = nvmidi_note_create(60, 100);
+	pnote.length = midi_duration_create(40.0, MIDI_MS);
+	bool pnw = mo.play_note_wait(pnote);
+	check("play_note_wait", pnw, "returned=" + bstr(pnw) + " error=" + bytes_of_last_error());
+	bool pn = mo.play_note(pnote);
+	check("play_note", pn, "returned=" + bstr(pn) + " error=" + bytes_of_last_error());
+	wait(100);
+	uint s1 = mo.stop_all_notes();
+	check("play_note_stop_all_notes", int(s1) >= 0, "returned=" + s1);
+
+	array<midi_note@>@ cw = newChord(40.0);
+	bool pcw = mo.play_chord_wait(cw);
+	check("play_chord_wait", pcw, "returned=" + bstr(pcw) + " error=" + bytes_of_last_error());
+	array<midi_note@>@ cn = newChord(400.0);
+	bool pc = mo.play_chord(cn);
+	check("play_chord", pc, "returned=" + bstr(pc) + " error=" + bytes_of_last_error());
+	wait(80);
+	uint act = mo.get_active_notes();
+	check("play_chord_get_active_notes", int(act) > 0, "active=" + act);
+	uint s2 = mo.stop_all_notes();
+	check("play_chord_stop_all_notes", int(s2) > 0, "returned=" + s2);
+	uint act0 = mo.get_active_notes();
+	check("stop_all_notes_clears_active", int(act0) == 0, "active=" + act0);
+
+	// -- every pattern name, both entry points ----------------------------
+	string[]@ patterns = {"spread", "arpeggio", "quick", "fast", "sequence", "repeat", "strum", "chord"};
+	for (uint i = 0; i < patterns.length(); i++) {
+		array<midi_note@>@ pa = newChord(40.0);
+		bool oka = mo.play_midi_chord_wait(pa, patterns[i]);
+		check("play_midi_chord_wait_" + patterns[i], oka, "pattern=" + patterns[i] + " returned=" + bstr(oka) + " error=" + bytes_of_last_error());
+	}
+	for (uint i = 0; i < patterns.length(); i++) {
+		array<midi_note@>@ pb = newChord(40.0);
+		bool okb = mo.play_midi_chord(pb, patterns[i]);
+		check("play_midi_chord_" + patterns[i], okb, "pattern=" + patterns[i] + " returned=" + bstr(okb) + " error=" + bytes_of_last_error());
+	}
+	array<midi_note@>@ badp = newChord(30.0);
+	bool bp = mo.play_midi_chord_wait(badp, "nosuchpattern");
+	check("play_midi_chord_unknown_pattern_false", !bp, "returned=" + bstr(bp) + " error=" + bytes_of_last_error());
+
+	// play_sequence is exercised on midi_input below: midi_output does not
+	// register it (documented under midi_output Playing, absent at runtime).
+	mo.all_notes_off();
+	mo.close();
+
+	// -- the same playing functions on midi_input -------------------------
+	midi_input@ mi = midi_input_create();
+	bool iopen = mi.open(1);
+	check("input_open_for_play", iopen, "returned=" + bstr(iopen) + " error=" + bytes_of_last_error());
+	midi_note@ inote = nvmidi_note_create(60, 100);
+	inote.length = midi_duration_create(40.0, MIDI_MS);
+	bool ipn = mi.play_note_wait(inote);
+	check("input_play_note_wait", ipn, "returned=" + bstr(ipn) + " error=" + bytes_of_last_error());
+	array<midi_note@>@ ichord = newChord(40.0);
+	bool ipc = mi.play_chord_wait(ichord);
+	check("input_play_chord_wait", ipc, "returned=" + bstr(ipc) + " error=" + bytes_of_last_error());
+	array<midi_note@>@ ichord2 = newChord(40.0);
+	bool ipmc = mi.play_midi_chord_wait(ichord2, "arpeggio");
+	check("input_play_midi_chord_wait_arpeggio", ipmc, "returned=" + bstr(ipmc) + " error=" + bytes_of_last_error());
+	array<midi_note@>@ iseq = newChord(30.0);
+	bool ips = mi.play_sequence(iseq);
+	check("input_play_sequence", ips, "returned=" + bstr(ips) + " error=" + bytes_of_last_error());
+	mi.stop_all_notes();
+	mi.close();
+
+	string result = "RESULT pass=" + g_pass + " fail=" + g_fail;
+	file_put_contents("apitest.log", result + "\n", true);
+	print(result + "\n");
+	return;
+}
