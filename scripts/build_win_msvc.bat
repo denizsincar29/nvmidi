@@ -102,7 +102,17 @@ rem report, measured 1 October), and a step that returns that would be read as a
 rem toolchain fault rather than as the check it is. /c is a real compile pass
 rem with a guaranteed error, so cl's own exit code says whether the header was
 rem found: "cannot open source file" means it was not.
+echo --- build-msvc before the compile:
+dir /b build-msvc 2>&1
+echo --- what the write of the alias header did:
+> build-msvc\probe_import.tmp echo probe
+if exist build-msvc\probe_import.tmp (echo probe wrote a file) else (echo probe wrote nothing)
+del build-msvc\probe_import.tmp 2>nul
 if not exist build-msvc\nvgt_import.inc (
+	echo the alias header was not written
+	dir /b /s *.inc 2>&1
+	exit /b 2
+)
 	echo the alias header was not written
 	exit /b 2
 )
