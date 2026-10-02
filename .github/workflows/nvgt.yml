@@ -300,17 +300,20 @@ jobs:
           # is worth doing because it proves every name it mentions still
           # exists in the engine's plugin surface.
           #
-          # nvmidi_string.nvgt and examples/nvmidi_ui.nvgt are NOT, and that is
-          # a measurement rather than a preference. Compiled alone
-          # nvmidi_string.nvgt answers "Identifier 'midi_message' is not a data
-          # type in global namespace" eight times - measured, 1 October - and
-          # nvmidi_ui.nvgt fails the same way for the same reason: both declare
-          # their functions in terms of the plugin's types rather than only
-          # mentioning them, and those types do not exist until something has
-          # loaded the plugin. An entry point does not change that: the failure
-          # is about the declaration, not about the missing main(). Both are
-          # compiled for real in the windows job, where the plugin dll is loaded
-          # first, and that is the check that means something for them.
+          # nvmidi_string.nvgt, examples/nvmidi_ui.nvgt and
+          # examples/nvmidi_ui_keys.nvgt are NOT, and that is a measurement
+          # rather than a preference. nvmidi_string.nvgt compiled alone answers
+          # "Identifier 'midi_message' is not a data type in global namespace"
+          # eight times - measured, 1 October - and examples/nvmidi_ui.nvgt
+          # answers "No entry point found" (run 37012913997); both declare their
+          # functions in terms of the plugin's types rather than only mentioning
+          # them, and those types do not exist until something has loaded the
+          # plugin. nvmidi_ui_keys.nvgt is a different case and lands at the same
+          # place: it is only ever #included, and the five examples that include
+          # it each define their own main(), so it can neither compile alone nor
+          # carry a main() of its own. All three are compiled for real in the
+          # windows job, where the plugin dll is loaded first, and that is the
+          # check that means something for them.
           #
           # This glob has been the source of two
           # different red builds. Removed 1 October dropped the file list when
@@ -323,8 +326,8 @@ jobs:
           # 37011531810) because --compile is a program mode: it goes through
           # CompileScript() and that function requires an entry point.
           #
-          # Each of the headers left in the glob carries an empty main() in its
-          # own file. That
+          # Each of the two headers left in the glob carries an empty main() in
+          # its own file. That
           # is not a way to make a header look like a program - it is what the
           # engine requires before it will compile a file at all, and until it
           # is satisfied the file is not even initialised. nvmidi_constants.nvgt
@@ -334,8 +337,7 @@ jobs:
           # 37012082707). The reasons are written in the files themselves;
           # TECHNICAL.md has the whole story under "No entry point found".
           for script in scripts/*.nvgt examples/*.nvgt tests/*.nvgt \
-                        midi.nvgt nvmidi_constants.nvgt \
-                        examples/nvmidi_ui_keys.nvgt; do
+                        midi.nvgt nvmidi_constants.nvgt; do
             [ -e "$script" ] || continue
             # get_nvmidi.nvgt is not a test, it is the downloader: running it
             # downloads the published release over the library this job just
@@ -353,8 +355,7 @@ jobs:
             # nobody compiles is a script whose first compile is in a user's
             # hands.
             case "$script" in
-              scripts/get_nvmidi.nvgt | midi.nvgt | nvmidi_constants.nvgt | \
-              examples/nvmidi_ui_keys.nvgt)
+              scripts/get_nvmidi.nvgt | midi.nvgt | nvmidi_constants.nvgt)
                 echo "::group::$script (compiled: it is a header, so what runs is its own empty main)"
                 set +e
                 compile_log="logs/$(basename "$script").compile.log"

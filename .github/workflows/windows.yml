@@ -2458,6 +2458,10 @@ jobs:
             # published release and would drop it over the dll this job just
             # built. It carries an empty main() of its own, so what is compiled
             # here has no download in it and nothing is fetched.
+            # examples/nvmidi_ui.nvgt and examples/nvmidi_ui_keys.nvgt are not
+            # compiled on their own here either: this glob reaches them only
+            # through the examples that #include them, and each of those brings
+            # its own main() - which is why neither file has one.
             $log = "compile_" + ($s.Name -replace '\.nvgt$', '') + ".log"
             Write-Host "::group::$($s.FullName)"
             & $exe $s.FullName *>&1 | Tee-Object -FilePath $log

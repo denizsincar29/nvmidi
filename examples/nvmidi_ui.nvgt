@@ -123,3 +123,10 @@ bool ui_play_background(midi_output@ synth, array<midi_note@>@ notes,
 	}
 	return true;
 }
+
+// No entry point, for the same reason examples/nvmidi_ui_keys.nvgt has none:
+// this file is only ever #included, and every includer defines its own main().
+// Compiled on its own - which the sweep does not do, because a header that
+// declares its functions in the plugin's types cannot compile without the
+// plugin - it answers "No entry point found", and that is the compile being
+// asked for a program, not a fault in the file.
