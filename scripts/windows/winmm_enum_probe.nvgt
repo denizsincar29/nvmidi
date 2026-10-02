@@ -1,50 +1,38 @@
-// winmm_enum_probe.nvgt - which winmm function is the one that kills the run?
+// winmm_enum_probe.nvgt - does anything in this plugin's winmm path kill the run?
 //
-// ANSWERED, run 37022466097: (a), the enumeration object alone. This script
-// counted ports, called midi_output_port_count() FIRST and midi_output_port_name()
-// through it, and died with stdout empty - ENUM_BEGIN itself never reached the
-// file - so no MidiOutWinMM was ever constructed and winmm was never introduced.
-// The tower below the fault is a virtual dispatch into an image Windows has
-// already unmapped, which is (a) stated exactly. What cdb actually printed is
-// only offsets - nvmidi!midi_output_port_count+0xc2 over
-// nvmidi!midi_export_backend_byte+0x11bec / +0x11aa3 / +0x118df - so the named
-// frame (getPortName, and MidiOutWinMM::openPort after it) is inferred from
-// which source lines those are, not symbolicated. Open the port and the same
-// vtable goes on to the backend's open path and its output thread, which is why
-// the e2e script adds nothing to the failure and only runs longer before it.
+// STATUS, run 37044062606: in from the case list, and it carries the pragma
+// like every other case, so it does load the library. It is the one case of
+// the eight that still dies - exit 0xC0000005 after 2.2s, 0 bytes of stdout,
+// and a 5382-byte stderr byte for byte the same as the six cases that exit 0.
 //
-// The crash is now an address, not a suspicion:
+// What that stderr says is that this case never reached its own first line.
+// ENUM_BEGIN is a print, and stdout holds nothing, so the death is before the
+// script's main body runs: the engine spawned the process, the plugin's
+// register_nvmidi ran to completion - "end of register_nvmidi (calls=183
+// refused=0)" is in the log - and then the process died without executing a
+// statement of this file.
 //
-//   ExceptionAddress: 00007ffe991015e6 (<Unloaded_nvmidi.dll>+0x15e6)
-//   ExceptionCode:    c0000005, Parameter[0] 8 = EXCEPTION_EXECUTE_FAULT
-//   nvmidi!midi_output_port_count+0xc2  <- frame just under the fault
+// The stack cdb prints under that fault reads
 //
-// The address is inside a library that has already been unloaded, so something
-// is still holding code in that image. Two things in this repo can do that and
-// they are told apart by which call has to happen first:
+//   winmmbase!midiOutGetNumDevs+0xb
+//     <- InitDevices <- InternalLoadDriver <- winmmGetPrivateProfileString
+//     <- RegGetValueW <- NtQueryValueKey
 //
-//   a) the enumeration object. enum_port<RtMidiOut>() builds one RtMidiOut and
-//      keeps it for the life of the process; every port count, port name and
-//      open goes through it. RtMidiOut is a class with virtual functions, so
-//      its vtable lives in the plugin image, and if that object outlives the
-//      script engine's teardown windows releases the page it points at, the
-//      next virtual call is a jump into freed memory.
-//   b) MidiOutWinMM. Opening a port constructs the winmm backend, whose
-//      destructor and full teardown live in the same image. winmm also owns
-//      an output thread, and midiOutClose() lets it run to the end of its
-//      buffer before it returns - a thread that can still be inside the image
-//      just after the image is gone.
+// and the nvmidi! frames printed beneath those (midi_export_backend_byte
+// +0x11acf, midi_output_port_count+0xc2) are NOT a call stack: they are what
+// cdb resolves a frame to when the frame's image has been unloaded, and the
+// exception address itself says so - <Unloaded_nvmidi.dll>+0x15e6. Reading
+// them as the plugin being on the stack is the mistake this header used to
+// make.
 //
-// The two differ in ordering, and that is what this script reads: it counts
-// ports first and opens last. A (a) alone dies inside the first block; (b)
-// alone survives the count and dies in the second. If the first block is clean
-// and the second is not, the print below the count stays in the log and the
-// verdict is unambiguous.
+// So the measurement is winmm's own device enumeration refusing, and the
+// plugin is present only as the reason winmm is in the process at all. The
+// next question is not which winmm call - it is whether the fault needs the
+// plugin's code to have run, or only winmm's. Case n_handle2 answers the
+// second half: it creates an output object, calls into it and exits 0, so
+// building winmm's endpoint structures is not itself fatal.
 //
-// It also prints nothing derived from a port name, so a device-less runner
-// still exercises everything but the naming.
-//
-// The pragma loads the library, and the trouble is in what the library does
+// The pragma loads the library, and the question is what the library does
 // with winmm, so the pragma is the point rather than boilerplate.
 #pragma plugin nvmidi
 

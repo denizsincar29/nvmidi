@@ -714,7 +714,7 @@ jobs:
           if not exist nvmidi.dll goto :missing
           if not exist builds\nvmidi-with-addon\nvmidi.dll goto :missing
           if not exist builds\nvmidi-no-addon\nvmidi.dll goto :missing
-          if not exist builds\nvmidi-e2e\nvmidi.dll goto :missing
+          if not exist builds\nvmidi-e2e\nvmidi-e2e.dll goto :missing
           dir /B nvmidi.dll builds\nvmidi-with-addon builds\nvmidi-no-addon builds\nvmidi-e2e
           goto :eof
           :missing
@@ -795,7 +795,7 @@ jobs:
           # rather than silently leaving the ordinary build in place - a run
           # against the wrong library is worse than a run that says it could
           # not start.
-          $e2eDll = Join-Path $env:GITHUB_WORKSPACE 'builds\nvmidi-e2e\nvmidi.dll'
+          $e2eDll = Join-Path $env:GITHUB_WORKSPACE 'builds\nvmidi-e2e\nvmidi-e2e.dll'
           if (Test-Path $e2eDll) {
             Copy-Item $e2eDll -Destination (Join-Path $env:GITHUB_WORKSPACE 'nvmidi.dll') -Force
             Write-Host "the e2e build is staged as nvmidi.dll: $((Get-Item $e2eDll).Length) bytes, no array add-on call in it"
