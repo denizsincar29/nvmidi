@@ -119,8 +119,26 @@ else
         LIBS       = -lasound
     endif
     LDFLAGS       = -shared
-    LIBS         += -lpthread
     RM            = rm -f
+endif
+
+# -lpthread belongs to the linux link and must not reach the windows one.
+#
+# The backend block above used to carry `LIBS += -lpthread` as its last line
+# inside the else, which made it additive on both platforms: on mingw the
+# windows line 90 already sets LIBS to -lwinmm -lole32 -lsetupapi -lksuser, and
+# this one then appended -lpthread to it. libwinpthread-1.dll does not exist on
+# a stock windows machine, and the loader refuses a dll whose import table
+# names it *as a whole* - the same class of mistake the -static comment above
+# describes, narrower but identical in effect: "failed to load plugin" and no
+# script line run. The import-table assertion in the workflow caught it, which
+# is the only reason it is a red build and not a user report.
+#
+# Scoped to linux rather than deleted, because linux does need it: RtMidi's
+# pthread use is real there, and a build without this line fails at link.
+ifeq ($(OS),Windows_NT)
+else
+    LIBS         += -lpthread
 endif
 
 .PHONY: all clean check
