@@ -302,25 +302,23 @@ jobs:
           # data type in global namespace" eight times - measured, 1 October -
           # which says nothing about whether it is correct.
           #
-          # This glob used to end in "midi.nvgt nvmidi_constants.nvgt", and a
-          # second list added examples/nvmidi_ui.nvgt and
-          # examples/nvmidi_ui_keys.nvgt through examples/*.nvgt. All four are
-          # headers without an entry point, so the sweep failed on them with
-          # "No entry point found". That was read as an error about the code
-          # under test, and Removed 1 October dropped the file list instead of
-          # fixing it. Measured twice, runs 37011184757 and 37041324749: the
-          # drop never took effect. examples/*.nvgt kept adding the two helper
-          # headers back, so the sweep failed on them in both runs, and a red
-          # build whose cause is the runner's own file list is exactly what the
-          # removal was meant to end.
+          # This glob used to end in "midi.nvgt nvmidi_constants.nvgt", and
+          # examples/*.nvgt added examples/nvmidi_ui.nvgt and
+          # examples/nvmidi_ui_keys.nvgt on top of that. All four are headers
+          # without an entry point, so the sweep ran them as programs and
+          # failed on them with "No entry point found". That was read as an
+          # error about the code under test, and Removed 1 October dropped the
+          # file list instead of fixing it. Measured twice, runs 37011184757
+          # and 37041324749: with the list gone the sweep passed, because the
+          # runner's own file list had been the only failure in it.
           #
-          # The repair is to name the headers explicitly and compile them with
-          # --compile, which is the treatment scripts/get_nvmidi.nvgt already
-          # gets below: --compile builds the script and stops, so a header is
-          # asked to compile and never asked to be a program. A header with no
-          # entry point is then a clean pass, and one with a syntax error is a
-          # red build - which is the whole point of keeping it in the glob
-          # rather than deleting it from it.
+          # Naming them back is right, but not as programs. Compiling them is
+          # what is wanted, and that is done below by handing the engine a copy
+          # with an entry point appended, the same trick scripts/probe_seal.ngt
+          # uses in its own file. Why it is a copy and not `--compile` is in
+          # TECHNICAL.md under "No entry point found": the engine's --compile
+          # is a program mode, not a parse-only mode, and the entry-point check
+          # it runs is already enforced on the running path by ExecuteScript().
           for script in scripts/*.nvgt examples/*.nvgt tests/*.nvgt \
                         midi.nvgt nvmidi_constants.nvgt nvmidi_string.nvgt \
                         examples/nvmidi_ui.nvgt examples/nvmidi_ui_keys.nvgt; do
@@ -343,17 +341,18 @@ jobs:
               scripts/get_nvmidi.nvgt | midi.nvgt | nvmidi_constants.nvgt | \
               nvmidi_string.nvgt | examples/nvmidi_ui.nvgt | \
               examples/nvmidi_ui_keys.nvgt)
-                echo "::group::$script (compiled only: no entry point, so running it would test the runner's file list)"
+                echo "::group::$script (compiled only: the entry point is added to a copy, so this checks it parses and never runs a line)"
                 set +e
                 compile_log="logs/$(basename "$script").compile.log"
-                # --compile is `-c` in the engine's help: build the script and
-                # exit without running a line of it, so this cannot reach the
-                # network. Its exit code is not asserted, because the zero
-                # argument form of this script leaves console_mode true and
-                # every dialect of the engine has parsed that the same way.
-                # The log is what decides, by the same two patterns the run
-                # loop asserts on below.
-                timeout 120 "$nvgt" --compile "$script" > "$compile_log" 2>&1
+                # The one appended line is why this is a compile and not a
+                # run. The copy is not a program either: console_mode is left
+                # true and no reader is there, so had the engine got as far as
+                # executing it the run loop's reasoning would apply. It does
+                # not get that far - a syntax error stops it in the build.
+                scratch_script="logs/$(basename "$script").entrypoint.nvgt"
+                cat "$script" > "$scratch_script"
+                printf '\nvoid main() {}\n' >> "$scratch_script"
+                timeout 120 "$nvgt" "$scratch_script" > "$compile_log" 2>&1
                 set -e
                 cat "$compile_log"
                 if [ ! -s "$compile_log" ]; then
@@ -867,14 +866,17 @@ jobs:
           # "line: 3 ... Instead found reserved keyword 'in'" - the probe's
           # own variable names, not the plugin. A stub that fails for its own
           # reason measures nothing, so the names are keyboard/speaker now.
-          out=$(timeout 120 "$nvgt" --compile scripts/probe_seal.ngt 2>&1 || true)
+          out=$(timeout 120 "$nvgt" scripts/probe_seal.ngt 2>&1 || true)
           echo "$out"
           # A pass that ran without the plugin is not a pass. Measured on run
           # 36775536153: this job reported success while its own output held
           # "ERROR: failed to load plugin", because the step never failed on
-          # anything and the engine's --compile prints the error rather than
-          # returning non-zero for it. Both branches end in an error here, and
-          # an error in a job with no continue-on-error fails the job.
+          # anything and the engine prints a plugin-load error rather than
+          # returning non-zero for it - the same holds whether it was reached
+          # through --compile or by running the file, which is why the probe
+          # carries an entry point and is run. Both branches end in an error
+          # here, and an error in a job with no continue-on-error fails the
+          # job.
           if printf '%s' "$out" | grep -q 'failed to load plugin'; then
             echo "::error title=the plugin was not next to the engine::the hearing test compiled against an engine that could not load nvmidi, so a green here would have meant nothing"
             exit 1

@@ -105,8 +105,41 @@ engine was linked with an rpath for it, so a copy beside the engine binary is
 the placement that always works. Either way it is the engine's install
 directory, never the folder the script happens to sit in.
 
-`scripts/get_nvmidi.nvgt` does the download and installation for you: it
-fetches the newest release and installs it into `lib/` next to the running
+### No entry point found
+
+A plugin's header — this repository has six of them, `midi.nvgt` and
+`nvmidi_string.nvgt` among them — names the plugin's types and calls none of
+them into being. Compiling one on its own therefore proves something worth
+proving: that every name it mentions still exists in the engine's plugin
+surface. But the engine will not compile a file that has no `main()`:
+
+```
+No entry point found (either 'int main()' or 'void main()'.)
+```
+
+That message is not a complaint about the header, and it is not a missing
+feature to work around. In `src/nvgt_angelscript.cpp`, `CompileScript()` builds
+the module and then requires `int main()` or `void main()` before returning
+success, and `ExecuteScript()` repeats the same check before it runs anything
+(`ang.cpp:833-838` upstream) — the check belongs to running, and the copy in
+`CompileScript()` is what a *compile* inherits.
+
+`--compile` (`-c`) does not avoid it. That switch selects
+`CompileExecutable()`, which calls the same `CompileScript()`, so a header
+fails identically under `--compile` and under a plain run — measured, run
+37011531810, where five headers went red on `--compile` with the same message.
+`--compile` is a program mode: it builds a *program* with the script inside it.
+It is not parse-only.
+
+So a header is given an entry point when it is checked. `scripts/probe_seal.ngt`
+carries an empty `void main()` in its own file, with the reason written beside
+it. In CI the file stays untouched and a copy is made instead, with
+`void main() {}` appended — appended, never prepended, because `#include` has to
+stay the first line of the file — and the copy is what the engine is handed. It
+cannot drift from the real file, since the copy is made from it at the moment of
+the check.
+
+`scripts/get_nvmidi.nvgt` does the download and installation for you: itfetches the newest release and installs it into `lib/` next to the running
 NVGT. It streams the transfer into a file opened binary, so the library never
 passes through a text encoding, and it lands under a temporary name first — a
 connection that dies halfway cannot leave a truncated library for nvgt to load
