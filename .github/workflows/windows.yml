@@ -1735,6 +1735,35 @@ jobs:
           # Throwing rather than warning, because a case run against the wrong
           # library does not fail - it goes green and answers for a build that
           # was never the subject.
+          # What this step may and may not conclude from the bytes.
+          #
+          # It compares the staged library against the two literals, and the
+          # reading it first asserted - "carries the add-on call, so it is not
+          # the control" - was wrong, and wrong in a way that refused the very
+          # build it was written to certify. Measured, run 37046063937:
+          #
+          #   the library every case loads carries skip-flag=True addon-call=True
+          #
+          # both literals in a library built with -DNVGT_SKIP_ARRAY_ADDON, and
+          # that library is the control. `calling RegisterScriptArray` is an
+          # fprintf in the else arm of `if (engine_knows_arrays() &&
+          # array_is_usable())` (nvmidi.cpp:3328); the #ifdef does not guard
+          # that arm, it decides the predicate, so the string is a literal in
+          # every build that links this file and its presence says nothing
+          # about whether RegisterScriptArray is ever called. nvmidi.cpp's own
+          # comment on the pair already records the run that cost (36753050043,
+          # CALLING-MARKER with-addon=1 no-addon=1). A test that asserts what a
+          # file contains cannot see whether a branch is reached.
+          #
+          # So the counts are printed and not judged. The negative case is
+          # still fatal, because it is the one with no reading at all: a
+          # staged library carrying neither literal is a third build, and no
+          # case may be read against it.
+          #
+          # What does separate the two builds is a string in the then arm,
+          # "nvmidi: the engine already has array<T> that resolves", which the
+          # control cannot print because it returns before the detection runs.
+          # The array-check step above reads exactly that, per variant.
           $libPath = Join-Path $env:GITHUB_WORKSPACE 'nvmidi.dll'
           $e2eMark = 'NVGT_SKIP_ARRAY_ADDON is set'
           $addonMark = 'calling RegisterScriptArray'
@@ -1743,11 +1772,9 @@ jobs:
             $hasSkip = $libRaw.Contains($e2eMark)
             $hasAddon = $libRaw.Contains($addonMark)
             Write-Host "  the library every case loads carries skip-flag=$hasSkip addon-call=$hasAddon ($((Get-Item $libPath).Length) bytes)"
-            if ($hasAddon) {
-              throw 'the library staged as nvmidi.dll carries the array add-on call, so no case below can distinguish a healthy plugin from that call: every row would answer for the build this job cannot certify'
-            }
+            Write-Host "  (addon-call=True is expected in both builds - the literal is not guarded by the flag; skip-flag=True is what marks this as the e2e build)"
             if (-not $hasSkip) {
-              throw 'the library staged as nvmidi.dll carries neither the skip flag nor the add-on call, so it is a third build and no case below may be read against it'
+              throw 'the library staged as nvmidi.dll carries the skip flag and the add-on call both absent from its bytes, so it is not the e2e build this job staged and no case below may be read against it'
             }
           } else {
             throw 'no nvmidi.dll in the workspace root, so no case below can load the plugin it names'
