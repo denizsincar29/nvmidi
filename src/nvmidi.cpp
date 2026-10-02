@@ -518,6 +518,22 @@ midi_duration midi_duration_create_tempo(double amount, int unit, double tempo) 
 // The constructors, wrapping a placement new on the memory Angelscript hands
 // over. asCALL_CDECL_OBJLAST passes that pointer as the last argument, which
 // is why the signature has one parameter more than the script-visible one.
+//
+// A note on the calling convention of the global functions below and of every
+// other RegisterGlobalFunction in this file: they use asCALL_STDCALL, not
+// asCALL_CDECL. It looks backwards, and it is the only thing that works.
+// asFunctionPtr(T func) (angelscript.h) reinterpret_casts the function pointer
+// into an asFUNCTION_t and stores nothing about how that function wants to be
+// called - asCALL_CDECL does not mean "call it directly", it means "this is the
+// address of a (JITFUNC) thunk". The engine therefore calls func-4, reads the
+// JITFUNC entry it finds there, and jumps to whatever came back; on Windows the
+// read succeeded and the jump landed outside the image, so the process died of
+// an NX fault with the ExceptionAddress inside the plugin. asCALL_STDCALL is
+// the value that tells the engine the address can be called as it stands. This
+// was measured, not reasoned: a control function registered with asCALL_CDECL
+// reported the first statement of its own declaration instead of its body.
+// RegisterObjectMethod and the asCALL_CDECL_OBJLAST behaviours above are not
+// affected - for those the engine builds the trampoline itself.
 void midi_duration_default_construct(midi_duration* self) {
 	new (self) midi_duration();
 }
@@ -2826,9 +2842,9 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectMethod("midi_duration", "midi_duration& opAssign(const midi_duration&in other)", asMETHODPR(midi_duration, opAssign, (const midi_duration&), midi_duration&), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_duration", "midi_duration& opAssign(double amount)", asMETHODPR(midi_duration, opAssign, (double), midi_duration&), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	// By value, not midi_duration@ - see the comment above the type.
-	reg->check( engine->RegisterGlobalFunction("midi_duration midi_duration_create()", asFUNCTION(midi_duration_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("midi_duration midi_duration_create(double amount, int unit)", asFUNCTION(midi_duration_create_full), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("midi_duration midi_duration_create(double amount, int unit, double tempo)", asFUNCTION(midi_duration_create_tempo), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_duration midi_duration_create()", asFUNCTION(midi_duration_create), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_duration midi_duration_create(double amount, int unit)", asFUNCTION(midi_duration_create_full), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_duration midi_duration_create(double amount, int unit, double tempo)", asFUNCTION(midi_duration_create_tempo), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
 
 	// A handle type: a script writes note@ n = midi_note_create(60, 100); and the
 	// handle points at the object rather than copying it, which is what makes
@@ -2862,20 +2878,20 @@ void register_midi_note(asIScriptEngine* engine, registration* reg) {
 	// name was simply never created. Measured on Дениз's windows build
 	// (play_chord.nvgt, 28.09). The factories therefore live under nvmidi_'s
 	// own prefix, which nothing in the engine owns.
-	reg->check( engine->RegisterGlobalFunction("midi_note@ nvmidi_note_create()", asFUNCTION(midi_note_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("midi_note@ nvmidi_note_create(int pitch)", asFUNCTIONPR(midi_note_create_pitch, (int), midi_note*), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("midi_note@ nvmidi_note_create(int pitch, int velocity)", asFUNCTIONPR(midi_note_create_velocity, (int, int), midi_note*), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("midi_note@ nvmidi_note_create(int pitch, int velocity, int channel)", asFUNCTION(midi_note_create_full), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("midi_note@ nvmidi_note_create_ms(int pitch, int velocity, double duration_ms)", asFUNCTION(midi_note_create_ms), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("int midi_note_number(const string&in name)", asFUNCTION(midi_note_number), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("int midi_note_name_byte_count(int pitch)", asFUNCTION(midi_note_pitch_name_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("int midi_note_name_byte(int pitch, uint index)", asFUNCTION(midi_note_pitch_name_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_note@ nvmidi_note_create()", asFUNCTION(midi_note_create), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_note@ nvmidi_note_create(int pitch)", asFUNCTIONPR(midi_note_create_pitch, (int), midi_note*), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_note@ nvmidi_note_create(int pitch, int velocity)", asFUNCTIONPR(midi_note_create_velocity, (int, int), midi_note*), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_note@ nvmidi_note_create(int pitch, int velocity, int channel)", asFUNCTION(midi_note_create_full), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_note@ nvmidi_note_create_ms(int pitch, int velocity, double duration_ms)", asFUNCTION(midi_note_create_ms), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_note_number(const string&in name)", asFUNCTION(midi_note_number), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_note_name_byte_count(int pitch)", asFUNCTION(midi_note_pitch_name_byte_count), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_note_name_byte(int pitch, uint index)", asFUNCTION(midi_note_pitch_name_byte), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
 	// doc/API.md has called these midi_note_pitch_name_byte_count/_byte since
 	// before either name existed. The example suite asked for the documented
 	// name on 2026-10-01 and got "No matching symbol". The short name stays, so
 	// nothing that already found it breaks.
-	reg->check( engine->RegisterGlobalFunction("int midi_note_pitch_name_byte_count(int pitch)", asFUNCTION(midi_note_pitch_name_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("int midi_note_pitch_name_byte(int pitch, uint index)", asFUNCTION(midi_note_pitch_name_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_note_pitch_name_byte_count(int pitch)", asFUNCTION(midi_note_pitch_name_byte_count), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_note_pitch_name_byte(int pitch, uint index)", asFUNCTION(midi_note_pitch_name_byte), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
 
 	// Unit constants, so a script never has to remember 0..3.
 	reg->check( engine->RegisterGlobalProperty("const int MIDI_MS", (void*)&g_unit_ms), "RegisterGlobalProperty", __LINE__);
@@ -2917,9 +2933,9 @@ void register_midi_config(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectMethod("midi_config", "int describe_byte(uint index) const", asMETHOD(midi_config, describe_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_config", "int get_path_byte_count() const", asMETHOD(midi_config, get_path_byte_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_config", "int get_path_byte(uint index) const", asMETHOD(midi_config, get_path_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("midi_config@ midi_config_create()", asFUNCTION(midi_config_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("int midi_find_input_port(const string&in substring)", asFUNCTION(midi_find_input_port), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("int midi_find_output_port(const string&in substring)", asFUNCTION(midi_find_output_port), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_config@ midi_config_create()", asFUNCTION(midi_config_create), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_find_input_port(const string&in substring)", asFUNCTION(midi_find_input_port), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_find_output_port(const string&in substring)", asFUNCTION(midi_find_output_port), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
 }
 
 // The two globals a script actually holds.
@@ -2965,8 +2981,8 @@ static midi_output* g_script_output = midi_output_create();
 
 void register_midi_globals(asIScriptEngine* engine, registration* reg) {
 	NVMIDI_CRUMB("enter register_midi_globals");
-	reg->check( engine->RegisterGlobalFunction("uint midi_input_port_count()", asFUNCTION(midi_input_port_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("uint midi_output_port_count()", asFUNCTION(midi_output_port_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("uint midi_input_port_count()", asFUNCTION(midi_input_port_count), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("uint midi_output_port_count()", asFUNCTION(midi_output_port_count), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
 	// Why every string-returning function in this plugin hands the script
 	// garbage, measured on the windows runner rather than reasoned about.
 	//
@@ -3014,8 +3030,8 @@ void register_midi_globals(asIScriptEngine* engine, registration* reg) {
 	// definition above for what the const char* attempt measured before this
 	// replaced it: the return type was not the fault, so no spelling of a
 	// string return is registered here any more.
-	reg->check( engine->RegisterGlobalFunction("int midi_output_port_name_byte_count(uint port)", asFUNCTION(midi_output_port_name_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("int midi_output_port_name_byte(uint port, uint index)", asFUNCTION(midi_output_port_name_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_output_port_name_byte_count(uint port)", asFUNCTION(midi_output_port_name_byte_count), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_output_port_name_byte(uint port, uint index)", asFUNCTION(midi_output_port_name_byte), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
 	// Every string this plugin hands out, exposed the same way: a length and an
 	// indexed byte, so a string never crosses this boundary at all. This is the
 	// only place any of them is registered - the object methods above were
@@ -3029,24 +3045,24 @@ void register_midi_globals(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectMethod("midi_duration", "int to_string_byte(uint index) const", asMETHOD(midi_duration, to_string_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_note", "int to_string_byte_count() const", asMETHOD(midi_note, to_string_byte_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_note", "int to_string_byte(uint index) const", asMETHOD(midi_note, to_string_byte), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("int midi_input_port_name_byte_count(uint port)", asFUNCTION(midi_input_port_name_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("int midi_input_port_name_byte(uint port, uint index)", asFUNCTION(midi_input_port_name_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("int midi_api_name_byte_count()", asFUNCTION(midi_api_name_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("int midi_api_name_byte(uint index)", asFUNCTION(midi_api_name_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("int midi_message_name_byte_count(const midi_message&in m)", asFUNCTION(midi_message_name_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("int midi_message_name_byte(const midi_message&in m, uint index)", asFUNCTION(midi_message_name_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("int midi_last_error_byte_count()", asFUNCTION(midi_last_error_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("int midi_last_error_byte(uint index)", asFUNCTION(midi_last_error_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("int midi_first_error_byte_count()", asFUNCTION(midi_first_error_byte_count), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("int midi_first_error_byte(uint index)", asFUNCTION(midi_first_error_byte), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_input_port_name_byte_count(uint port)", asFUNCTION(midi_input_port_name_byte_count), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_input_port_name_byte(uint port, uint index)", asFUNCTION(midi_input_port_name_byte), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_api_name_byte_count()", asFUNCTION(midi_api_name_byte_count), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_api_name_byte(uint index)", asFUNCTION(midi_api_name_byte), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_message_name_byte_count(const midi_message&in m)", asFUNCTION(midi_message_name_byte_count), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_message_name_byte(const midi_message&in m, uint index)", asFUNCTION(midi_message_name_byte), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_last_error_byte_count()", asFUNCTION(midi_last_error_byte_count), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_last_error_byte(uint index)", asFUNCTION(midi_last_error_byte), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_first_error_byte_count()", asFUNCTION(midi_first_error_byte_count), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_first_error_byte(uint index)", asFUNCTION(midi_first_error_byte), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
 	NVMIDI_CRUMB("before the global properties");
 	reg->check( engine->RegisterGlobalProperty("midi_input midi_in",  g_script_input),  "RegisterGlobalProperty", __LINE__);
 	reg->check( engine->RegisterGlobalProperty("midi_output midi_out", g_script_output), "RegisterGlobalProperty", __LINE__);
 	NVMIDI_CRUMB("before the two create functions");
-	reg->check( engine->RegisterGlobalFunction("midi_input@ midi_input_create()", asFUNCTION(midi_input_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
-	reg->check( engine->RegisterGlobalFunction("midi_output@ midi_output_create()", asFUNCTION(midi_output_create), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_input@ midi_input_create()", asFUNCTION(midi_input_create), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("midi_output@ midi_output_create()", asFUNCTION(midi_output_create), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
 	NVMIDI_CRUMB("before midi_engine_probe");
-	reg->check( engine->RegisterGlobalFunction("int midi_engine_probe()", asFUNCTION(midi_engine_probe), asCALL_CDECL), "RegisterGlobalFunction", __LINE__);
+	reg->check( engine->RegisterGlobalFunction("int midi_engine_probe()", asFUNCTION(midi_engine_probe), asCALL_STDCALL), "RegisterGlobalFunction", __LINE__);
 	NVMIDI_CRUMB("end of register_midi_globals");
 }
 
