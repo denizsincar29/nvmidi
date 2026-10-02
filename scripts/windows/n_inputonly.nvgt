@@ -1,6 +1,12 @@
 // probe: n_inputonly
 
 // Each name alone, so a refusal names one word and not a list.
+// No #pragma plugin, deliberately: this file asks what a bare type name means
+// in a script that never loads this plugin. Measured on run 37019636973: a
+// script WITHOUT the pragma cannot name the type at all - "Identifier
+// 'midi_note' is not a data type" - where the pragma-carrying n_handle2.nvgt
+// declares the very same thing and prints HANDLE2_END. The refusal belongs to
+// the missing pragma, so this file is not a measurement of the type.
 void main() {
 
 	midi_input@ in_port = null;
