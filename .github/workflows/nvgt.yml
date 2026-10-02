@@ -306,12 +306,24 @@ jobs:
           # second list added examples/nvmidi_ui.nvgt and
           # examples/nvmidi_ui_keys.nvgt through examples/*.nvgt. All four are
           # headers without an entry point, so the sweep failed on them with
-          # "No entry point found" - an error about the runner's own file list
-          # that reads like an error in the code under test. Removed 1 October.
-          # All of them are still compiled, and exercised for real, through
-          # midi.nvgt by the load check above and by every example and test
-          # below, which is where a header is supposed to be checked.
-          for script in scripts/*.nvgt examples/*.nvgt tests/*.nvgt; do
+          # "No entry point found". That was read as an error about the code
+          # under test, and Removed 1 October dropped the file list instead of
+          # fixing it. Measured twice, runs 37011184757 and 37041324749: the
+          # drop never took effect. examples/*.nvgt kept adding the two helper
+          # headers back, so the sweep failed on them in both runs, and a red
+          # build whose cause is the runner's own file list is exactly what the
+          # removal was meant to end.
+          #
+          # The repair is to name the headers explicitly and compile them with
+          # --compile, which is the treatment scripts/get_nvmidi.nvgt already
+          # gets below: --compile builds the script and stops, so a header is
+          # asked to compile and never asked to be a program. A header with no
+          # entry point is then a clean pass, and one with a syntax error is a
+          # red build - which is the whole point of keeping it in the glob
+          # rather than deleting it from it.
+          for script in scripts/*.nvgt examples/*.nvgt tests/*.nvgt \
+                        midi.nvgt nvmidi_constants.nvgt nvmidi_string.nvgt \
+                        examples/nvmidi_ui.nvgt examples/nvmidi_ui_keys.nvgt; do
             [ -e "$script" ] || continue
             # get_nvmidi.nvgt is not a test, it is the downloader: running it
             # downloads the published release over the library this job just
@@ -328,8 +340,10 @@ jobs:
             # check in this repository - a script nobody compiles is a script
             # whose first compile is in a user's hands.
             case "$script" in
-              scripts/get_nvmidi.nvgt)
-                echo "::group::$script (compiled only: it is the downloader, not a program under test)"
+              scripts/get_nvmidi.nvgt | midi.nvgt | nvmidi_constants.nvgt | \
+              nvmidi_string.nvgt | examples/nvmidi_ui.nvgt | \
+              examples/nvmidi_ui_keys.nvgt)
+                echo "::group::$script (compiled only: no entry point, so running it would test the runner's file list)"
                 set +e
                 compile_log="logs/$(basename "$script").compile.log"
                 # --compile is `-c` in the engine's help: build the script and
