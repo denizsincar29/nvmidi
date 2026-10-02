@@ -22,7 +22,10 @@ INCLUDES  = -Isrc -Ithird_party/rtmidi -Ithird_party/angelscript
 # into it (Create, GetSize, At, SetValue) to read the arrays a script hands
 # over, so its symbols have to be linked into the plugin rather than
 # resolved against the host, which exports no such thing.
-SOURCES   = src/nvmidi.cpp third_party/rtmidi/RtMidi.cpp \
+# nvgt_shims.cpp is the MSVC-only link shim for the as* names (it compiles to
+# nothing elsewhere, see its header); it is listed here so both compilers see
+# the same set of translation units.
+SOURCES   = src/nvmidi.cpp src/nvgt_shims.cpp third_party/rtmidi/RtMidi.cpp \
             third_party/angelscript/scriptarray.cpp
 
 # The default name. A variable and not a literal, because the no-addon target

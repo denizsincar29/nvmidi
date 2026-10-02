@@ -36,9 +36,11 @@ name: build
 #
 # "3P6A" in the mangled name is a pointer to a function, so the symbol MSVC
 # wanted was the variable. scripts/build_win_msvc.bat supplies it with one
-# `/alternatename:` alias per name, written into a generated header and forced
-# in with /FI - no engine binary, no dumpbin, no .def, and the list sits in the
-# same file as the compile line it belongs to.
+# `/alternatename:` switch per name, and src/nvgt_shims.cpp gives each name a
+# real extern "C" function to point at - no engine binary, no dumpbin, no .def.
+# A generated header of `#pragma comment(linker, "/alternatename:...")` lines
+# was tried first and the pragma never reached the linker (run 37010648892), so
+# the switch is on the command line where the job log shows it verbatim.
 #
 # The dll links against winmm, ole32, setupapi and ksuser - the platform
 # libraries RtMidi actually calls - plus those aliases, and nothing else from

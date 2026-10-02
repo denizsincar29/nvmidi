@@ -42,14 +42,11 @@ rem symbol is the variable. The eight that fail are exactly the pointer names
 rem from the header's list, and the call sites are in Angelscript, not in
 rem nvmidi.cpp.
 rem
-rem The fix is one line per name, below: an alias declaration in an inline
-rem function that is never called. It is well formed whether or not the name
-rem was already declared - "typedef int T; void f(){ typedef int T; }" compiles
-rem - so it needs no conditional, and it only makes the variable callable when
-rem there is nothing else, which is never inside the engine, where the header
-rem is compiled the other way and the real functions are switched on at
-rem nvgt_plugin.h:98. Two separate declarations in one translation unit are
-rem allowed as long as they agree, and these do.
+rem The fix is src/nvgt_shims.cpp plus one /ALTERNATENAME per name, below. The
+rem shim gives the linker a real function to resolve each name to, with C
+rem linkage so the symbol needs no mangling; the alias binds the undefined
+rem plain name to it. The header's pointer variables stay the single source of
+rem the actual engine address, and prepare_plugin() fills them as before.
 setlocal
 set HERE=%~dp0
 pushd "%HERE%.."
@@ -68,71 +65,21 @@ if not defined VSDIR (
 )
 call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" >nul || exit /b 2
 
-rem One linker alias per as* name, used by the build below and by nothing else.
+rem The alias list, handed to the linker directly rather than through a
+rem generated header. An earlier attempt wrote the same aliases as
+rem "#pragma comment(linker, ...)" lines into a file and force-included it; the
+rem link still failed with the same eight unresolved names on run 37010648892,
+rem so the pragma never reached the linker. A switch on the command line cannot
+rem be lost that way, and the job log shows it verbatim.
 rem
-rem Written with rem rather than with a bare echo: cmd ends the comment at
-rem the word, so "rem" followed directly by a "#" is a comment in every other
-rem interpreter and a live redirect here. The first version nested the echo in
-rem parentheses and cmd answered ") was unexpected at this time." at that line
-rem on the runner, exit 255, before the compiler ran - run 36909839651. Every
-rem line below is inert text, so no line in this block can fail that way; the
-rem first ">" creates the file, the rest append.
-rem Write the alias header. Every line is an "if exist" guard
-rem around a redirect, rather than the "rem ... >" form the block above
-rem used to be: cmd ends a rem at the word, but it also did not perform
-rem the redirection there - measured four runs on the runner, including
-rem after the target was quoted - and a form that is supposed to work and
-rem does not is worse than one whose rule is written down. The guard says
-rem which of the file's own two steps failed, and the mkdir below means
-rem this cannot be a missing-directory error.
-if not exist "build-msvc" mkdir "build-msvc"
-if not exist "build-msvc" (
-	echo could not create the build directory
-	exit /b 2
-)
+rem The direction matters and was written backwards at first. The symbol that is
+rem undefined in this link is the plain function name (angelscript.h:590
+rem declares asAllocMem with no definition here); the symbol that is defined is
+rem the extern "C" forwarder in src/nvgt_shims.cpp, whose symbol is its own
+rem name. So "the undefined asAllocMem is, for this link, asAllocMem_shim".
+set ALIASES=/ALTERNATENAME:asAllocMem=asAllocMem_shim /ALTERNATENAME:asFreeMem=asFreeMem_shim /ALTERNATENAME:asGetLibraryOptions=asGetLibraryOptions_shim /ALTERNATENAME:asGetActiveContext=asGetActiveContext_shim /ALTERNATENAME:asAcquireExclusiveLock=asAcquireExclusiveLock_shim /ALTERNATENAME:asReleaseExclusiveLock=asReleaseExclusiveLock_shim /ALTERNATENAME:asAcquireSharedLock=asAcquireSharedLock_shim /ALTERNATENAME:asReleaseSharedLock=asReleaseSharedLock_shim /ALTERNATENAME:asAtomicInc=asAtomicInc_shim /ALTERNATENAME:asAtomicDec=asAtomicDec_shim /ALTERNATENAME:asThreadCleanup=asThreadCleanup_shim /ALTERNATENAME:asGetLibraryVersion=asGetLibraryVersion_shim /ALTERNATENAME:asPrepareMultithread=asPrepareMultithread_shim
 
-echo #pragma comment(linker, "/alternatename:__imp_asAllocMem=asAllocMem") > "build-msvc\nvgt_import.inc"
-if not exist "build-msvc\nvgt_import.inc" (
-	echo writing the alias header failed
-	exit /b 2
-)
-echo #pragma comment(linker, "/alternatename:__imp_asFreeMem=asFreeMem") >> "build-msvc\nvgt_import.inc"
-echo #pragma comment(linker, "/alternatename:__imp_asGetLibraryOptions=asGetLibraryOptions") >> "build-msvc\nvgt_import.inc"
-echo #pragma comment(linker, "/alternatename:__imp_asGetActiveContext=asGetActiveContext") >> "build-msvc\nvgt_import.inc"
-echo #pragma comment(linker, "/alternatename:__imp_asAcquireExclusiveLock=asAcquireExclusiveLock") >> "build-msvc\nvgt_import.inc"
-echo #pragma comment(linker, "/alternatename:__imp_asReleaseExclusiveLock=asReleaseExclusiveLock") >> "build-msvc\nvgt_import.inc"
-echo #pragma comment(linker, "/alternatename:__imp_asAcquireSharedLock=asAcquireSharedLock") >> "build-msvc\nvgt_import.inc"
-echo #pragma comment(linker, "/alternatename:__imp_asReleaseSharedLock=asReleaseSharedLock") >> "build-msvc\nvgt_import.inc"
-echo #pragma comment(linker, "/alternatename:__imp_asAtomicInc=asAtomicInc") >> "build-msvc\nvgt_import.inc"
-echo #pragma comment(linker, "/alternatename:__imp_asAtomicDec=asAtomicDec") >> "build-msvc\nvgt_import.inc"
-echo #pragma comment(linker, "/alternatename:__imp_asThreadCleanup=asThreadCleanup") >> "build-msvc\nvgt_import.inc"
-echo #pragma comment(linker, "/alternatename:__imp_asGetLibraryVersion=asGetLibraryVersion") >> "build-msvc\nvgt_import.inc"
-echo #pragma comment(linker, "/alternatename:__imp_asPrepareMultithread=asPrepareMultithread") >> "build-msvc\nvgt_import.inc"
-
-if not exist build-msvc\nvgt_import.inc (
-	echo the alias header was not written
-	type nul
-	exit /b 2
-)
-echo the alias header is in place
-
-rem The compile itself. Everything above wrote one file and did nothing else;
-rem this is the line the file exists for. It was lost once already: the block
-rem above was rewritten in 7e266e5 and the replacement stopped at the last
-rem alias line, so the batch ran, wrote its header, reported success and never
-rem invoked a compiler - the job's own step log was empty between "Run
-rem scripts\build_win_msvc.bat" and the next step, and the dll was simply
-rem absent afterwards. A batch file that silently does nothing looks exactly
-rem like one that worked, so the echo at the end matters as much as the line:
-rem it is the only thing in this file that says the compile was reached.
-rem
-rem /FI force-includes the generated alias header into each of the three
-rem translation units, which is the whole point of writing it - see the block
-rem above for why each name needs an alias.
-
-echo about to compile, the header is %CD%\build-msvc\nvgt_import.inc
-dir /b build-msvc 2>&1
-cl /nologo /std:c++17 /O2 /EHsc /MD /LD /D__WINDOWS_MM__ /D_CRT_SECURE_NO_WARNINGS /Isrc /Ithird_party\rtmidi /Ithird_party\angelscript /Fo:build-msvc\ /FI%CD%\build-msvc\nvgt_import.inc src\nvmidi.cpp third_party\rtmidi\RtMidi.cpp third_party\angelscript\scriptarray.cpp /Fe:nvmidi.dll /link winmm.lib ole32.lib setupapi.lib ksuser.lib
+cl /nologo /std:c++17 /O2 /EHsc /MD /LD /D__WINDOWS_MM__ /D_CRT_SECURE_NO_WARNINGS /Isrc /Ithird_party\rtmidi /Ithird_party\angelscript /Fo:build-msvc\ src\nvmidi.cpp src\nvgt_shims.cpp third_party\rtmidi\RtMidi.cpp third_party\angelscript\scriptarray.cpp /Fe:nvmidi.dll /link winmm.lib ole32.lib setupapi.lib ksuser.lib %ALIASES%
 if errorlevel 1 exit /b 2
 
 echo built nvmidi.dll with MSVC
