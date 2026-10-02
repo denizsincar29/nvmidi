@@ -2654,12 +2654,15 @@ jobs:
             # plugin's types. They are what other scripts #include, so they
             # are compiled through those and not on their own. Measured, run
             # 37048963235: compiled alone each answers "No entry point found
-            # (either 'int main()' or 'void main()')", and nvmidi_string.nvgt
-            # goes further - with the plugin not loaded its own signatures
-            # have no types, and that engine dies mid compile with exit
-            # -1073741819 / 0xC0000005. The reference is by name, not by
-            # folder: what these three lack is a main(), and that is a fact
-            # about the file, not about where it sits.
+            # (either 'int main()' or 'void main()')". nvmidi_string.nvgt
+            # gets further before stopping and prints no engine line at all -
+            # the log for it holds no ERROR: line and no nvmidi: marker,
+            # while the twenty-five scripts before it each printed theirs.
+            # That one reading says the file must not be compiled alone; it
+            # does not say why the engine stopped, and nothing has measured
+            # that, so this comment does not claim it. The reference is by
+            # name, not by folder: what these three lack is a main(), and
+            # that is a fact about the file, not about where it sits.
             #
             # scripts/get_nvmidi.nvgt is the downloader: it fetches the
             # published release and would drop it over the dll this job just
