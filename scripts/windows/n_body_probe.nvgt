@@ -23,5 +23,11 @@
 #pragma plugin nvmidi
 
 void main() {
-	return;
+	print("BODY_PROBE_IN");
+	// The marker's placement is the measurement. It has to be OUTSIDE the
+	// live-in set of the only value the body mentions, or the compiler
+	// forwards it into the return slot and never returns here at all -
+	// measured on 3cfad75: the body was `return;` alone and the script
+	// exited 0 with 0 bytes of stdout.
+	print("BODY_PROBE_OUT");
 }
