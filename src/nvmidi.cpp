@@ -266,6 +266,36 @@ std::recursive_mutex g_rtmidi_mutex;
 RtMidiIn* g_enum_in = nullptr;
 RtMidiOut* g_enum_out = nullptr;
 
+// Everything this module has handed out that must be called back before the
+// module itself goes away.
+//
+// The engine unloads this library when the process tears down, and anything
+// still holding a pointer into the image is then pointing into freed pages -
+// see the note on enum_port below for the crash that taught this. The list is
+// fixed-size and built on the stack of a global constructor, so registering
+// costs no allocation and nothing here can itself run after teardown.
+typedef void (*retract_fn)();
+static retract_fn g_retract[8];
+static unsigned g_retract_count = 0;
+
+void register_for_retraction(retract_fn fn) {
+	if (g_retract_count < sizeof(g_retract) / sizeof(g_retract[0])) {
+		g_retract[g_retract_count++] = fn;
+	}
+}
+
+// The retraction entry for the singleton slot, templated so the list can hold
+// the two RtMidi types without a cast and without a second list.
+template <class Port> void retract_enum_slot();
+template <> inline void retract_enum_slot<RtMidiIn>() {
+	delete g_enum_in;
+	g_enum_in = nullptr;
+}
+template <> inline void retract_enum_slot<RtMidiOut>() {
+	delete g_enum_out;
+	g_enum_out = nullptr;
+}
+
 
 // Run one RtMidi object through its whole life with nothing else able to touch
 // RtMidi at the same time.
@@ -323,12 +353,44 @@ template <> inline RtMidiOut*& enum_slot<RtMidiOut>() { return g_enum_out; }
 // and deliberately left alive, because building it is exactly the step that can
 // fault on Windows (MidiOutWinMM's constructor calls midiOutGetNumDevs), and
 // paying that once per process is the point.
+//
+// The lifetime is now the run, not the process, and it is retracted on report.
+// A kept object is a kept vtable, and the vtable of an RtMidiOut lives in this
+// module's image: midi_output_port_count() reaches getPortCount() through it,
+// and the cdb stack of run 37022466097 shows the same dispatch one frame down
+// (symbolicated only as nvmidi!midi_output_port_count+0xc2 over
+// nvmidi!midi_export_backend_byte+offsets; the named frame is inferred from the
+// source lines, not read off the symbols). Once the engine unloads this library that image is
+// unmapped, the object outlives it, and the next virtual call jumps into a
+// released page - "Attempt to execute non-executable address",
+// <Unloaded_nvmidi.dll>+0x15e6, with midi_output_port_count+0xc2 under it. The
+// measured proof that the object is the cause and winmm is not: the probe that
+// died had counted ports and opened nothing, so no MidiOutWinMM had been built.
+//
+// So the objects are handed back through the plugin's report hook, where the
+// engine is still holding this module. The destruction is safe for the same
+// reason it always was - it runs inside the lock, and the collector it queues
+// for the next caller is the one this object would otherwise have queued
+// itself.
 template <class Port, class Body>
 auto enum_port(Body body) -> decltype(body(std::declval<Port&>())) {
 	const std::lock_guard<std::recursive_mutex> lock(g_rtmidi_mutex);
 	Port*& slot = enum_slot<Port>();
-	if (!slot) slot = new Port(g_preferred_api, "nvmidi");
+	if (!slot) {
+		slot = new Port(g_preferred_api, "nvmidi");
+		// Registered the moment the object exists, so there is no call between
+		// its construction and its name being on the retract list.
+		register_for_retraction(&retract_enum_slot<Port>);
+	}
 	return body(*slot);
+}
+
+// Releases both enumeration objects. Called while the engine is still holding
+// this module; see the note above for why that timing is the whole point.
+void retract_enum_objects() {
+	const std::lock_guard<std::recursive_mutex> lock(g_rtmidi_mutex);
+	for (unsigned i = 0; i < g_retract_count; ++i) g_retract[i]();
+	g_retract_count = 0;
 }
 
 // And the first one of the run. Kept separately because g_last_error is
@@ -3524,5 +3586,19 @@ plugin_main(nvgt_plugin_shared* shared) {
 	fflush(stderr);
 	// Kept so the playing code can call back into the script, see wait_until().
 	g_engine = shared->script_engine;
+	// The module's own teardown, registered while the engine is still holding
+	// the module - which is exactly why it is registered here and not relied on
+	// to happen at the end of the script.
+	//
+	// The engine's plugin contract (nvgt_plugin.h) offers no "about to unload"
+	// callback: a plugin is an entry point and a version, nothing else, and the
+	// engine's loader exports neither an unload symbol nor a plugin hook - read
+	// out of the engine binary itself, not assumed. So the last moment the
+	// module is promised to still be loaded is the moment its entry point runs,
+	// and the retraction is armed here. atexit runs its list at process exit,
+	// which is after the script engine has finished with the module and before
+	// the loader unmaps the image, so freeing the enumeration objects there
+	// costs nothing and removes the dangling vtable the fault was made of.
+	atexit(&retract_enum_objects);
 	return true;
 }

@@ -4,12 +4,14 @@
 // counted ports, called midi_output_port_count() FIRST and midi_output_port_name()
 // through it, and died with stdout empty - ENUM_BEGIN itself never reached the
 // file - so no MidiOutWinMM was ever constructed and winmm was never introduced.
-// The frame below the fault reads getPortName<MidiOutWinMM> calling
-// MidiOutWinMM::getPortName through a vtable, which is (a) stated exactly: a
-// virtual dispatch into an image Windows has already unmapped. Open the port
-// and the same vtable goes on to MidiOutWinMM::openPort and its output thread,
-// which is why the e2e script adds nothing to the failure and only runs longer
-// before it.
+// The tower below the fault is a virtual dispatch into an image Windows has
+// already unmapped, which is (a) stated exactly. What cdb actually printed is
+// only offsets - nvmidi!midi_output_port_count+0xc2 over
+// nvmidi!midi_export_backend_byte+0x11bec / +0x11aa3 / +0x118df - so the named
+// frame (getPortName, and MidiOutWinMM::openPort after it) is inferred from
+// which source lines those are, not symbolicated. Open the port and the same
+// vtable goes on to the backend's open path and its output thread, which is why
+// the e2e script adds nothing to the failure and only runs longer before it.
 //
 // The crash is now an address, not a suspicion:
 //
