@@ -2683,6 +2683,19 @@ jobs:
             Write-Host "::group::$($s.FullName)"
             & $exe $s.FullName *>&1 | Tee-Object -FilePath $log
             $ran++
+            # $LASTEXITCODE right here, before anything else runs: it is the
+            # only place the engine's own verdict is visible. The engine prints
+            # ERROR: for a refusal and exits 0 for a clean compile, but a
+            # script whose plugin path faults exits 0xC0000005 with no ERROR:
+            # line at all - measured, run 37050976663: winmm_enum_probe.nvgt
+            # died at 0xC0000005 with 0 bytes of stdout, and the Select-String
+            # below found nothing, so this loop counted it as compiled and the
+            # step failed on the throw at the bottom with no file named.
+            $code = $LASTEXITCODE
+            if ($code -ne 0) {
+              Write-Host "::error file=$($s.FullName)::$($s.Name) exited $code - it did not compile"
+              $bad = $true
+            }
             $hits = Select-String -Path $log -Pattern 'ERROR:|Unexpected token|No matching signature|Compilation error' -ErrorAction SilentlyContinue
             foreach ($h in $hits) {
               Write-Host "::error file=$($s.FullName),line=$($h.LineNumber)::$($h.Line.Trim())"

@@ -370,16 +370,30 @@ template <> inline RtMidiOut*& enum_slot<RtMidiOut>() { return g_enum_out; }
 // paying that once per process is the point.
 //
 // The lifetime is now the registration, not the process, and the retraction is
-// the last thing register_nvmidi does. A kept object is a kept vtable, and the
-// vtable of an RtMidiOut lives in this module's image: midi_output_port_count()
-// reaches getPortCount() through it,
-// and the cdb stack of run 37022466097 shows the same dispatch one frame down
-// (symbolicated only as nvmidi!midi_output_port_count+0xc2 over
-// nvmidi!midi_export_backend_byte+offsets; the named frame is inferred from the
-// source lines, not read off the symbols). Once the engine unloads this library that image is
-// unmapped, the object outlives it, and the next virtual call jumps into a
-// released page - "Attempt to execute non-executable address",
-// <Unloaded_nvmidi.dll>+0x15e6, with midi_output_port_count+0xc2 under it.
+// the last thing register_nvmidi does. The reason the objects are handed back
+// rather than kept is that a kept vtable would outlive the image it points
+// into, and nothing in this repository can rule that out at run time.
+//
+// What the comment here used to claim, and does not: that run 37022466097 had
+// *shown* that dispatch - "the cdb stack ... shows the same dispatch one frame
+// down", "Attempt to execute non-executable address", <Unloaded_nvmidi.dll>,
+// midi_output_port_count+0xc2 under it. Run 37050976663 measures what those
+// symbols are. cdb printed the faulting frame as <Unloaded_nvmidi.dll>+0x1601,
+// and the address it names - 0x1d9f4755f40 - is outside every module the trace
+// loaded: the only image in the 0x1d9 range is RPCRT4 at 0x1d9f22b0000. So the
+// fault is an execute at an address that belongs to no loaded image, and the
+// nvmidi! frames printed beneath it (midi_export_backend_byte+0x11acf,
+// midi_output_port_count+0xc2) are cdb resolving an unloaded image, which is
+// what the header of scripts/windows/winmm_enum_probe.nvgt already retracts.
+// They are not a call stack, and a dispatch through a kept vtable is one of the
+// things they do not establish.
+//
+// What the same run does show: the plugin is loaded (ModLoad nvmidi.dll under
+// the engine's own directory), and the throw is on the enumeration path inside
+// winmm - midiOutGetNumDevs under midi_output_port_count. Which of the two -
+// a kept vtable, or the address a winmm enumeration hands back - is not
+// measured. The objects are handed back because a kept vtable outliving the
+// image cannot be ruled out, not because it was observed.
 //
 // What this paragraph used to claim, and does not: that the proof the object
 // was the cause was a probe that had "counted ports and opened nothing, so no
