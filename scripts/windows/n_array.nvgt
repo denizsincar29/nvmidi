@@ -35,8 +35,8 @@ void main() {
 	midi_duration u;
 	midi_note@ n = null;
 	midi_config@ c = null;
-	midi_input@ in = null;
-	midi_output@ out = null;
+	midi_input@ in_port = null;
+	midi_output@ out_port = null;
 	print("ARRAY_DECLS_OK");
 
 	print("ARRAY_END ");

@@ -2,7 +2,7 @@
 
 void main() {
 	print("B1");
-	midi_output@ out;
+	midi_output@ out_port;
 	print("B2");
 	midi_duration d;
 	print("B3");

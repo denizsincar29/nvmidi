@@ -2135,6 +2135,22 @@ jobs:
           # between the bytes and the decision.
           $m = [regex]::Match($t, 'E2E_API_NUMBERS ([0-9,]+)')
           if (-not $m.Success) {
+            # Say where it stopped, because the two shapes need different
+            # work. A run that dies before E2E_API_NAME_REQUESTED never
+            # reached any plugin call at all. A run that dies between
+            # E2E_PORTS_BEFORE and E2E_PORTS_AFTER died inside port
+            # enumeration - which on a runner with no midi device is a fault
+            # in winmm's own device list, not in this plugin: a bare ctypes
+            # program calling midiOutGetNumDevs() with the library never
+            # loaded dies at the same place on the same machine.
+            if ($t -match 'E2E_PORTS_BEFORE' -and $t -notmatch 'E2E_PORTS_AFTER') {
+              Write-Host "::error::the script died inside port enumeration: it printed E2E_PORTS_BEFORE and never E2E_PORTS_AFTER, so it was killed while winmm was listing its own devices. That is the runner's device list, not a plugin call that returned wrong - the same call kills a ctypes program that never loads this library. MIDI enumeration cannot be measured on a runner with no midi device."
+              exit 1
+            }
+            if ($t -match 'E2E_API_NAME_REQUESTED' -and $t -notmatch 'E2E_API_NAME_ANSWERED') {
+              Write-Host "::error::the script died inside midi_api_name_byte_count() - it printed E2E_API_NAME_REQUESTED and never the answer. That is a plugin call and it is this build's fault."
+              exit 1
+            }
             Write-Host "::error::the script printed no E2E_API_NUMBERS line, so the backend name was never measured. Nothing below this step can conclude anything about the build."
             exit 1
           }

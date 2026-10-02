@@ -158,6 +158,13 @@ static heartbeat_starter g_heartbeat_starter;
 #include <windows.h>
 #endif
 
+// The backend a port is opened on. Chosen at run time (see the definition at
+// the bottom of this file), and forward declared here because the enumeration
+// objects below build their port long before that definition is reached.
+// Outside the anonymous namespace below, so it is the same entity as that
+// definition and not a second, shadowing declaration.
+extern const RtMidi::Api g_preferred_api;
+
 namespace {
 
 // The unit constants a script sees, so MIDI_BEATS and friends are readable
@@ -227,6 +234,39 @@ std::string g_last_error;
 // nothing here ever holds it across a wait.
 std::recursive_mutex g_rtmidi_mutex;
 
+// The one port objects this process ever builds for enumeration, kept alive
+// for the process lifetime and never destroyed.
+//
+// Why this is not a fresh object per call any more. Every query that only
+// wants to look - a port count, a port name, a backend name - used to build a
+// brand new RtMidiIn/RtMidiOut on the spot. On Windows that is not free and
+// not always possible: MidiOutWinMM::initialize (third_party/rtmidi/
+// RtMidi.cpp:3549) calls midiOutGetNumDevs() from the CONSTRUCTOR. On a
+// machine with the MIDI device list in a state winmm cannot enumerate,
+// midiOutGetNumDevs faults, and it faults inside winmmbase before RtMidi can
+// return anything - so the constructor is a crash site and every call that
+// built one was a chance to reach it.
+//
+// That the fault is winmm's and not this plugin's is measured, not assumed:
+// scripts/windows/winmm_ports.py, a bare ctypes program that never loads this
+// library, calls winmm.midiOutGetNumDevs() and dies with the same 0xC0000005
+// on the same runner. The cdb stack of the plugin's own crash names the same
+// pair - winmmbase!InitDevices -> winmmbase!midiOutGetNumDevs - under
+// midi_output_port_count.
+//
+// A count or a name does not need its own device handle: one object answers
+// every such question for the whole run, so it is built once, on first use,
+// and kept. Building it once also removes the per-call construction-and-
+// destruction churn that the collector comment below is about.
+//
+// Built with `new` and never deleted, on purpose: the destructor of an RtMidi
+// object is where the next collection is queued (see the comment below), and a
+// static-lifetime object would run that destructor during plugin teardown,
+// after the engine that owns this library may already be gone.
+RtMidiIn* g_enum_in = nullptr;
+RtMidiOut* g_enum_out = nullptr;
+
+
 // Run one RtMidi object through its whole life with nothing else able to touch
 // RtMidi at the same time.
 //
@@ -263,6 +303,32 @@ auto with_port(Body body) -> decltype(body(std::declval<Port&>())) {
 	const std::lock_guard<std::recursive_mutex> lock(g_rtmidi_mutex);
 	Port port;
 	return body(port);
+}
+
+// The slot for T's enumeration object - the shared one. Specialised for the
+// two RtMidi types that have one, so a call with any other class will not link
+// rather than silently build a fresh object.
+template <class Port> Port*& enum_slot();
+template <> inline RtMidiIn*& enum_slot<RtMidiIn>() { return g_enum_in; }
+template <> inline RtMidiOut*& enum_slot<RtMidiOut>() { return g_enum_out; }
+
+// The enumeration object for T - the shared one when T is an RtMidiIn or an
+// RtMidiOut, built on first use and kept for the process. See the note on
+// g_enum_in above for why it is not built per call.
+//
+// Same shape as with_port, and the reason is the same: what can run while this
+// body is executing is the collection queued by some earlier port's destructor,
+// so the object handed to `body` must be the only RtMidi object in flight in
+// this thread. The one difference is the object's lifetime - it is created here
+// and deliberately left alive, because building it is exactly the step that can
+// fault on Windows (MidiOutWinMM's constructor calls midiOutGetNumDevs), and
+// paying that once per process is the point.
+template <class Port, class Body>
+auto enum_port(Body body) -> decltype(body(std::declval<Port&>())) {
+	const std::lock_guard<std::recursive_mutex> lock(g_rtmidi_mutex);
+	Port*& slot = enum_slot<Port>();
+	if (!slot) slot = new Port(g_preferred_api, "nvmidi");
+	return body(*slot);
 }
 
 // And the first one of the run. Kept separately because g_last_error is
@@ -1668,7 +1734,7 @@ std::string midi_config::describe() const {
 
 NVGT_PLUGIN_EXPORT unsigned int midi_input_port_count() {
 	try {
-		return with_port<RtMidiIn>([](RtMidiIn& in) {
+		return enum_port<RtMidiIn>([](RtMidiIn& in) {
 			return in.getPortCount();
 		});
 	} catch (RtMidiError& error) {
@@ -1679,7 +1745,7 @@ NVGT_PLUGIN_EXPORT unsigned int midi_input_port_count() {
 
 NVGT_PLUGIN_EXPORT unsigned int midi_output_port_count() {
 	try {
-		return with_port<RtMidiOut>([](RtMidiOut& out) {
+		return enum_port<RtMidiOut>([](RtMidiOut& out) {
 			return out.getPortCount();
 		});
 	} catch (RtMidiError& error) {
@@ -1690,7 +1756,7 @@ NVGT_PLUGIN_EXPORT unsigned int midi_output_port_count() {
 
 std::string midi_input_port_name(unsigned int port) {
 	try {
-		return with_port<RtMidiIn>([port](RtMidiIn& in) -> std::string {
+		return enum_port<RtMidiIn>([port](RtMidiIn& in) -> std::string {
 			if (port >= in.getPortCount()) return "";
 			return in.getPortName(port);
 		});
@@ -1730,7 +1796,7 @@ std::string midi_input_port_name(unsigned int port) {
 // own strings are fine.
 int midi_output_port_name_byte_count(unsigned int port) {
 	try {
-		return (int)with_port<RtMidiOut>([port](RtMidiOut& out) -> std::size_t {
+		return (int)enum_port<RtMidiOut>([port](RtMidiOut& out) -> std::size_t {
 			if (port >= out.getPortCount()) return 0;
 			return out.getPortName(port).size();
 		});
@@ -1744,7 +1810,7 @@ int midi_output_port_name_byte_count(unsigned int port) {
 // has to be able to tell "no such byte" from "an actual NUL".
 int midi_output_port_name_byte(unsigned int port, unsigned int index) {
 	try {
-		return with_port<RtMidiOut>([port, index](RtMidiOut& out) -> int {
+		return enum_port<RtMidiOut>([port, index](RtMidiOut& out) -> int {
 			if (port >= out.getPortCount()) return -1;
 			const std::string name = out.getPortName(port);
 			if (index >= name.size()) return -1;
@@ -1770,7 +1836,7 @@ int midi_output_port_name_byte(unsigned int port, unsigned int index) {
 // concrete class, and the enumeration is the same on both sides.
 int midi_input_port_name_byte_count(unsigned int port) {
 	try {
-		return (int)with_port<RtMidiIn>([port](RtMidiIn& in) -> std::size_t {
+		return (int)enum_port<RtMidiIn>([port](RtMidiIn& in) -> std::size_t {
 			if (port >= in.getPortCount()) return 0;
 			return in.getPortName(port).size();
 		});
@@ -1781,7 +1847,7 @@ int midi_input_port_name_byte_count(unsigned int port) {
 
 int midi_input_port_name_byte(unsigned int port, unsigned int index) {
 	try {
-		return with_port<RtMidiIn>([port, index](RtMidiIn& in) -> int {
+		return enum_port<RtMidiIn>([port, index](RtMidiIn& in) -> int {
 			if (port >= in.getPortCount()) return -1;
 			const std::string name = in.getPortName(port);
 			if (index >= name.size()) return -1;
@@ -1794,7 +1860,7 @@ int midi_input_port_name_byte(unsigned int port, unsigned int index) {
 
 std::string midi_output_port_name(unsigned int port) {
 	try {
-		return with_port<RtMidiOut>([port](RtMidiOut& out) -> std::string {
+		return enum_port<RtMidiOut>([port](RtMidiOut& out) -> std::string {
 			if (port >= out.getPortCount()) return "";
 			return out.getPortName(port);
 		});

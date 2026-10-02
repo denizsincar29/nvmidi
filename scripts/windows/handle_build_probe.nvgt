@@ -13,9 +13,9 @@
 
 void main() {
 	print("H_BEGIN");
-	midi_output@ out = null;
-	print("H_ONE " + (out is null));
-	midi_input@ in = null;
-	print("H_TWO " + (in is null));
+	midi_output@ out_port = null;
+	print("H_ONE " + (out_port is null));
+	midi_input@ in_port = null;
+	print("H_TWO " + (in_port is null));
 	print("H_END");
 }

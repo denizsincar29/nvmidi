@@ -407,7 +407,9 @@ void main() {
 	// substring, or by a table: the job decodes them on its own side, where the
 	// engine is not in the way at all. So the translation stops being evidence
 	// and becomes prose, and the verdict is taken from the numbers.
+	print("E2E_API_NAME_REQUESTED");
 	const int API_BYTES = midi_api_name_byte_count();
+	print("E2E_API_NAME_ANSWERED");
 	print("E2E_API_BYTES " + API_BYTES);
 	string api_numbers = "";
 	for (int i = 0; i < API_BYTES; i++) {
@@ -523,8 +525,9 @@ void main() {
 	// names exist. A runner with no midi output at all says 0 here, and that
 	// is the machine's shape rather than the plugin's bug - the same
 	// distinction the alsa script draws around E2E_NO_BUS.
+	print("E2E_PORTS_BEFORE");
 	const uint outs = midi_output_port_count();
-	print("E2E_OUTPUT_PORTS " + outs);
+	print("E2E_PORTS_AFTER " + outs);
 	for (uint i = 0; i < outs; i++) {
 		print("E2E_OUTPUT_PORT " + i + " " + bytes_of_output_port_name(i));
 	}

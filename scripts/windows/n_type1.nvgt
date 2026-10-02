@@ -15,9 +15,9 @@ void main() {
 	print("N1_MIDI_NOTE_DONE");
 	midi_config@ c = null;
 	print("N1_MIDI_CONFIG_DONE");
-	midi_input@ in = null;
+	midi_input@ in_port = null;
 	print("N1_MIDI_INPUT_DONE");
-	midi_output@ out = null;
+	midi_output@ out_port = null;
 	print("N1_MIDI_OUTPUT_DONE");
 	print("N1_END");
 }
