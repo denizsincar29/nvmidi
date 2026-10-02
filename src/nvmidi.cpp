@@ -289,12 +289,22 @@ void register_for_retraction(retract_fn fn) {
 // the two RtMidi types without a cast and without a second list.
 template <class Port> void retract_enum_slot();
 template <> inline void retract_enum_slot<RtMidiIn>() {
-	delete g_enum_in;
-	g_enum_in = nullptr;
+	// Never deleted, deliberately. Measured on run 37035108683: a script
+	// that carries the pragma, registers, and then builds this very object
+	// through midi_output_create() prints a live handle, returns, and is
+	// followed by the engine dying with 0xC0000005 inside
+	// <Unloaded_nvmidi.dll>. Destroying the object hands winmm a close for a
+	// driver it holds a reference to, and that teardown comes back into this
+	// image after the engine has released it. Keeping the object alive costs
+	// one RtMidiOut per process and buys a teardown that touches nothing.
+	//
+	// Written as an explicit no-op rather than by dropping the registration,
+	// so a reader sees the decision here instead of finding an empty retract
+	// list and guessing whether it was meant.
+	(void)0;
 }
 template <> inline void retract_enum_slot<RtMidiOut>() {
-	delete g_enum_out;
-	g_enum_out = nullptr;
+	(void)0;
 }
 
 
