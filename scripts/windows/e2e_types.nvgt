@@ -16,7 +16,7 @@ void main() {
 	print("MIN_PORT_CREATE_DONE");
 	print("MIN_DURATION");
 	print("MIN_DECL_D");
-	midi_duration@ d = midi_duration_create(100, MIDI_MS);
+	midi_duration d = midi_duration_create(100, MIDI_MS);
 	print("MIN_DURATION_DONE");
 	print("MIN_NOTE");
 	print("MIN_DECL_N");

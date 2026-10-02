@@ -603,7 +603,7 @@ void main() {
 
 	for (int i = 0; i < SECONDS * 200; i++) {
 		while (midi_in.has_message()) {
-			midi_message@ m = null;
+			midi_message m;
 			if (!midi_in.next_message(m)) break;
 			print("in  status " + m.status + " data " + m.data1 + " " + m.data2);
 
