@@ -1,0 +1,66 @@
+// winmm_enum_probe.nvgt - which winmm function is the one that kills the run?
+//
+// The crash is now an address, not a suspicion:
+//
+//   ExceptionAddress: 00007ffe991015e6 (<Unloaded_nvmidi.dll>+0x15e6)
+//   ExceptionCode:    c0000005, Parameter[0] 8 = EXCEPTION_EXECUTE_FAULT
+//   nvmidi!midi_output_port_count+0xc2  <- frame just under the fault
+//
+// The address is inside a library that has already been unloaded, so something
+// is still holding code in that image. Two things in this repo can do that and
+// they are told apart by which call has to happen first:
+//
+//   a) the enumeration object. enum_port<RtMidiOut>() builds one RtMidiOut and
+//      keeps it for the life of the process; every port count, port name and
+//      open goes through it. RtMidiOut is a class with virtual functions, so
+//      its vtable lives in the plugin image, and if that object outlives the
+//      script engine's teardown windows releases the page it points at, the
+//      next virtual call is a jump into freed memory.
+//   b) MidiOutWinMM. Opening a port constructs the winmm backend, whose
+//      destructor and full teardown live in the same image. winmm also owns
+//      an output thread, and midiOutClose() lets it run to the end of its
+//      buffer before it returns - a thread that can still be inside the image
+//      just after the image is gone.
+//
+// The two differ in ordering, and that is what this script reads: it counts
+// ports first and opens last. A (a) alone dies inside the first block; (b)
+// alone survives the count and dies in the second. If the first block is clean
+// and the second is not, the print below the count stays in the log and the
+// verdict is unambiguous.
+//
+// It also prints nothing derived from a port name, so a device-less runner
+// still exercises everything but the naming.
+//
+// The pragma loads the library, and the trouble is in what the library does
+// with winmm, so the pragma is the point rather than boilerplate.
+#pragma plugin nvmidi
+
+void main() {
+	print("ENUM_BEGIN");
+
+	// Block one: enumeration only. Builds the process-wide RtMidiOut on first
+	// use, calls its virtual getPortCount(), and leaves without opening
+	// anything - so no MidiOutWinMM is ever constructed on this path.
+	const uint outputs = midi_output_port_count();
+	print("ENUM_OUTPUTS " + outputs);
+	const uint inputs = midi_input_port_count();
+	print("ENUM_INPUTS " + inputs);
+
+	// The line above this one is the boundary. Everything below needs winmm
+	// to have been brought in, and if the fault is in MidiOutWinMM it is here
+	// that the process stops rather than after the earlier count.
+	const uint api_bytes = midi_api_name_byte_count();
+	print("ENUM_API_BYTES " + api_bytes);
+	print("ENUM_MIDDLE");   // the boundary marker, read against the exit code
+
+	// Block two: winmm. Constructed by creating the port object; the ctor
+	// inside RtMidiOut is what picks MidiOutWinMM for this backend.
+	midi_output@ port_out = midi_output_create();
+	print("ENUM_CREATED");
+	const bool opened = port_out.open(0, "probe");
+	print("ENUM_OPENED " + opened);
+	port_out.close();
+	print("ENUM_CLOSED");
+
+	print("ENUM_END");
+}

@@ -1649,7 +1649,7 @@ jobs:
           # registration trace on stderr. That set is the baseline - "the
           # plugin registered and the script ran to a clean exit" - and a
           # probe is only evidence when it sits against it.
-          foreach ($case in @('e2e_min', 'unload_probe', 'probe_pragma_only', 'n_handle2', 'n_noteonly', 'n_inputonly', 'detach_probe')) {
+          foreach ($case in @('e2e_min', 'unload_probe', 'winmm_enum_probe', 'probe_pragma_only', 'n_handle2', 'n_noteonly', 'n_inputonly', 'detach_probe')) {
             $p2src  = Join-Path $probeSrc "$case.nvgt"
             $p2log  = Join-Path $env:GITHUB_WORKSPACE "$case.log"
             $p2err  = "$p2log.err"
