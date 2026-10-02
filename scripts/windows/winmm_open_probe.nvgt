@@ -64,7 +64,7 @@ void main() {
 
 	// Attempt one. Every step is printed, not just the verdict, so the log
 	// says how far the call got.
-	midi_output port_out = midi_output_create();
+	midi_output@ port_out = midi_output_create();
 	bool opened = false;
 	if (synth_index >= 0) {
 			opened = port_out.open(uint(synth_index), "probe");
@@ -113,7 +113,7 @@ void main() {
 // a script body as "Identifier 'midi_input' is not a data type" - measured, run
 // 36558508514. One named type in a body is accepted, two are not.
 bool midi_input_open_probe() {
-	midi_input port_in = midi_input_create();
+	midi_input@ port_in = midi_input_create();
 	if (!port_in.open(0, "probe")) return false;
 	port_in.close();
 	return true;

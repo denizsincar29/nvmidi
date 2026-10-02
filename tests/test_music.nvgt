@@ -79,7 +79,7 @@ void main() {
 	check("note_to_string_bytes", n4.to_string_byte_count() == 38, "count=" + n4.to_string_byte_count() + " text=" + midi_note_text(n4));
 
 	// -- midi_duration fields, to_ms(), to_string -------------------------
-	midi_duration d1 = midi_duration_create(2.0, MIDI_BEATS, 90.0);
+	midi_duration@ d1 = midi_duration_create(2.0, MIDI_BEATS, 90.0);
 	check("duration_fields", d1.amount == 2.0 && d1.unit == MIDI_BEATS && d1.tempo == 90.0 && d1.ppq == 96.0, "amount=" + d1.amount + " unit=" + d1.unit + " tempo=" + d1.tempo + " ppq=" + d1.ppq);
 	double d1ms = d1.to_ms();
 	check("duration_to_ms_beats_90", d1ms > 1333.2 && d1ms < 1333.5, "to_ms=" + d1ms);
@@ -89,7 +89,7 @@ void main() {
 	check("duration_to_ms_ticks_500", dtk > 499.9 && dtk < 500.1, "to_ms=" + dtk);
 	double dbar = midi_duration_create(1.0, MIDI_BARS).to_ms();
 	check("duration_to_ms_bars_2000", dbar > 1999.9 && dbar < 2000.1, "to_ms=" + dbar);
-	midi_duration d2 = midi_duration_create(2.0, MIDI_BEATS, 120.0);
+	midi_duration@ d2 = midi_duration_create(2.0, MIDI_BEATS, 120.0);
 	check("duration_to_string_bytes", d2.to_string_byte_count() == 28, "count=" + d2.to_string_byte_count() + " text=" + midi_duration_text(d2));
 
 	// -- unit constants ----------------------------------------------------

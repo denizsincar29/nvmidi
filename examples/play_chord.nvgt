@@ -93,9 +93,9 @@ void main() {
 	// at the class tempo, half a bar, and a length counted in MIDI ticks.
 	// Beats and bars are converted by the duration itself, so a script can
 	// think in music and pass milliseconds only where the hardware demands it.
-	midi_duration beat = keyboard.duration(1.0, MIDI_BEATS);
-	midi_duration half_bar = keyboard.duration(0.5, MIDI_BARS);
-	midi_duration ticks = midi_duration_create(96.0, MIDI_TICKS);
+	midi_duration@ beat = keyboard.duration(1.0, MIDI_BEATS);
+	midi_duration@ half_bar = keyboard.duration(0.5, MIDI_BARS);
+	midi_duration@ ticks = midi_duration_create(96.0, MIDI_TICKS);
 
 	ui_speak("At " + keyboard.tempo + " bpm a beat is " + beat.to_ms() + " milliseconds, half a bar is " + half_bar.to_ms() + ".");
 
