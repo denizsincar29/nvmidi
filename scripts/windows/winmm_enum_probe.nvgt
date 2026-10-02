@@ -1,5 +1,16 @@
 // winmm_enum_probe.nvgt - which winmm function is the one that kills the run?
 //
+// ANSWERED, run 37022466097: (a), the enumeration object alone. This script
+// counted ports, called midi_output_port_count() FIRST and midi_output_port_name()
+// through it, and died with stdout empty - ENUM_BEGIN itself never reached the
+// file - so no MidiOutWinMM was ever constructed and winmm was never introduced.
+// The frame below the fault reads getPortName<MidiOutWinMM> calling
+// MidiOutWinMM::getPortName through a vtable, which is (a) stated exactly: a
+// virtual dispatch into an image Windows has already unmapped. Open the port
+// and the same vtable goes on to MidiOutWinMM::openPort and its output thread,
+// which is why the e2e script adds nothing to the failure and only runs longer
+// before it.
+//
 // The crash is now an address, not a suspicion:
 //
 //   ExceptionAddress: 00007ffe991015e6 (<Unloaded_nvmidi.dll>+0x15e6)
