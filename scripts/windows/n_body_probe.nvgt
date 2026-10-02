@@ -1,0 +1,27 @@
+// n_body_probe.nvgt - is a script body alone enough to bring the crash down?
+//
+// The set this run is measured against, all from run 37038222183:
+//
+//   e2e_min            pragma, a body that prints             exit 0
+//   probe_pragma_only  pragma, a body that prints             exit 0
+//   unload_probe       pragma, one plugin call, prints        exit 0
+//   detach_probe       pragma, builds a port object, prints   exit 0
+//   winmm_enum_probe   pragma, calls midi_output_port_count() 0xC0000005
+//
+// winmm_enum_probe's stderr stops on the line every other case also stops
+// on - the type probe that runs inside register_nvmidi - so on the evidence
+// it never reached its own first statement. What is left to separate it from
+// probe_pragma_only is that it has a body at all: a call in it, and a print
+// before that call.
+//
+// This file has a body and nothing in it. If calling into the plugin can be
+// taken out of the picture by unload_probe, and a port object by detach_probe,
+// what remains is prose about a script - and prose is per-process and cannot
+// be unloaded. A crash here would say the engine's own unload path is what
+// faults on any script that has a body, which is a defect in the engine and
+// not in this repo.
+#pragma plugin nvmidi
+
+void main() {
+	return;
+}
