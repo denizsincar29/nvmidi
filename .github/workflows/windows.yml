@@ -2598,8 +2598,23 @@ jobs:
           $placed = $null
           foreach ($dir in $candidates) {
             New-Item -ItemType Directory -Force -Path $dir | Out-Null
-            Copy-Item $built -Destination (Join-Path $dir 'nvmidi.dll') -Force
-            if ((Get-Item (Join-Path $dir 'nvmidi.dll')).Length -eq 0) {
+            $dst = Join-Path $dir 'nvmidi.dll'
+            # One of the candidates *is* the workspace, where $built already
+            # lives. Copy-Item is told to overwrite a file with itself there, and
+            # that is an error, not a no-op - measured, run 37047683294:
+            #
+            #   Copy-Item: Cannot overwrite the item
+            #   D:\a\nvmidi\nvmidi\nvmidi.dll with itself.
+            #
+            # and the step dies with exit 1 before a single script is compiled.
+            # So the workspace is not copied into: it is where $built came from,
+            # which is the same thing the copy would have produced.
+            if ([System.IO.Path]::GetFullPath($dst) -eq [System.IO.Path]::GetFullPath($built)) {
+              Write-Host "the plugin is already in $dir - it is where the build wrote it"
+              continue
+            }
+            Copy-Item $built -Destination $dst -Force
+            if ((Get-Item $dst).Length -eq 0) {
               Write-Host "::error title=empty copy::the copy of nvmidi.dll into $dir is zero bytes"
               exit 1
             }
