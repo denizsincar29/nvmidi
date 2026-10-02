@@ -259,10 +259,11 @@ std::recursive_mutex g_rtmidi_mutex;
 // and kept. Building it once also removes the per-call construction-and-
 // destruction churn that the collector comment below is about.
 //
-// Built with `new` and never deleted, on purpose: the destructor of an RtMidi
-// object is where the next collection is queued (see the comment below), and a
-// static-lifetime object would run that destructor during plugin teardown,
-// after the engine that owns this library may already be gone.
+// Built with `new` and never deleted on the spot, on purpose: the destructor of
+// an RtMidi object is where the next collection is queued (see the comment
+// below), and a static-lifetime object would run that destructor after the
+// engine that owns this library is already gone. It is instead released by the
+// retraction at the end of register_nvmidi, while the module is still loaded.
 RtMidiIn* g_enum_in = nullptr;
 RtMidiOut* g_enum_out = nullptr;
 
@@ -354,9 +355,10 @@ template <> inline RtMidiOut*& enum_slot<RtMidiOut>() { return g_enum_out; }
 // fault on Windows (MidiOutWinMM's constructor calls midiOutGetNumDevs), and
 // paying that once per process is the point.
 //
-// The lifetime is now the run, not the process, and it is retracted on report.
-// A kept object is a kept vtable, and the vtable of an RtMidiOut lives in this
-// module's image: midi_output_port_count() reaches getPortCount() through it,
+// The lifetime is now the registration, not the process, and the retraction is
+// the last thing register_nvmidi does. A kept object is a kept vtable, and the
+// vtable of an RtMidiOut lives in this module's image: midi_output_port_count()
+// reaches getPortCount() through it,
 // and the cdb stack of run 37022466097 shows the same dispatch one frame down
 // (symbolicated only as nvmidi!midi_output_port_count+0xc2 over
 // nvmidi!midi_export_backend_byte+offsets; the named frame is inferred from the
@@ -367,7 +369,7 @@ template <> inline RtMidiOut*& enum_slot<RtMidiOut>() { return g_enum_out; }
 // measured proof that the object is the cause and winmm is not: the probe that
 // died had counted ports and opened nothing, so no MidiOutWinMM had been built.
 //
-// So the objects are handed back through the plugin's report hook, where the
+// So the objects are handed back at the end of register_nvmidi, where the
 // engine is still holding this module. The destruction is safe for the same
 // reason it always was - it runs inside the lock, and the collector it queues
 // for the next caller is the one this object would otherwise have queued
@@ -3401,6 +3403,30 @@ registration_result register_nvmidi(asIScriptEngine* engine) {
 	// been refused, or accepted into a list that does not name them, and only
 	// the engine's own answer tells those apart.
 	result.registered = probe_registered_types(engine);
+	// The retraction is armed here, and not at process exit, because the window
+	// it has to cover closes before the process does.
+	//
+	// What it has to be true about: every object this module hands out whose
+	// vtable lives in the module's image must be gone before the engine unmaps
+	// that image. Registration is the last call the engine makes into this
+	// module before a script can run - the engine cannot compile a script that
+	// names midi_output until these types exist - so arming it here covers both
+	// endings:
+	//
+	//   * the script runs. It may build the enumeration object itself, after
+	//     this point; the retraction is already armed and will still find it.
+	//   * the script never runs. The engine still unloaded this module - that is
+	//     what the crash in run 37025980449 was, and the log below is the
+	//     measured proof of it: it ends at the type-probe line in plugin_main,
+	//     so the module answered for its types and was then unmapped under
+	//     whatever the engine still held.
+	//
+	// atexit cannot cover the second case, and measuring says so rather than
+	// reasoning: a run with the retraction on atexit crashed in the same place,
+	// because atexit runs its list at process exit - after the compile phase
+	// that dies here, not before it. That is why the hook is at the end of
+	// registration and atexit is gone.
+	retract_enum_objects();
 	return result;
 }
 
@@ -3586,19 +3612,11 @@ plugin_main(nvgt_plugin_shared* shared) {
 	fflush(stderr);
 	// Kept so the playing code can call back into the script, see wait_until().
 	g_engine = shared->script_engine;
-	// The module's own teardown, registered while the engine is still holding
-	// the module - which is exactly why it is registered here and not relied on
-	// to happen at the end of the script.
-	//
-	// The engine's plugin contract (nvgt_plugin.h) offers no "about to unload"
-	// callback: a plugin is an entry point and a version, nothing else, and the
-	// engine's loader exports neither an unload symbol nor a plugin hook - read
-	// out of the engine binary itself, not assumed. So the last moment the
-	// module is promised to still be loaded is the moment its entry point runs,
-	// and the retraction is armed here. atexit runs its list at process exit,
-	// which is after the script engine has finished with the module and before
-	// the loader unmaps the image, so freeing the enumeration objects there
-	// costs nothing and removes the dangling vtable the fault was made of.
-	atexit(&retract_enum_objects);
+	// Nothing is armed here. The retraction runs at the end of register_nvmidi,
+	// which is the last moment the engine calls into this module before it can
+	// have compiled or run anything - see the note there. Arming it at process
+	// exit instead was tried and measured: the module is unmapped during the
+	// compile phase, long before exit, and a hook that runs at exit cannot free
+	// anything in time.
 	return true;
 }
