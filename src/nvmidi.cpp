@@ -314,26 +314,30 @@ template <> inline void retract_enum_slot<RtMidiOut>() {
 // This is the whole reason this function exists, and it was originally not
 // here at all.
 //
-// RtMidi keeps one list of live port objects for the process (MidiApi's
-// apiData_, inside RtMidi.cpp). A port object that is created and destroyed is
-// NOT freed when its destructor runs: it is appended to that list and released
-// later, when some *other* RtMidi object is constructed - RtMidi::apiData()
-// calls deleteUnusedApiData() on every access. So the collector runs inside
-// the constructor of whatever comes next.
+// An earlier version of this comment explained the lock with a process-wide
+// list of live ports kept inside RtMidi, collected by deleteUnusedApiData()
+// from the constructor of whatever port came next. That mechanism is not in
+// the RtMidi this repository vendors, and the explanation was wrong.
 //
-// Which means: while midi_input_port_count() is busy constructing its own
-// RtMidiIn, the collector is walking the same process-wide list that this
-// thread is mutating - and a std::vector that grows during that walk
-// reallocates, moves every element, and leaves the collector holding a
-// pointer into freed memory. Measured, this is not theoretical: it is the
-// access violation the probe reports when it calls nvgt_plugin() and the
-// plugin registers its types.
+// Measured against third_party/rtmidi, not remembered from another version:
+// MidiApi carries apiData_ as a per-instance void* (RtMidi.h:621), its
+// constructor sets it to 0 (RtMidi.cpp:755), and the string
+// deleteUnusedApiData appears nowhere in RtMidi.cpp or RtMidi.h. A port's
+// backend data hangs off its own apiData_ and is freed in its own destructor,
+// so destroying a port collects nothing and no collector can be walked by
+// another thread.
 //
-// The object is therefore not just constructed and left to its destructor.
-// Its entire life - construction, which is where the collector may run, and
-// destruction, which is what queues the next collection - happens inside one
-// uninterrupted region of code, so no other thread can be inside RtMidi while
-// the list is being walked or rewritten.
+// The lock is still right, for the reason the earlier text reached for: the
+// constructors and destructors of these objects do touch process-wide winmm
+// state, and every RtMidi call this plugin makes runs one at a time so that
+// none of them is inside RtMidi while another is being built or torn down.
+// The claim that a collector makes that a use-after-free is withdrawn; what
+// remains is mutual exclusion without the story that misdescribed it.
+//
+// The object is still not simply constructed and left to its destructor. Its
+// entire life - construction and destruction together - happens inside one
+// uninterrupted region of code, so no other thread is inside RtMidi while
+// this one is.
 //
 // Note what is NOT done here: the object is not deleted through a `RtMidi*`.
 // RtMidi declares its destructor protected (third_party/rtmidi/RtMidi.h) on
@@ -357,10 +361,10 @@ template <> inline RtMidiOut*& enum_slot<RtMidiOut>() { return g_enum_out; }
 // RtMidiOut, built on first use and kept for the process. See the note on
 // g_enum_in above for why it is not built per call.
 //
-// Same shape as with_port, and the reason is the same: what can run while this
-// body is executing is the collection queued by some earlier port's destructor,
-// so the object handed to `body` must be the only RtMidi object in flight in
-// this thread. The one difference is the object's lifetime - it is created here
+// Same shape as with_port, and the reason is the same: no other thread may be
+// inside RtMidi while this body runs, so the object handed to `body` must be
+// the only RtMidi object in flight in this thread. The one difference is the
+// object's lifetime - it is created here
 // and deliberately left alive, because building it is exactly the step that can
 // fault on Windows (MidiOutWinMM's constructor calls midiOutGetNumDevs), and
 // paying that once per process is the point.
@@ -375,15 +379,23 @@ template <> inline RtMidiOut*& enum_slot<RtMidiOut>() { return g_enum_out; }
 // source lines, not read off the symbols). Once the engine unloads this library that image is
 // unmapped, the object outlives it, and the next virtual call jumps into a
 // released page - "Attempt to execute non-executable address",
-// <Unloaded_nvmidi.dll>+0x15e6, with midi_output_port_count+0xc2 under it. The
-// measured proof that the object is the cause and winmm is not: the probe that
-// died had counted ports and opened nothing, so no MidiOutWinMM had been built.
+// <Unloaded_nvmidi.dll>+0x15e6, with midi_output_port_count+0xc2 under it.
+//
+// What this paragraph used to claim, and does not: that the proof the object
+// was the cause was a probe that had "counted ports and opened nothing, so no
+// MidiOutWinMM had been built". That is not a measurement this repository
+// holds - the probe's log is not in the evidence for run 37022466097, and
+// MidiOutWinMM's constructor is on the path of enumeration itself
+// (getPortCount is a MidiOutWinMM method), so "no MidiOutWinMM had been built"
+// was never something a port count could establish. Recorded as withdrawn
+// rather than deleted, because the argument it was meant to carry - that the
+// crash tracks the kept object and not the winmm layer - is the reason the
+// objects are handed back at all, and a reader who finds only the conclusion
+// would not know it is unproven.
 //
 // So the objects are handed back at the end of register_nvmidi, where the
-// engine is still holding this module. The destruction is safe for the same
-// reason it always was - it runs inside the lock, and the collector it queues
-// for the next caller is the one this object would otherwise have queued
-// itself.
+// engine is still holding this module. The destruction runs inside the lock
+// like every other RtMidi call here.
 template <class Port, class Body>
 auto enum_port(Body body) -> decltype(body(std::declval<Port&>())) {
 	const std::lock_guard<std::recursive_mutex> lock(g_rtmidi_mutex);
