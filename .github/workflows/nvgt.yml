@@ -334,6 +334,13 @@ jobs:
           # TECHNICAL.md has the whole story under "No entry point found".
           for script in scripts/*.nvgt examples/*.nvgt tests/*.nvgt; do
             [ -e "$script" ] || continue
+            # The two ui helpers are headers and reach the sweep through the
+            # glob above, so they are excluded here by name. No "compiled alone"
+            # branch for them: what a header needs is its includer's context, and
+            # both are #included by five examples each, which are run below.
+            case "$script" in
+              examples/nvmidi_ui.nvgt | examples/nvmidi_ui_keys.nvgt) continue ;;
+            esac
             # get_nvmidi.nvgt is not a test, it is the downloader: running it
             # downloads the published release over the library this job just
             # built and placed, so every script after it is compiled against a
