@@ -92,10 +92,9 @@ const string[] PITCH_NAMES = {
 	"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
 };
 
-// An entry point, because the engine refuses to compile a program without one
-// - "No entry point found (either 'int main()' or 'void main()')" - and it
-// refuses to do anything before that check, initialisation included. Nothing
-// in this file is meant to run, so the body is empty; what is being proved is
-// that the file compiles and that the array above still initialises.
-void main() {
-}
+// No entry point here, and that is measured rather than an omission. midi.nvgt
+// #includes this file, every example #includes midi.nvgt, and each example
+// defines its own main(); an included file's main() is not a declaration like
+// the array above, so adding one here gave every example "A function with the
+// same name and parameters already exists" (run 37013162052, line 100 - the
+// added line). A file that is only ever #included does not need one.

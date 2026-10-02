@@ -294,50 +294,45 @@ jobs:
           # purpose by the hearing-test step further down, against an engine that
           # must be able to see the plugin. Compiling it here as well would only
           # duplicate that, and running it would execute a stub.
-          # midi.nvgt and nvmidi_constants.nvgt are in this glob and are
-          # compiled: each carries an empty main() of its own, so the compile
-          # is the whole of the work. They are headers, and compiling one alone
-          # is worth doing because it proves every name it mentions still
-          # exists in the engine's plugin surface.
+          # No header is in this glob. The rule behind that is one line: a file
+          # that is only ever #included must not be run, and must not carry a
+          # main() either - its includer has one, and an included main() is not
+          # a declaration, it is a second definition. nvmidi_constants.nvgt is
+          # #included by midi.nvgt, midi.nvgt by nine scripts, and
+          # examples/nvmidi_ui_keys.nvgt by five examples. Append a main() to any
+          # of them and every includer fails with "A function with the same name
+          # and parameters already exists", naming the appended line (measured,
+          # runs 37012913997 and 37013162052); leave it out and the file, run on
+          # its own, stops one check earlier with "No entry point found" (run
+          # 37012913997), which is the compile being asked for a program rather
+          # than a fault in the file.
           #
-          # nvmidi_string.nvgt, examples/nvmidi_ui.nvgt and
-          # examples/nvmidi_ui_keys.nvgt are NOT, and that is a measurement
-          # rather than a preference. nvmidi_string.nvgt compiled alone answers
-          # "Identifier 'midi_message' is not a data type in global namespace"
-          # eight times - measured, 1 October - and examples/nvmidi_ui.nvgt
-          # answers "No entry point found" (run 37012913997); both declare their
-          # functions in terms of the plugin's types rather than only mentioning
-          # them, and those types do not exist until something has loaded the
-          # plugin. nvmidi_ui_keys.nvgt is a different case and lands at the same
-          # place: it is only ever #included, and the five examples that include
-          # it each define their own main(), so it can neither compile alone nor
-          # carry a main() of its own. All three are compiled for real in the
-          # windows job, where the plugin dll is loaded first, and that is the
-          # check that means something for them.
+          # Which files may be checked alone is decided by who includes them, and
+          # that is not a property a glob can see. So the headers are checked
+          # where they can be: every one of them is #included by an example or a
+          # test that is compiled and run further down, and the windows job loads
+          # the plugin dll and compiles the headers that need it (above all
+          # nvmidi_string.nvgt, which declares its functions in the plugin's
+          # types and answers "Identifier 'midi_message' is not a data type in
+          # global namespace" eight times without it - measured, 1 October).
           #
-          # This glob has been the source of two
-          # different red builds. Removed 1 October dropped the file list when
-          # the sweep failed on "No entry point found"; measured twice, runs
-          # 37011184757 and 37041324749, with the list gone the sweep passed -
-          # the file list itself had been its only failure, so dropping it hid
-          # everything the sweep was for - which is why the answer is to fix the
-          # files, not to shorten the list. b636c1a added the headers back and
-          # compiled them with --compile, which failed them all again (run
-          # 37011531810) because --compile is a program mode: it goes through
-          # CompileScript() and that function requires an entry point.
+          # Two red builds came from adding them back. Removed 1 October dropped
+          # the file list when the step failed on "No entry point found"; runs
+          # 37011184757 and 37041324749 showed the file list had been its only
+          # failure, so dropping it hid everything the step was for. b636c1a put
+          # the headers back and compiled them with --compile (run 37011531810) -
+          # which fails them all, because --compile is a program mode: it builds
+          # a program through CompileScript(), and that function requires an
+          # entry point, not a parse. e9f465b then gave the headers entry points
+          # in their own files and was red on both counts above (run
+          # 37012913997). The resolution is not a longer list of exceptions but
+          # this rule.
           #
-          # Each of the two headers left in the glob carries an empty main() in
-          # its own file. That
-          # is not a way to make a header look like a program - it is what the
-          # engine requires before it will compile a file at all, and until it
-          # is satisfied the file is not even initialised. nvmidi_constants.nvgt
-          # has a global array with an initialiser, and with no entry point it
-          # produced no output of any kind: not a pass, not a failure, and this
-          # step could only report that nothing had been compiled (run
-          # 37012082707). The reasons are written in the files themselves;
+          # scripts/get_nvmidi.nvgt is the one file here that is a program rather
+          # than a header, and it carries an entry point of its own - empty, so
+          # what is compiled has no download in it and nothing is fetched.
           # TECHNICAL.md has the whole story under "No entry point found".
-          for script in scripts/*.nvgt examples/*.nvgt tests/*.nvgt \
-                        midi.nvgt nvmidi_constants.nvgt; do
+          for script in scripts/*.nvgt examples/*.nvgt tests/*.nvgt; do
             [ -e "$script" ] || continue
             # get_nvmidi.nvgt is not a test, it is the downloader: running it
             # downloads the published release over the library this job just
@@ -347,25 +342,22 @@ jobs:
             # correctness is a question about the release, not about the build,
             # and no job downloads a release to test it.
             #
-            # It is compiled here rather than skipped whole, because that is
-            # the one check of it with no side effect: the copy compiled here
-            # carries an empty main() where the downloader's own would be, so
-            # nothing is fetched and no library is touched. A skip would have
-            # left the file outside every check in this repository - a script
-            # nobody compiles is a script whose first compile is in a user's
-            # hands.
+            # It is compiled here rather than skipped whole, because it is the
+            # one check of it with no side effect: the entry point in the file
+            # is empty, so nothing is fetched and no library is touched. A skip
+            # would have left the file outside every check in this repository -
+            # a script nobody compiles is a script whose first compile happens
+            # in a user's hands.
             case "$script" in
-              scripts/get_nvmidi.nvgt | midi.nvgt | nvmidi_constants.nvgt)
-                echo "::group::$script (compiled: it is a header, so what runs is its own empty main)"
+              scripts/get_nvmidi.nvgt)
+                echo "::group::$script (compiled: its own main() is empty, so nothing downloads)"
                 set +e
                 compile_log="logs/$(basename "$script").compile.log"
-                # Compiled as a program. Each of these files ends in an empty
-                # main(), so the compile is the whole of the work: there is no
-                # line left for it to run, and in particular nothing that opens
-                # a port, sends a note, or reaches the network. The zero
-                # argument form of get_nvmidi.nvgt is covered by the same
-                # argument - its main() is the one that would download, and an
-                # empty one is what is compiled here.
+                # Compiled as a program. The file's own main() is empty, so the
+                # compile is the whole of the work: there is no line left for it
+                # to run, and in particular nothing that opens a port, sends a
+                # note, or reaches the network - the main() that would download
+                # is exactly the one replaced by that empty body.
                 timeout 120 "$nvgt" "$script" > "$compile_log" 2>&1
                 set -e
                 cat "$compile_log"
