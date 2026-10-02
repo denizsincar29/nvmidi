@@ -1660,7 +1660,7 @@ jobs:
           # The engine reports a refusal in the exit code as well as in the
           # text, so the code alone separates them here.
           $caseCompileFailures = 0
-          foreach ($case in @('e2e_min', 'unload_probe', 'winmm_enum_probe', 'probe_pragma_only', 'n_handle2', 'n_noteonly', 'n_inputonly', 'detach_probe')) {
+          foreach ($case in @('e2e_min', 'unload_probe', 'winmm_enum_probe', 'probe_pragma_only', 'n_handle2', 'n_noteonly', 'n_inputonly', 'detach_probe', 'n_body_probe')) {
             $ccSrc = Join-Path $probeSrc "$case.nvgt"
             if (-not (Test-Path $ccSrc)) { continue }
             $ccOut = Join-Path $env:GITHUB_WORKSPACE "$case.compile.txt"
@@ -1677,9 +1677,9 @@ jobs:
                 Select-Object -First 20 | ForEach-Object { Write-Host ("  ENGINE: " + $_.Trim()) }
             }
           }
-          Write-Host "case scripts: $caseCompileFailures refused by the compiler out of 8"
+          Write-Host "case scripts: $caseCompileFailures refused by the compiler out of 9"
 
-          foreach ($case in @('e2e_min', 'unload_probe', 'winmm_enum_probe', 'probe_pragma_only', 'n_handle2', 'n_noteonly', 'n_inputonly', 'detach_probe')) {
+          foreach ($case in @('e2e_min', 'unload_probe', 'winmm_enum_probe', 'probe_pragma_only', 'n_handle2', 'n_noteonly', 'n_inputonly', 'detach_probe', 'n_body_probe')) {
             $p2src  = Join-Path $probeSrc "$case.nvgt"
             $p2log  = Join-Path $env:GITHUB_WORKSPACE "$case.log"
             $p2err  = "$p2log.err"
