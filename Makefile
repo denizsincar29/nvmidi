@@ -226,3 +226,29 @@ link: obj
 nvmidi-noarr.dll: $(SOURCES) src/nvmidi.h $(TARGET)
 	$(CXX) $(CXXFLAGS) -DNVGT_SKIP_ARRAY_ADDON $(INCLUDES) $(SOURCES) -o nvmidi-noarr.dll $(LDFLAGS) $(LIBS)
 	@echo "nvmidi: control build written to nvmidi-noarr.dll, the ordinary nvmidi.dll is untouched"
+
+# The third build, and the one the e2e job needed from the start.
+#
+# Every case the e2e job runs carries `#pragma plugin nvmidi`, so all of them
+# loaded the ordinary nvmidi.dll - the build that calls the engine's array
+# add-on first thing inside register_nvmidi. Its log says so outright,
+# "ARRAY_BRANCH_ENTER / calling RegisterScriptArray", in every case that ran,
+# including the ones that died (measured, run 37044062606: e2e_min,
+# unload_probe, probe_pragma_only, n_handle2, detach_probe and n_body_probe all
+# exit 0 or 0xC0000005 with the same 5382-byte stderr, and none of the eight
+# registered types is a plugin type).
+#
+# So no case could separate "this plugin, as built, is healthy" from "this
+# plugin is broken by the add-on call". A good plugin and the build that dies
+# in the add-on produce identical logs, and the one case that still crashes -
+# winmm_enum_probe - crashed with a log identical to the six that did not.
+#
+# This target is the missing control: the same sources, no add-on call in them.
+# It is a library named nvmidi.dll, because that is the name the engine asks
+# for, and it differs from the ordinary build by one `#ifdef`. Run the case
+# list against it and each case's answer changes meaning: while the ordinary
+# build cannot be certified, this one can, and a case that dies under it is
+# dying of something other than the add-on call.
+nvmidi-e2e.dll: $(SOURCES) src/nvmidi.h $(TARGET)
+	$(CXX) $(CXXFLAGS) -DNVGT_SKIP_ARRAY_ADDON $(INCLUDES) $(SOURCES) -o nvmidi-e2e.dll $(LDFLAGS) $(LIBS)
+	@echo "nvmidi: e2e build written to nvmidi-e2e.dll, no array add-on call in it"

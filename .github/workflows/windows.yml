@@ -203,6 +203,27 @@ jobs:
           Move-Item -Force nvmidi-noarr.dll noaddon/nvmidi.dll
           Write-Host "NO-ADDON-BYTES $((Get-Item noaddon/nvmidi.dll).Length)"
 
+          # The third build, for the e2e job. Every case there carries
+          # `#pragma plugin nvmidi`, so all of them load this name from the
+          # workspace root; until now that name always held the ordinary build,
+          # the one that calls the engine's array add-on first thing inside
+          # register_nvmidi. Six of the eight cases exit 0 in that build and one
+          # dies, and the compiler refusal of the eighth is the only thing that
+          # tells them apart - which is not a statement about the plugin.
+          #
+          # Built here rather than in the e2e job because the e2e job has no
+          # compiler: it runs the engine against a library the build job wrote.
+          # The recipe is nvmidi-e2e.dll; it is copied to nvmidi.dll here, and
+          # this job's later steps read the root nvmidi.dll for the .def export
+          # check, so the copy is a thing the reader below can see rather than
+          # an accident waiting for whoever edits this next.
+          mingw32-make --print-directory -f Makefile -B nvmidi-e2e.dll
+          Write-Host "MAKE-E2E-EXIT $LASTEXITCODE"
+          if ($LASTEXITCODE -ne 0) { throw 'the make for the e2e build failed' }
+          if (-not (Test-Path nvmidi-e2e.dll)) { throw 'the e2e build wrote no nvmidi-e2e.dll' }
+          if (-not (Test-Path withaddon/nvmidi.dll)) { throw 'the e2e build disturbed the ordinary dll' }
+          Write-Host "E2E-BYTES $((Get-Item nvmidi-e2e.dll).Length)"
+
           # The control is the control only if the add-on's *call* is not in it,
           # and that is a different question from whether the add-on's strings
           # are in it - which is what the check here used to ask, by counting
@@ -300,7 +321,7 @@ jobs:
           Write-Host "SEPARATION with-addon-has-array-line=$inWith no-addon-has-array-line=$inNo"
           Write-Host "SEPARATION with-addon-has-flag-line=$ctrlWith no-addon-has-flag-line=$ctrlNo"
 
-          Get-ChildItem withaddon/nvmidi.dll, noaddon/nvmidi.dll | ForEach-Object { Write-Host ("{0} {1}" -f $_.Length, $_.FullName) }
+          Get-ChildItem withaddon/nvmidi.dll, noaddon/nvmidi.dll, nvmidi-e2e.dll | ForEach-Object { Write-Host ("{0} {1}" -f $_.Length, $_.FullName) }
 
       - name: keep the dll with the array add-on
         uses: actions/upload-artifact@v4
@@ -314,6 +335,21 @@ jobs:
         with:
           name: nvmidi-no-addon
           path: noaddon/nvmidi.dll
+          if-no-files-found: error
+
+      # The build the e2e job runs every case against. Same sources as the
+      # ordinary build, one `#ifdef` different: no call into the engine's array
+      # add-on. It travels as an artifact because the e2e job runs on another
+      # runner and has no compiler, and it travels under the name the engine
+      # asks for, nvmidi.dll, so the e2e job can stage it with nothing but a
+      # copy. The artifact name is what keeps this file apart from the ordinary
+      # one in the build job's own storage - the two differ by one call and a
+      # reader cannot tell them apart by size.
+      - name: keep the dll the e2e job runs
+        uses: actions/upload-artifact@v4
+        with:
+          name: nvmidi-e2e
+          path: nvmidi-e2e.dll
           if-no-files-found: error
 
       # The driver has to reach the e2e job, which runs on a different runner:
@@ -678,10 +714,11 @@ jobs:
           if not exist nvmidi.dll goto :missing
           if not exist builds\nvmidi-with-addon\nvmidi.dll goto :missing
           if not exist builds\nvmidi-no-addon\nvmidi.dll goto :missing
-          dir /B nvmidi.dll builds\nvmidi-with-addon builds\nvmidi-no-addon
+          if not exist builds\nvmidi-e2e\nvmidi.dll goto :missing
+          dir /B nvmidi.dll builds\nvmidi-with-addon builds\nvmidi-no-addon builds\nvmidi-e2e
           goto :eof
           :missing
-          echo one of the two plugin builds is missing, so the comparison cannot run
+          echo one of the plugin builds is missing, so the comparison cannot run
           exit /b 1
 
       # Where did we put it. nvgt searches lib/ next to itself for a plugin
@@ -744,6 +781,28 @@ jobs:
           } else {
             Write-Host 'the loopback driver is NOT installed over lib\nvmidi.dll; that name belongs to the plugin'
           }
+          # The e2e build goes over the ordinary one, here in the workspace
+          # root. Every case script carries `#pragma plugin nvmidi`, and this
+          # is the name they all resolve; the ordinary library that used to sit
+          # here calls the engine's array add-on first thing inside
+          # register_nvmidi, which makes a clean run and a broken build produce
+          # the same log. See the e2e target in the Makefile for what the
+          # difference is and what it buys.
+          #
+          # Copied after the with-addon/no-addon comparison steps, which read
+          # their own directories and are unaffected, and before anything runs
+          # a case. If the e2e build is absent the copy is skipped loudly
+          # rather than silently leaving the ordinary build in place - a run
+          # against the wrong library is worse than a run that says it could
+          # not start.
+          $e2eDll = Join-Path $env:GITHUB_WORKSPACE 'builds\nvmidi-e2e\nvmidi.dll'
+          if (Test-Path $e2eDll) {
+            Copy-Item $e2eDll -Destination (Join-Path $env:GITHUB_WORKSPACE 'nvmidi.dll') -Force
+            Write-Host "the e2e build is staged as nvmidi.dll: $((Get-Item $e2eDll).Length) bytes, no array add-on call in it"
+          } else {
+            throw 'the e2e build is not in builds\nvmidi-e2e, so every case below would run against the ordinary library and answer for a build that cannot be certified'
+          }
+
           $dll = Join-Path $lib 'nvmidi.dll'
           if (Test-Path $dll) {
             Write-Host "${dll}: $((Get-Item $dll).Length) bytes"
@@ -1659,6 +1718,40 @@ jobs:
           # way to tell a compile refusal from the fault this repo is chasing.
           # The engine reports a refusal in the exit code as well as in the
           # text, so the code alone separates them here.
+          # One library answers for every case below, so it has to be the one
+          # this run is about. A case's `#pragma plugin nvmidi` resolves
+          # against whatever nvmidi.dll the engine finds first, and the two
+          # builds of this plugin differ by a call that leaves no trace a
+          # reader can see: the build that calls the engine's array add-on
+          # first thing inside register_nvmidi, and the one that does not.
+          #
+          # This is a check on the *contents of the file*, not on its name,
+          # because the name is what the engine asks for and so cannot tell the
+          # two builds apart. Measured, run 37044062606: the stderr of all six
+          # cases that ran carries the add-on's own markers whatever the case
+          # does, which says every one of them loaded the ordinary library and
+          # that no case in that run could have said anything about a plugin.
+          #
+          # Throwing rather than warning, because a case run against the wrong
+          # library does not fail - it goes green and answers for a build that
+          # was never the subject.
+          $libPath = Join-Path $env:GITHUB_WORKSPACE 'nvmidi.dll'
+          $e2eMark = 'NVGT_SKIP_ARRAY_ADDON is set'
+          $addonMark = 'calling RegisterScriptArray'
+          if (Test-Path $libPath) {
+            $libRaw = [System.IO.File]::ReadAllText($libPath, [System.Text.Encoding]::GetEncoding(28591))
+            $hasSkip = $libRaw.Contains($e2eMark)
+            $hasAddon = $libRaw.Contains($addonMark)
+            Write-Host "  the library every case loads carries skip-flag=$hasSkip addon-call=$hasAddon ($((Get-Item $libPath).Length) bytes)"
+            if ($hasAddon) {
+              throw 'the library staged as nvmidi.dll carries the array add-on call, so no case below can distinguish a healthy plugin from that call: every row would answer for the build this job cannot certify'
+            }
+            if (-not $hasSkip) {
+              throw 'the library staged as nvmidi.dll carries neither the skip flag nor the add-on call, so it is a third build and no case below may be read against it'
+            }
+          } else {
+            throw 'no nvmidi.dll in the workspace root, so no case below can load the plugin it names'
+          }
           $caseCompileFailures = 0
           foreach ($case in @('e2e_min', 'unload_probe', 'winmm_enum_probe', 'probe_pragma_only', 'n_handle2', 'n_noteonly', 'n_inputonly', 'detach_probe', 'n_body_probe')) {
             $ccSrc = Join-Path $probeSrc "$case.nvgt"
