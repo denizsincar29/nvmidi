@@ -2,8 +2,6 @@
 
 void main() {
 	print("DETACH_PROBE_BEGIN");
-	int n = midi_output_port_count();
-	print("DETACH_PROBE_PORTS " + n);
 	midi_output@ o = midi_output_create();
 	print("DETACH_PROBE_CREATED " + (o is null ? "null" : "handle"));
 	print("DETACH_PROBE_END");
