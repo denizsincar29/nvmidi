@@ -2429,17 +2429,15 @@ jobs:
           # The same two placements the install step makes, so the sweep below
           # is not the first thing in the job that asks the engine to load it.
 
-          # Built, never run: the engine is handed a copy of each file with
-          # "void main() {}" appended, so the includes and pragmas really load
-          # (any name lookup in them really happens) and the copy — an empty
-          # main and nothing else — has nothing left to execute. A script that
-          # would open a port or send a note never gets that far, which is what
-          # makes the sweep safe to point at the examples.
+          # The engine is handed each file as it is, and every file in this
+          # glob carries an empty main() of its own — the wrapper headers for
+          # exactly this reason, the examples so that they are ordinary
+          # programs. The plugin dll is loaded here, so a header's names really
+          # resolve and the compile is a real check of them.
           # --compile would have been the obvious way to do this and is not:
-          # it compiles a *program*, entry-point check included, so every
-          # header in this glob (the three wrapper files, examples/nvmidi_ui*)
-          # fails under it with "No entry point found". TECHNICAL.md has the
-          # whole story under "No entry point found".
+          # it compiles a *program*, entry-point check included, and it runs
+          # through CompileScript(), which refuses a file with no main().
+          # TECHNICAL.md has the whole story under "No entry point found".
           # -File, and a shallow recurse: the root listing has to reach the
           # three wrapper files (midi.nvgt, nvmidi_constants.nvgt,
           # nvmidi_string.nvgt) without walking into .git and .github, and
@@ -2458,15 +2456,11 @@ jobs:
           foreach ($s in $scripts) {
             # scripts/get_nvmidi.nvgt is the downloader: it fetches the
             # published release and would drop it over the dll this job just
-            # built. The copy carries no work to do, so it is built here with
-            # the rest and nothing is fetched.
+            # built. It carries an empty main() of its own, so what is compiled
+            # here has no download in it and nothing is fetched.
             $log = "compile_" + ($s.Name -replace '\.nvgt$', '') + ".log"
-            $stub = Join-Path ([IO.Path]::GetTempPath()) (($s.Name -replace '\.nvgt$', '') + ".entrypoint.nvgt")
-            Copy-Item -LiteralPath $s.FullName -Destination $stub -Force
-            Add-Content -LiteralPath $stub -Value "" -Encoding utf8
-            Add-Content -LiteralPath $stub -Value "void main() {}" -Encoding utf8
             Write-Host "::group::$($s.FullName)"
-            & $exe $stub *>&1 | Tee-Object -FilePath $log
+            & $exe $s.FullName *>&1 | Tee-Object -FilePath $log
             $ran++
             $hits = Select-String -Path $log -Pattern 'ERROR:|Unexpected token|No matching signature|Compilation error' -ErrorAction SilentlyContinue
             foreach ($h in $hits) {

@@ -20,3 +20,11 @@ bool stop_key() {
 	if (key_pressed(KEY_ESCAPE)) return true;
 	return (keyboard_modifiers & KEYMOD_ALT) > 0 && a_key(KEY_F4);
 }
+
+// An entry point, so that this header can be compiled on its own. The engine
+// refuses a program without one - "No entry point found (either 'int main()'
+// or 'void main()')" - and refuses to do anything before that check. The body
+// is empty: the examples include this file and call the two functions above
+// from their own main(), and a second main() there would collide with theirs.
+void main() {
+}

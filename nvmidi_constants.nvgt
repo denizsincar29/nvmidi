@@ -91,3 +91,11 @@ const int MIDI_CHANNELS = 16;
 const string[] PITCH_NAMES = {
 	"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
 };
+
+// An entry point, because the engine refuses to compile a program without one
+// - "No entry point found (either 'int main()' or 'void main()')" - and it
+// refuses to do anything before that check, initialisation included. Nothing
+// in this file is meant to run, so the body is empty; what is being proved is
+// that the file compiles and that the array above still initialises.
+void main() {
+}
