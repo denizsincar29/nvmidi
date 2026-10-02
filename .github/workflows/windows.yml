@@ -2648,14 +2648,34 @@ jobs:
           $bad = $false
           $ran = 0
           foreach ($s in $scripts) {
+            # Three files carry no main() and are not meant to: midi.nvgt is
+            # includes plus the view class, nvmidi_constants.nvgt is the
+            # constants, and nvmidi_string.nvgt is free functions over the
+            # plugin's types. They are what other scripts #include, so they
+            # are compiled through those and not on their own. Measured, run
+            # 37048963235: compiled alone each answers "No entry point found
+            # (either 'int main()' or 'void main()')", and nvmidi_string.nvgt
+            # goes further - with the plugin not loaded its own signatures
+            # have no types, and that engine dies mid compile with exit
+            # -1073741819 / 0xC0000005. The reference is by name, not by
+            # folder: what these three lack is a main(), and that is a fact
+            # about the file, not about where it sits.
+            #
             # scripts/get_nvmidi.nvgt is the downloader: it fetches the
             # published release and would drop it over the dll this job just
             # built. It carries an empty main() of its own, so what is compiled
             # here has no download in it and nothing is fetched.
-            # examples/nvmidi_ui.nvgt and examples/nvmidi_ui_keys.nvgt are not
-            # compiled on their own here either: this glob reaches them only
-            # through the examples that #include them, and each of those brings
-            # its own main() - which is why neither file has one.
+            # examples/nvmidi_ui.nvgt and examples/nvmidi_ui_keys.nvgt have no
+            # main() either, and this glob does reach them: the ui pair is
+            # reached through the examples that #include them, and each of
+            # those brings its own main() - which is why neither file has one.
+            if ($s.Name -in @('midi.nvgt', 'nvmidi_constants.nvgt', 'nvmidi_string.nvgt',
+                               'nvmidi_ui.nvgt', 'nvmidi_ui_keys.nvgt')) {
+              Write-Host ("::group::{0} {1}" -f $s.FullName, '(not compiled alone - no main() of its own)')
+              Write-Host "skipped: it is included by other scripts, which carry the main() for it"
+              Write-Host "::endgroup::"
+              continue
+            }
             $log = "compile_" + ($s.Name -replace '\.nvgt$', '') + ".log"
             Write-Host "::group::$($s.FullName)"
             & $exe $s.FullName *>&1 | Tee-Object -FilePath $log
@@ -2667,7 +2687,7 @@ jobs:
             }
             Write-Host "::endgroup::"
           }
-          Write-Host "compiled $ran script(s)"
+          Write-Host "compiled $ran script(s) of $(@($scripts).Count) reached by the glob, $((@($scripts).Count - $ran)) skipped as the wrapper's own files"
           if ($bad) { throw "at least one script did not compile against the built plugin" }
 
       - name: keep both logs
