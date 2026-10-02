@@ -130,6 +130,8 @@ rem /FI force-includes the generated alias header into each of the three
 rem translation units, which is the whole point of writing it - see the block
 rem above for why each name needs an alias.
 
+echo about to compile, the header is %CD%\build-msvc\nvgt_import.inc
+dir /b build-msvc 2>&1
 cl /nologo /std:c++17 /O2 /EHsc /MD /LD /D__WINDOWS_MM__ /D_CRT_SECURE_NO_WARNINGS /Isrc /Ithird_party\rtmidi /Ithird_party\angelscript /Fo:build-msvc\ /FIbuild-msvc\nvgt_import.inc src\nvmidi.cpp third_party\rtmidi\RtMidi.cpp third_party\angelscript\scriptarray.cpp /Fe:nvmidi.dll /link winmm.lib ole32.lib setupapi.lib ksuser.lib
 if errorlevel 1 exit /b 2
 
