@@ -1,0 +1,65 @@
+// unload_probe.nvgt - does the crash need a plugin call at all?
+//
+// The e2e script dies on this runner with the debugger naming the address
+// rather than a function:
+//
+//   ExceptionAddress: 00007ffe991015e6 (<Unloaded_nvmidi.dll>+0x15e6)
+//   ExceptionCode:    c0000005 (Access violation)
+//   Parameter[0]:     8   (EXCEPTION_EXECUTE_FAULT - execute on non-executable)
+//   Attempt to execute non-executable address
+//
+// and the stack above the fault is our own code, with the frame just outside
+// the plugin being midi_output_port_count:
+//
+//   nvmidi!midi_output_port_count+0xc2
+//   nvmidi!midi_export_backend_byte+0x11bec
+//   nvmidi!midi_export_backend_byte+0x11aa3
+//   nvmidi!midi_export_backend_byte+0x118df
+//
+// The faulting address is *inside the unloaded image*. That is the whole
+// finding and it is read two ways, so this file exists to separate them:
+//
+//   a) the engine keeps a call into the plugin past the unload, and the
+//      address it jumps to is in a page windows has already released - a
+//      defect of the engine's unload order, not of anything this repo owns;
+//   b) enumeration reaches into winmm, winmm calls back into a callback that
+//      lives in the plugin, the plugin is unloaded first, and the callback
+//      fires afterwards - a real lifetime bug in how the plugin hands winmm
+//      a function pointer it does not retract.
+//
+// The difference is decidable with one script, because this one calls the
+// engine and nothing else. It asks for no port, opens nothing, enumerates
+// nothing, and registers no callback. If it dies the same way, the call into
+// the unloaded image cannot be anything winmm started - winmm was never
+// spoken to - and (a) is the answer. If it exits clean, the fault belongs to
+// the plugin's winmm-facing lifetime and (b) is.
+//
+// The pragma is what makes the plugin load, and the load is the subject: a
+// script with no pragma never loads the library and would say nothing about
+// its unload.
+//
+// Left in scripts/windows/ and named here rather than run once by hand: the
+// answer decides which repo the fix belongs to, and a measurement that
+// settles that should be repeatable by whoever reads this next.
+#pragma plugin nvmidi
+
+void main() {
+	// One print, so a clean exit is distinguishable from a death before the
+	// script ever ran. The engine buffers stdout and flushes at exit, so this
+	// line may still arrive after the process is gone - but a crash before the
+	// first print leaves the same empty file a refusal does, and the two are
+	// told apart by the exit code the job publishes beside this log.
+	print("UNLOAD_BEGIN");
+
+	// The plugin's own api name, and nothing else. It is a plugin call for
+	// certain - the string is built by the plugin and handed over as bytes -
+	// so its answer proves the library is loaded and answering, without
+	// touching a port, a device or a callback.
+	const int bytes = midi_api_name_byte_count();
+	print("UNLOAD_API_BYTES " + bytes);
+
+	// No enumeration, no port, no note. The script is over here, and the
+	// interesting part is what the engine does after this line with a plugin
+	// that winmm has never been introduced to.
+	print("UNLOAD_END");
+}

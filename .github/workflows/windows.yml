@@ -1649,7 +1649,7 @@ jobs:
           # registration trace on stderr. That set is the baseline - "the
           # plugin registered and the script ran to a clean exit" - and a
           # probe is only evidence when it sits against it.
-          foreach ($case in @('e2e_min', 'probe_pragma_only', 'n_handle2', 'n_noteonly', 'n_inputonly', 'detach_probe')) {
+          foreach ($case in @('e2e_min', 'unload_probe', 'probe_pragma_only', 'n_handle2', 'n_noteonly', 'n_inputonly', 'detach_probe')) {
             $p2src  = Join-Path $probeSrc "$case.nvgt"
             $p2log  = Join-Path $env:GITHUB_WORKSPACE "$case.log"
             $p2err  = "$p2log.err"
@@ -1948,6 +1948,19 @@ jobs:
               # seconds, and this step still sat here for sixty before saying
               # no index was published.
               if ($t -match 'E2E_END') { break }
+              # And when the script died without reaching E2E_END. The launch
+              # step above waits on the process and publishes its code, so a
+              # non-zero one here means there is no more of this script to
+              # read: sitting out the rest of the minute would only delay the
+              # logs, and the logs are the evidence. Measured on run
+              # 37020521362: nvgt exited 0xC0000005 after 1.5 seconds and this
+              # step still held the job for the full sixty, while every dump
+              # taken below was already complete on disk.
+              #
+              # Absent reads as empty and keeps the wait, which is what the
+              # ordering wants: this step can be reached while the launch step
+              # is still running, and an unfinished script is not a dead one.
+              if ($env:E2E_EXIT_CODE -and $env:E2E_EXIT_CODE -ne '0') { break }
             }
             Start-Sleep -Milliseconds 250
           }
