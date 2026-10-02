@@ -131,21 +131,28 @@ fails identically under `--compile` and under a plain run — measured, run
 `--compile` is a program mode: it builds a *program* with the script inside it.
 It is not parse-only.
 
-So every header in this repository carries an empty `void main()` of its own,
-with the reason written beside it. That is the arrangement rather than a copy
-made at check time, because the entry point is not only a compile gate: the
-engine runs a file's initialisation *after* it, so a header with a global
-initialiser is not even *parsed* until the check is satisfied. Measured on
-`nvmidi_constants.nvgt`, whose `PITCH_NAMES` array has an initialiser: with no
-entry point the engine printed nothing at all, and the runner could only report
-that the compile had produced no output (run 37012082707). With the empty
-`main()` the same file compiles and the array initialises.
+The entry point is not only a compile gate: the engine runs a file's
+initialisation *after* it, so a file with a global initialiser is not even
+*parsed* until the check is satisfied. Measured on `nvmidi_constants.nvgt`,
+whose `PITCH_NAMES` array has an initialiser: with no entry point the engine
+printed nothing at all, and the runner could only report that the compile had
+produced no output (run 37012082707). With an entry point the same file
+compiles and the array initialises.
 
-An empty `main()` in a header is not the collision it looks like: a script that
-`#include`s the header keeps its own `main()`, and the engine compiles an
-included file's declarations rather than its entry point.
+This used to be read as "so every header must carry an empty `void main()` of
+its own". That was wrong, and it cost the sweep: the six headers gained an
+entry point each, and then a script that `#include`d one of them had two, so
+the includers stopped compiling. The rule is the other way round — the
+*included* file must not carry an entry point. A header names the plugin's
+types and calls none of them into being; it is the including script that has
+the `main()`. The headers in this repository therefore carry none, and the
+sweep skips them by name rather than expecting them to compile as programs.
 
-`scripts/get_nvmidi.nvgt` does the download and installation for you: itfetches the newest release and installs it into `lib/` next to the running
+What the entry-point check is good for is the opposite case: a header compiled
+on its own *should* fail with `No entry point found`, and that failure is the
+proof that it declares names without calling them into being.
+
+`scripts/get_nvmidi.nvgt` does the download and installation for you: it fetches the newest release and installs it into `lib/` next to the running
 NVGT. It streams the transfer into a file opened binary, so the library never
 passes through a text encoding, and it lands under a temporary name first — a
 connection that dies halfway cannot leave a truncated library for nvgt to load
