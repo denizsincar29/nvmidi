@@ -57,9 +57,17 @@ void ui_speak(const string&in text) {
 // was committed as 4f66485 and broke the build the other way. A source tree is
 // not the registration list, and this file has now been wrong in both
 // directions from assuming which one it was.
+//
+// The test is written the way the engine writes it for itself: bgt_compat.nvgt
+// line 89 is `return show_window(title) !is null;`, test applied to the call's
+// result. show_window answers a handle, and `unknown is null` on a value - or
+// `auto w = ...; w is null` - is a compile error, "both operands must be
+// handles when comparing identity". The call result is a handle; a variable
+// holding it is not, which is the whole of the trap. This file guessed the
+// signature twice and was wrong twice; the engine's own compat layer is the
+// one place the answer was already written down.
 bool ui_open(const string&in title) {
-	auto w = show_window(title);
-	if (w is null) {
+	if (show_window(title) is null) {
 		ui_speak("could not open a window");
 		return false;
 	}

@@ -103,6 +103,11 @@ int pick_port(const string&in title, const string[]&in names, int start) {
 		if (key_pressed(KEY_RETURN) || key_pressed(KEY_NUMPAD_ENTER)) return cursor;
 		wait(5);
 	}
+	// Every exit above returns, so this is never reached - but the analyser
+	// does not read `while (true)` as a loop that cannot fall through, and
+	// without this line it reports "not all paths return a value". The engine
+	// asks for the trailing return; it is not a live path.
+	return -1;
 }
 
 void main() {
