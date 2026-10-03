@@ -5,8 +5,8 @@
 
 // The window helpers are separate on purpose: they are about a window on the
 // screen, not about MIDI, and a script that only sends notes does not want them.
-#include "../nvmidi_ui.nvgt"
-#include "../nvmidi_ui_keys.nvgt"
+#include "nvmidi_ui.nvgt"
+#include "nvmidi_ui_keys.nvgt"
 
 // This file has no working chord() helper to fall back on: the plugin registers
 // no such function, so the note array is built by hand below, in triad().

@@ -5,8 +5,8 @@
 
 // The window helpers are separate on purpose: they are about a window on the
 // screen, not about MIDI, and a script that only sends notes does not want them.
-#include "../nvmidi_ui.nvgt"
-#include "../nvmidi_ui_keys.nvgt"
+#include "nvmidi_ui.nvgt"
+#include "nvmidi_ui_keys.nvgt"
 
 
 // echo_monitor.nvgt - speak every message a MIDI device sends.

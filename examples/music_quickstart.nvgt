@@ -1,6 +1,6 @@
 #include "../midi.nvgt"
-#include "../nvmidi_ui.nvgt"
-#include "../nvmidi_ui_keys.nvgt"
+#include "nvmidi_ui.nvgt"
+#include "nvmidi_ui_keys.nvgt"
 
 // music_quickstart.nvgt - the high level half of nvmidi, with none of the
 // scaffolding the test files carry.
