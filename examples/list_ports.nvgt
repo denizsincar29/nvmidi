@@ -7,21 +7,15 @@
 // screen, not about MIDI, and a script that only sends notes does not want them.
 #include "nvmidi_ui.nvgt"
 #include "nvmidi_ui_keys.nvgt"
-// The form is the engine's own: release/include/form.nvgt in the nvgt tree.
-// It brings two lists, two buttons and the keyboard handling with it, so this
-// script writes the layout and reads the result rather than tracking keys.
-#include "form.nvgt"
 
 
-// list_ports.nvgt - choose the input and the output port, both at once.
+// list_ports.nvgt - choose the input and the output port, one after the other.
 //
 // Run this first when something is not working, and when you want the other
-// examples to open the right device. One form shows the inputs as the first
-// list and the outputs as the second; tab moves between them, up and down move
-// inside a list, and the buttons are the usual pair - enter anywhere presses
-// OK, escape anywhere presses Cancel. OK writes the two picks into
-// midi_config.txt, Cancel writes nothing. Escape or Alt+F4 closes without
-// writing. Nothing is sent and no port is opened: this script only chooses.
+// examples to open the right device. Two lists follow each other on the same
+// window: up and down move the cursor, enter confirms. First the input (what
+// you play on), then the output (what receives the notes). Escape or Alt+F4
+// leaves without writing anything.
 //
 // Why TWO picks and not one. The earlier version asked for one number and let
 // both the input and the output take it. That is only right while the engine
@@ -31,6 +25,17 @@
 // his report, 2026-10-03 - octave-doubler announced "from nord piano 6 to motu
 // m series out" after only the Nord had been picked. The config now carries
 // the two numbers separately, so the choice cannot be crossed again.
+//
+// Why a hand-rolled list and not the engine's form. This engine does not
+// implement audio_form at all - the pinned binary carries none of
+// create_list / add_list_item / create_button / get_list_position, and
+// including the shipped form.nvgt aborts the compiler (exit 134, no output)
+// before it can report anything. menu.nvgt is no help either: its line 14 is
+// `#include "form.nvgt"`, so it is built on the very thing that does not
+// compile. The choosing loop below needs nothing from that library - a cursor,
+// up/down, enter - which is what the first version of this file did before it
+// was rewritten onto the form. With no form to lean on, that shape is the
+// correct one, and it compiles everywhere.
 //
 // The file is written into the engine's working directory, which is where
 // load() looks for it. That is what makes a picked port stick.
@@ -61,6 +66,43 @@ bool write_config(const string&in path, int in_port, int out_port) {
 	f.write("out_port = " + out_port + "\n");
 	f.close();
 	return true;
+}
+
+// One list, run to a choice. `names` is what to show, `start` is where the
+// cursor opens (the port already in the config), `title` is spoken before the
+// list. Answers the chosen index, or -1 if the user asked to stop (escape or
+// Alt+F4). The cursor moves with up and down and wraps at both ends, and every
+// move re-speaks the name, which is the whole of the feedback a screen reader
+// user needs here.
+//
+// wait(5) before each key read is the same heartbeat the window pump uses:
+// without it the loop would spin and the screen reader would never get its
+// turn to speak.
+int pick_port(const string&in title, const string[]&in names, int start) {
+	const int count = int(names.length());
+	if (count == 0) return -1;
+	if (start < 0 || start >= count) start = 0;
+	int cursor = start;
+	ui_speak(title);
+	ui_speak("Currently " + names[cursor] + ". Up and down to move, enter to take it, escape to cancel.");
+	while (true) {
+		if (!ui_pump()) return -1; // Alt+F4
+		if (key_pressed(KEY_ESCAPE)) return -1;
+		if (key_pressed(KEY_UP) || key_repeating(KEY_UP)) {
+			cursor = (cursor == 0) ? count - 1 : cursor - 1;
+			ui_speak(names[cursor]);
+			wait(40);
+			continue;
+		}
+		if (key_pressed(KEY_DOWN) || key_repeating(KEY_DOWN)) {
+			cursor = (cursor == count - 1) ? 0 : cursor + 1;
+			ui_speak(names[cursor]);
+			wait(40);
+			continue;
+		}
+		if (key_pressed(KEY_RETURN) || key_pressed(KEY_NUMPAD_ENTER)) return cursor;
+		wait(5);
+	}
 }
 
 void main() {
@@ -99,50 +141,22 @@ void main() {
 	if (in_index < 0 || in_index >= int(inputs)) in_index = 0;
 	if (out_index < 0 || out_index >= int(outputs)) out_index = 0;
 
-	// The two lists, in the order they should be read: the input first (that
-	// is the one you play into), the output second.
-	audio_form form;
-	int in_list = form.create_list("Input port: what you play on", int(inputs));
-	int out_list = form.create_list("Output port: what receives the notes", int(outputs));
+	// Build the two name lists once, so the picker only has to index them.
+	string[] in_names;
 	for (uint i = 0; i < inputs; i++) {
-		form.add_list_item(in_list, midi_input_port_name_text(i));
+		in_names.insert_last(midi_input_port_name_text(i));
 	}
+	string[] out_names;
 	for (uint i = 0; i < outputs; i++) {
-		form.add_list_item(out_list, midi_output_port_name_text(i));
+		out_names.insert_last(midi_output_port_name_text(i));
 	}
 
-	// The buttons are the engine's own default pair rather than two captions
-	// with hand wired keys: primary is what pressing enter anywhere on the
-	// form activates, cancel is what escape activates (create_button's
-	// signature: bool primary, bool cancel). That is what makes enter and
-	// escape work without this loop testing a single key.
-	form.create_button("OK", true, false);
-	form.create_button("Cancel", false, true);
+	// The input first (that is the one you play into), the output second.
+	const int picked_in = pick_port("Input port: what you play on.", in_names, in_index);
+	if (picked_in < 0) return;
 
-	// Land on the port from the file, in each list.
-	form.set_list_position(in_list, in_index);
-	form.focus(in_list);
-	ui_speak("Input port list: " + midi_input_port_name_text(in_index)
-		+ ". Tab for the output list. Enter writes both, escape cancels.");
-
-	// monitor() returns the pressed control, or -1 once the form is done, and
-	// it is the form's own default button rules that decide which one. The
-	// cancel button is fetched by index rather than compared to a caption, so
-	// a translated caption cannot turn OK into a cancel.
-	const int cancel_index = form.get_cancel_button();
-	while (true) {
-		if (!ui_pump()) return; // Alt+F4: leave without writing
-		int pressed = form.monitor();
-		if (pressed == -1) break;
-		if (pressed == cancel_index) return; // Cancel: leave without writing
-		// Any other button is OK, which is the only other button there is.
-		break;
-	}
-
-	// Read back what the cursor was on, not what was focused last: the user may
-	// have moved the input list and never tabbed to the output one.
-	const int picked_in = form.get_list_position(in_list);
-	const int picked_out = form.get_list_position(out_list);
+	const int picked_out = pick_port("Output port: what receives the notes.", out_names, out_index);
+	if (picked_out < 0) return;
 
 	if (write_config(config_path, picked_in, picked_out)) {
 		ui_speak("Written to the config: input " + picked_in + ", "
