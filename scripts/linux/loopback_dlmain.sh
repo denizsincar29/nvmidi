@@ -40,8 +40,13 @@ keep="${KEEP:-0}"
 
 driver="$root/tools/winmm_loopback/nvmidi_loopback.c"
 loader="$here/loopback_dlmain.c"
-artifact="$root/tools/winmm_loopback/nvmidi.dll.linux"
-status="$artifact.status"
+# The driver names its status file after the module it was loaded as, which is
+# the running executable here (the shim answers GetModuleFileNameA with
+# /proc/self/exe). So the file lands beside the binary, not in the repository -
+# and that is deliberate, not an accident of the shim: the same rule puts it
+# beside the dll on windows, and the point is to read the file the driver
+# itself chose rather than one this script decided on.
+status_for() { printf '%s' "${1%.*}.status"; }
 
 [ -f "$driver" ] || { echo "no driver source at $driver" >&2; exit 2; }
 [ -f "$loader" ] || { echo "no loader at $loader" >&2; exit 2; }
@@ -59,6 +64,7 @@ grep -n 'PROCESS_ATTACH\|PROCESS_DETACH' "$driver" | sed 's/^/  /'
 # come back on its own, and does the thread it starts do anything before the
 # process ends.
 echo "--- attempt 1: DllMain, attach and return"
+status=$(status_for "$work/attach")
 rm -f "$status"
 LOOPBACK_MODE=attach "$CC" -O2 -Wall -o "$work/attach" "$loader" -lpthread
 timeout 60 "$work/attach" || { echo "attach run failed" >&2; exit 1; }
@@ -70,13 +76,14 @@ timeout 60 "$work/attach" || { echo "attach run failed" >&2; exit 1; }
 if [ -f "$status" ]; then
 	echo "--- status after attach (the only marks DllMain left)"
 	sed 's/^/  | /' "$status"
-	cp "$status" "$work/attach.status"
+	cp "$status" "$work/attach.status.copy"
 else
 	echo "the driver wrote no status file at all" >&2
 	exit 1
 fi
 
 echo "--- attempt 2: the publish thread on a real thread, 3s"
+status=$(status_for "$work/pthread")
 rm -f "$status"
 LOOPBACK_MODE=pthread "$CC" -O2 -Wall -o "$work/pthread" "$loader" -lpthread
 LOOPBACK_MODE=pthread timeout 60 "$work/pthread"
@@ -89,7 +96,7 @@ else
 fi
 
 echo "--- verdict"
-echo "attach status: $(wc -c < "$work/attach.status") byte(s)"
+echo "attach status: $(wc -c < "$work/attach.status.copy") byte(s)"
 echo "thread status: $(wc -c < "$status") byte(s)"
 echo "the thread run reached the driver's registry stub $(grep -c 'registry' "$status" || true) time(s) - not a windows result"
 

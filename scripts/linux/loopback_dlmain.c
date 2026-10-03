@@ -35,6 +35,13 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved);
 // installed, and it also means the driver's DWORD WINAPI publish_thread is
 // declared before the caller below - a separate declaration with a subtly
 // different calling convention is a link error, not a diagnostic.
+// The driver's windows headers are skipped by the sentinels the shim
+// defines, which stand defined here for the whole translation unit - this
+// line used to undefine them, and that single line was the whole of the
+// "no such file: windows.h": the sentinels it cleared were exactly what the
+// driver's own #ifndef blocks were checking. Nothing to do on this line now;
+// the reason it is written down is that a bare #undef of windows.h's own
+// guard is the kind of fix that looks right and inverts the thing it fixes.
 #include "../../tools/winmm_loopback/nvmidi_loopback.c"
 
 // The shim's CreateThread runs the thread body inline, so publish_thread's

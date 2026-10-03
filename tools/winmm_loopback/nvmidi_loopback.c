@@ -61,10 +61,26 @@
 // 0x0007. A dispatcher that mixes the two does not merely fail to compile - it
 // misreads the messages it does compile for.
 
+// The four windows headers below are guarded, and the guard is not decoration:
+// scripts/linux/loopback_dlmain.c compiles this file on linux under
+// nvmidi_win_shim.h, which defines _WINDOWS_ and answers with its own types.
+// Unguarded, every one of these includes is a hard "file not found" there, and
+// the linux job loses the one thing it was added for - running DllMain without
+// the windows runner. On windows these macros are undefined by the toolchain
+// and the includes happen exactly as before, at the same point in the file, so
+// the windows build sees no difference at all.
+#ifndef _WINDOWS_
 #include <windows.h>
+#endif
+#ifndef _MMSYSTEM_H_
 #include <mmsystem.h>
+#endif
+#ifndef _MMDDK_
 #include <mmddk.h>
+#endif
+#ifndef _MMISCAPI_
 #include <mmiscapi.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -93,7 +109,7 @@ typedef struct {
 	DWORD_PTR	instance;
 	// The messages already handed to the output side, waiting for whoever reads
 	// the input side to arm a buffer and take them. Four bytes per message.
-	BYTE		ring[RING_SIZE];
+	unsigned char	ring[RING_SIZE];
 	DWORD		head;
 	DWORD		tail;
 } DEVICE;
@@ -166,67 +182,51 @@ static void notify_input(void) {
 
 // dwParam1 is what the plugin sent and the whole point of the device is to pass
 // it on, so the packed bytes go into the ring untouched.
-static DWORD on_output_message(DWORD msg, DWORD_PTR p1, DWORD_PTR p2) {
-	(void)p2;
-	switch (msg) {
-	case MODM_DATA:
-		ring_put(&g_out, (DWORD)p1);
-		ring_put(&g_in, (DWORD)p1);
-		notify_input();
-		return MMSYSERR_NOERROR;
-	case MODM_GETDEVCAPS: {
-		// p1 is the MIDIOUTCAPS winmm built from the registry entry, and only
-		// its szPname is ours to write: the field is fixed width, so a shorter
-		// name is zero filled and terminated rather than strcpy'd, and
-		// widening the bytes in place would run off the end of it.
-		MIDIOUTCAPS *caps = (MIDIOUTCAPS *)p1;
-		if (!caps) return MMSYSERR_INVALPARAM;
-		ZeroMemory(caps->szPname, sizeof(caps->szPname));
-		for (int i = 0; i < (int)(sizeof(caps->szPname) / sizeof(WCHAR)) - 1
-				&& DEVICE_NAME[i]; i++) {
-			caps->szPname[i] = (WCHAR)(unsigned char)DEVICE_NAME[i];
-		}
-		return MMSYSERR_NOERROR;
+
+// Every call winmm makes, in the order winmm makes them: the dll's life first,
+// then the enumeration, then whichever half the message belongs to. The halves
+// are told apart by what winmm put in the call, and the output side is tried
+// first because a driver is opened for output before it is asked about input.
+//
+// The hard part, and the thing this function got wrong, is that winmm does not
+// keep its two namespaces apart for us. MODM_OPEN, MODM_CLOSE and MODM_PREPARE
+// are 3, 4 and 5; DRV_OPEN, DRV_CLOSE and DRV_DISABLE are 3, 4 and 5 too. A
+// driver is reached through *one* entry point, so the number is all there is
+// to go on and no single table can hold both readings.
+//
+// The rule this file used to resolve it by - "a DRV_ message arrives with the
+// driver id repeated in dwParam1, the shape CheckDriverMsg tests for in the
+// reference driver" - is not what winmm does here, and the measurement that
+// says so is the whole reason the trace exists. That trace is written as the
+// first statement of driver_message, before any branch, so it captures every
+// call winmm makes. It is empty. winmm did not call ModMessage once: not with
+// a mismatched pair, not with anything.
+//
+
+// The input half's answer to the same question, and it is the same answer:
+// p1 is the MIDIINCAPS winmm built from the registry entry, and only its
+// szPname is ours to write. The field is fixed width, so a shorter name is
+// zero filled and terminated rather than strcpy'd, and widening in place would
+// run off the end of it.
+static DWORD in_caps(DWORD id, UINT msg, DWORD_PTR p1, DWORD_PTR p2) {
+	(void)id; (void)msg; (void)p2;
+	MIDIINCAPS *caps = (MIDIINCAPS *)p1;
+	if (!caps) return MMSYSERR_INVALPARAM;
+	ZeroMemory(caps->szPname, sizeof(caps->szPname));
+	for (int i = 0; i < SHIM_CAPS_NAME_LEN - 1 && DEVICE_NAME[i]; i++) {
+		caps->szPname[i] = (WCHAR)(unsigned char)DEVICE_NAME[i];
 	}
-	case MODM_LONGDATA:
-	case MODM_PREPARE:
-	case MODM_UNPREPARE:
-	case MODM_RESET:
-		// Sysex and buffer bookkeeping: accepted and discarded. A test that
-		// needs them will say so by failing on what it expected to hear.
-		return MMSYSERR_NOERROR;
-	case MODM_OPEN:
-		ring_init(&g_out);
-		return MMSYSERR_NOERROR;
-	case MODM_CLOSE:
-		return MMSYSERR_NOERROR;
-	default:
-		return MMSYSERR_NOTSUPPORTED;
-	}
+	return MMSYSERR_NOERROR;
 }
 
-// ---- the input side: the listener opens this one ----------------------------
-
-// The listener arms buffers here; whatever the output side has put in the ring
-// is copied into one now and the listener's own callback is raised. The MIDIHDR
-// arrives in dwParam2 - that is where winmm puts it, and MIDM_ADDBUFFER is the
-// only message here that carries one.
 static DWORD on_input_message(DWORD msg, DWORD_PTR p1, DWORD_PTR p2) {
 	(void)p1;
 	switch (msg) {
+	case MIDM_GETDEVCAPS:
+		return in_caps((DWORD)p1, msg, p1, p2);
 	case MIDM_OPEN:
 		ring_init(&g_in);
 		return MMSYSERR_NOERROR;
-	case MIDM_GETDEVCAPS: {
-		MIDIINCAPS *caps = (MIDIINCAPS *)p1;
-		if (!caps) return MMSYSERR_INVALPARAM;
-		ZeroMemory(caps->szPname, sizeof(caps->szPname));
-		for (int i = 0; i < (int)(sizeof(caps->szPname) / sizeof(WCHAR)) - 1
-				&& DEVICE_NAME[i]; i++) {
-			caps->szPname[i] = (WCHAR)(unsigned char)DEVICE_NAME[i];
-		}
-		return MMSYSERR_NOERROR;
-	}
 	case MIDM_CLOSE:
 		return MMSYSERR_NOERROR;
 	case MIDM_ADDBUFFER: {
@@ -234,15 +234,15 @@ static DWORD on_input_message(DWORD msg, DWORD_PTR p1, DWORD_PTR p2) {
 		if (!hdr) return MMSYSERR_INVALPARAM;
 		DWORD packed;
 		DWORD wrote = 0;
-		BYTE *buf = (BYTE *)hdr->lpData;
+		unsigned char *buf = (unsigned char *)hdr->lpData;
 		// A byte stream, not a list of dwords: the listener's own decoding
 		// walks it a byte at a time, so the status byte and its data bytes are
 		// written at the widths they arrived in.
 		while (wrote + 4 <= hdr->dwBufferLength && ring_get(&g_in, &packed)) {
-			buf[wrote++] = (BYTE)(packed & 0xFF);
-			buf[wrote++] = (BYTE)((packed >> 8) & 0xFF);
-			buf[wrote++] = (BYTE)((packed >> 16) & 0xFF);
-			buf[wrote++] = (BYTE)((packed >> 24) & 0xFF);
+			buf[wrote++] = (unsigned char)(packed & 0xFF);
+			buf[wrote++] = (unsigned char)((packed >> 8) & 0xFF);
+			buf[wrote++] = (unsigned char)((packed >> 16) & 0xFF);
+			buf[wrote++] = (unsigned char)((packed >> 24) & 0xFF);
 		}
 		hdr->dwBytesRecorded = wrote;
 		if (g_in.callback) {
@@ -269,11 +269,14 @@ static const GUID g_in_guid  = { 0x6d313532, 0x0000, 0x0000, { 0x00, 0x00, 0x6e,
 // out of the machine's list.
 static HDRVR g_driver = NULL;
 
-// What winmm asks when it is enumerating a device, and where the two halves
-// answer with their own guid. Only the two messages mingw declares are handled;
-// the name query is not among them, and what names the device is the registry
-// value that published it.
-static DWORD get_dev_caps(DWORD id, UINT msg, DWORD_PTR p1, DWORD_PTR p2) {
+// How winmm really loads us comes from where the process dies instead. Loading
+// this dll and waiting ten seconds for a status file ends with a bare crash,
+// no status line at all, while crash_filter - which handles faults nothing
+// else does - never fires. A fault inside DllMain is the only shape that fits:
+// the loader has the process pointing at an exception handler of its own for
+// the duration of DLL_PROCESS_ATTACH, so SetUnhandledExceptionFilter does not
+// install and our filter is never reached.
+static DWORD out_dev_caps(DWORD id, UINT msg, DWORD_PTR p1, DWORD_PTR p2) {
 	switch (msg) {
 	case DRV_QUERYDEVICEINTERFACESIZE:
 		*(DWORD_PTR *)p1 = (id >= 1 ? sizeof(g_in_guid) : sizeof(g_out_guid));
@@ -299,6 +302,41 @@ static DWORD get_dev_caps(DWORD id, UINT msg, DWORD_PTR p1, DWORD_PTR p2) {
 // duplicate case values on lines 271-274. The blast radius was worse than the
 // build: MODM_DATA is 7 and DRV_FREE is 0x0007, so a note arriving from the
 // plugin would have been read as a teardown had this shipped as written.
+
+static DWORD on_output_message(DWORD msg, DWORD_PTR p1, DWORD_PTR p2) {
+	(void)p2;
+	switch (msg) {
+	case MODM_DATA:
+		ring_put(&g_out, (DWORD)p1);
+		ring_put(&g_in, (DWORD)p1);
+		notify_input();
+		return MMSYSERR_NOERROR;
+	case MODM_GETDEVCAPS:
+		return out_dev_caps((DWORD)p1, msg, p1, p2);
+	case MODM_LONGDATA:
+	case MODM_PREPARE:
+	case MODM_UNPREPARE:
+	case MODM_RESET:
+		// Sysex and buffer bookkeeping: accepted and discarded. A test that
+		// needs them will say so by failing on what it expected to hear.
+		return MMSYSERR_NOERROR;
+	case MODM_OPEN:
+		ring_init(&g_out);
+		return MMSYSERR_NOERROR;
+	case MODM_CLOSE:
+		return MMSYSERR_NOERROR;
+	default:
+		return MMSYSERR_NOTSUPPORTED;
+	}
+}
+
+// ---- the input side: the listener opens this one ----------------------------
+
+// The listener arms buffers here; whatever the output side has put in the ring
+// is copied into one now and the listener's own callback is raised. The MIDIHDR
+// arrives in dwParam2 - that is where winmm puts it, and MIDM_ADDBUFFER is the
+// only message here that carries one.
+
 static DWORD driver_life(DWORD msg, DWORD_PTR p1, DWORD_PTR p2) {
 	switch (msg) {
 	case DRV_LOAD:
@@ -347,32 +385,10 @@ static DWORD driver_life(DWORD msg, DWORD_PTR p1, DWORD_PTR p2) {
 	}
 }
 
-// Every call winmm makes, in the order winmm makes them: the dll's life first,
-// then the enumeration, then whichever half the message belongs to. The halves
-// are told apart by what winmm put in the call, and the output side is tried
-// first because a driver is opened for output before it is asked about input.
-//
-// The hard part, and the thing this function got wrong, is that winmm does not
-// keep its two namespaces apart for us. MODM_OPEN, MODM_CLOSE and MODM_PREPARE
-// are 3, 4 and 5; DRV_OPEN, DRV_CLOSE and DRV_DISABLE are 3, 4 and 5 too. A
-// driver is reached through *one* entry point, so the number is all there is
-// to go on and no single table can hold both readings.
-//
-// The rule this file used to resolve it by - "a DRV_ message arrives with the
-// driver id repeated in dwParam1, the shape CheckDriverMsg tests for in the
-// reference driver" - is not what winmm does here, and the measurement that
-// says so is the whole reason the trace exists. That trace is written as the
-// first statement of driver_message, before any branch, so it captures every
-// call winmm makes. It is empty. winmm did not call ModMessage once: not with
-// a mismatched pair, not with anything.
-//
-// How winmm really loads us comes from where the process dies instead. Loading
-// this dll and waiting ten seconds for a status file ends with a bare crash,
-// no status line at all, while crash_filter - which handles faults nothing
-// else does - never fires. A fault inside DllMain is the only shape that fits:
-// the loader has the process pointing at an exception handler of its own for
-// the duration of DLL_PROCESS_ATTACH, so SetUnhandledExceptionFilter does not
-// install and our filter is never reached.
+// What winmm asks when it is enumerating a device, and where the two halves
+// answer with their own guid. Only the two messages mingw declares are handled;
+// the name query is not among them, and what names the device is the registry
+// value that published it.
 static DWORD WINAPI driver_message(DWORD dwDriverId, HDRVR hDriver,
 	DWORD dwMessage, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
 {
@@ -387,17 +403,17 @@ static DWORD WINAPI driver_message(DWORD dwDriverId, HDRVR hDriver,
 	// The trace is appended, so the file holds the whole call sequence in order
 	// rather than the last thing that happened.
 	trace_call(dwDriverId, dwMessage, dwParam1);
-	// A device interface query is answered by whichever half the message is
-	// about, decided by the number alone. answering it here would make the
-	// output half serve input devices and the reverse.
-	switch (dwMessage) {
-	case DRV_QUERYDEVICEINTERFACESIZE:
-	case DRV_QUERYDEVICEINTERFACE:
-		break;
-	default:
-		break;
-	}
-	DWORD r = on_output_message(dwMessage, dwParam1, dwParam2);
+	// Three tables, asked in order, and the order is the whole design. The
+	// DRV_ life messages come first because they are what winmm sends when
+	// the entry is opened, before any device exists; then the output half,
+	// then the input half. The two halves overlap numerically - MODM_OPEN is
+	// 3 and MIDM_OPEN is 3 - so neither can answer everything and the first
+	// one that recognises the number wins. That is also why a MIM_ callback
+	// has to be spelled out: it arrives at this entry point with a number the
+	// halves do not own.
+	DWORD r = driver_life(dwMessage, dwParam1, dwParam2);
+	if (r == DRVCNF_OK || r == DRVCNF_CANCEL) return r;
+	r = on_output_message(dwMessage, dwParam1, dwParam2);
 	if (r != MMSYSERR_NOTSUPPORTED) return r;
 	return on_input_message(dwMessage, dwParam1, dwParam2);
 }
@@ -473,27 +489,27 @@ static BOOL write_driver_entry(WCHAR *slot, size_t slot_len) {
 		WCHAR self[MAX_PATH + 2] = { 0 };
 		DWORD got = sizeof(self);
 		HKEY key = NULL;
-		if (i == 0) wcscpy(value, L"midi");
-		else _snwprintf(value, 8, L"midi%d", i);
+		if (i == 0) shim_wcpy(value, SHIM_L(midi));
+		else shim_wprintf(value, 8, i);
 		if (RegOpenKeyExW(HKEY_LOCAL_MACHINE,
-				L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Drivers32",
+				SHIM_STR("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Drivers32"),
 				0, KEY_QUERY_VALUE | KEY_SET_VALUE, &key) != ERROR_SUCCESS) {
 			// Without this key there is nowhere to publish, and that is worth
 			// saying rather than retrying.
 			return FALSE;
 		}
 		DWORD type = 0;
-		LONG r = RegQueryValueExW(key, value, NULL, &type, (BYTE *)self, &got);
+		LONG r = RegQueryValueExW(key, value, NULL, &type, (unsigned char *)self, &got);
 		if (r == ERROR_SUCCESS && self[0]) {
 			RegCloseKey(key);          // taken by something else; leave it alone
 			continue;
 		}
 		GetModuleFileNameW(g_self, self, MAX_PATH);
-		LONG w = RegSetValueExW(key, value, 0, REG_SZ, (const BYTE *)self,
-			(DWORD)((wcslen(self) + 1) * sizeof(WCHAR)));
+		LONG w = RegSetValueExW(key, value, 0, REG_SZ, (const unsigned char *)self,
+			(DWORD)((shim_wlen(self) + 1) * sizeof(WCHAR)));
 		RegCloseKey(key);
 		if (w != ERROR_SUCCESS) return FALSE;
-		wcsncpy(slot, value, slot_len - 1);
+		shim_wncpy(slot, value, slot_len - 1);
 		return TRUE;
 	}
 	return FALSE;
@@ -583,14 +599,14 @@ static DWORD WINAPI publish_thread(LPVOID unused) {
 		write_status("LOOPBACK_STATUS=registry-failed");
 		return 0;
 	}
-	wcsncpy(slot, g_slot, 31);
+	shim_wncpy(slot, g_slot, 31);
 	// Which slot, before it is opened. g_slot is filled under the loader lock
 	// and read here, so a slot name that never made it across is a separate
 	// finding from an OpenDriver that was refused; the line that reports the
 	// open names the slot too, but only if the thread survives that far.
 	{
 		char got[64] = { 0 };
-		WideCharToMultiByte(CP_ACP, 0, slot, -1, got, sizeof(got) - 1, NULL, NULL);
+		shim_w2mb(slot, got, sizeof(got) - 1);
 		char line[128];
 		snprintf(line, sizeof(line), "LOOPBACK_STATUS=slot=%s inputs_before=%u", got,
 			(unsigned int)midiInGetNumDevs());
@@ -621,16 +637,25 @@ static DWORD WINAPI publish_thread(LPVOID unused) {
 		// apart, and it has to be read immediately - every call in between is
 		// allowed to overwrite it.
 		char detail[256];
+		// The slot is printed as bytes, not as a wide string: an %ls in a
+		// printf that has no wide-string support on one of the two compilers
+		// is a portability trap, and the name is ASCII in both builds anyway.
+		// It is copied out of `slot` here, in this block, because the `got`
+		// buffer that names the slot a few statements above lives in a brace
+		// of its own and is long out of scope by now - naming it here was a
+		// compile error that said exactly that.
+		char open_slot[64] = { 0 };
+		shim_w2mb(slot, open_slot, sizeof(open_slot) - 1);
 		snprintf(detail, sizeof(detail),
-			"LOOPBACK_STATUS=open-failed slot=%ls error=%lu",
-			slot, (unsigned long)GetLastError());
+			"LOOPBACK_STATUS=open-failed slot=%s error=%lu",
+			open_slot, (unsigned long)GetLastError());
 		write_status(detail);
 		return 0;
 	}
 	UINT outs = midiOutGetNumDevs();
 	UINT ins = midiInGetNumDevs();
 	char slot8[64] = { 0 };
-	WideCharToMultiByte(CP_ACP, 0, slot, -1, slot8, sizeof(slot8) - 1, NULL, NULL);
+	shim_w2mb(slot, slot8, sizeof(slot8) - 1);
 	// A slot whose name a previous run already left behind is read back, not
 	// taken: a driver that is still held answers its own name. That is a
 	// finding, not a failure - the device is there and usable, which is all
