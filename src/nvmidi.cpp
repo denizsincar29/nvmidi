@@ -807,7 +807,7 @@ bool midi_input::open_config(midi_config* config, const std::string& name) {
 	}
 	const int index = config->find_input_port();
 	if (index < 0) {
-		set_error("no MIDI input port to open: neither \"" + config->match + "\" nor port " + std::to_string(config->port) + " was found");
+		set_error("no MIDI input port to open: neither \"" + config->match + "\" nor in_port " + std::to_string(config->input_port) + " was found");
 		return false;
 	}
 	return open(static_cast<unsigned int>(index), name);
@@ -1211,7 +1211,7 @@ bool midi_output::open_config(midi_config* config, const std::string& name) {
 	}
 	const int index = config->find_output_port();
 	if (index < 0) {
-		set_error("no MIDI output port to open: neither \"" + config->match + "\" nor port " + std::to_string(config->port) + " was found");
+		set_error("no MIDI output port to open: neither \"" + config->match + "\" nor out_port " + std::to_string(config->output_port) + " was found");
 		return false;
 	}
 	return open(static_cast<unsigned int>(index), name);
@@ -1758,7 +1758,7 @@ int midi_find_output_port(const std::string& substring) {
 	return -1;
 }
 
-midi_config::midi_config() : match("nord"), port(0), last_port(-1), last_name() {}
+midi_config::midi_config() : match("nord"), input_port(0), output_port(0), port(0), last_port(-1), last_name() {}
 
 bool midi_config::load(const std::string& path) {
 	clear_error();
@@ -1779,10 +1779,23 @@ bool midi_config::load(const std::string& path) {
 		if (key.empty()) continue;
 		if (key == "match" || key == "name" || key == "port_name") {
 			match = value;
-		} else if (key == "port" || key == "index") {
+		} else if (key == "in_port" || key == "input_port" || key == "in_index") {
 			std::istringstream number(value);
 			int index = 0;
-			if (number >> index) port = index;
+			if (number >> index) input_port = index;
+			else set_error("the configuration file " + path + " has an in_port that is not a number: \"" + value + "\"");
+		} else if (key == "out_port" || key == "output_port" || key == "out_index") {
+			std::istringstream number(value);
+			int index = 0;
+			if (number >> index) output_port = index;
+			else set_error("the configuration file " + path + " has an out_port that is not a number: \"" + value + "\"");
+		} else if (key == "port" || key == "index") {
+			// The single-key form written by older scripts. It named one index
+			// for both sides, which is exactly the crossing this file no longer
+			// does; reading it into both keeps an old config usable.
+			std::istringstream number(value);
+			int index = 0;
+			if (number >> index) { input_port = index; output_port = index; port = index; }
 			else set_error("the configuration file " + path + " has a port that is not a number: \"" + value + "\"");
 		}
 		// Anything else is a key from a newer version; ignoring it keeps an
@@ -1809,9 +1822,13 @@ int midi_config::pick(bool input) {
 		return found;
 	}
 	const unsigned int count = input ? midi_input_port_count() : midi_output_port_count();
-	if (port >= 0 && static_cast<unsigned int>(port) < count) {
-		last_port = port; last_name = input ? midi_input_port_name((unsigned int)port) : midi_output_port_name((unsigned int)port);
-		return port;
+	// Each side reads its own number now (input_port / output_port), so a pick
+	// made for the output cannot be applied to the input list or the other way
+	// round. `port` is only the alias an old single-key file fills.
+	const int configured = input ? input_port : output_port;
+	if (configured >= 0 && static_cast<unsigned int>(configured) < count) {
+		last_port = configured; last_name = input ? midi_input_port_name((unsigned int)configured) : midi_output_port_name((unsigned int)configured);
+		return configured;
 	}
 	last_port = -1; last_name.clear();
 	return -1;

@@ -7,60 +7,58 @@
 // screen, not about MIDI, and a script that only sends notes does not want them.
 #include "nvmidi_ui.nvgt"
 #include "nvmidi_ui_keys.nvgt"
+// The form is the engine's own: release/include/form.nvgt in the nvgt tree.
+// It brings two lists, two buttons and the keyboard handling with it, so this
+// script writes the layout and reads the result rather than tracking keys.
+#include "form.nvgt"
 
 
-// list_ports.nvgt - pick a MIDI port with the arrow keys.
+// list_ports.nvgt - choose the input and the output port, both at once.
 //
 // Run this first when something is not working, and when you want the other
-// examples to open the right device. Up and down move through the ports, each
-// one is spoken as it is highlighted, and enter writes the one you stopped on
-// into midi_config.txt. Escape leaves without writing anything. Nothing is
-// sent and no port is opened: this script only chooses.
+// examples to open the right device. One form shows the inputs as the first
+// list and the outputs as the second; tab moves between them, up and down move
+// inside a list, and the buttons are the usual pair - enter anywhere presses
+// OK, escape anywhere presses Cancel. OK writes the two picks into
+// midi_config.txt, Cancel writes nothing. Escape or Alt+F4 closes without
+// writing. Nothing is sent and no port is opened: this script only chooses.
 //
-// The port list is the inputs, because that is what midi_config feeds:
-// open_config() uses find_input_port(). A script that plays takes the same
-// number from find_output_port(), and on most keyboards the input and output
-// lists line up. The picked index is written as an explicit `port = N`, and
-// the `match` line is written empty on purpose - an empty substring cannot
-// match anything, so the index is what decides and the same device is chosen
-// on the next run. [Change that here if you want a name search instead.]
+// Why TWO picks and not one. The earlier version asked for one number and let
+// both the input and the output take it. That is only right while the engine
+// lists inputs and outputs in the same order, and on Дениз's rig it does not:
+// the input was the Nord and the output resolved to the MOTU, because "the
+// third input" and "the third output" are different devices. Written up from
+// his report, 2026-10-03 - octave-doubler announced "from nord piano 6 to motu
+// m series out" after only the Nord had been picked. The config now carries
+// the two numbers separately, so the choice cannot be crossed again.
 //
 // The file is written into the engine's working directory, which is where
 // load() looks for it. That is what makes a picked port stick.
 
-// The plugin hands its strings over as a count plus an indexed byte; the
-// wrapper turns each pair into a string. See nvmidi_string.nvgt for why the
-// crossing is a byte at a time and not a std::string.
-// Says where the selection is now. One port per line, because this engine's
-// screen reader speaks each call as it comes (speak_wait in the engine's own
-// sound class does the same) - a single sentence holding the whole list would
-// bury the port just moved to.
-void announce_port(int unused, int chosen, uint count) {
-	ui_speak("Port " + (chosen + 1) + " of " + count + ": " + midi_input_port_name_text(chosen));
-}
-
-// Writes the choice where the other examples will read it.
+// Writes the two choices where the other examples will read them.
+//
+// Both lines are explicit numbers. The `match` line is written empty on
+// purpose: midi_config::pick() (src/nvmidi.cpp) tries the name match first and
+// only then falls back to `port`, and an empty substring cannot match any port
+// name - so the number is what decides, and a stale name can never override a
+// fresh pick. The two keys are `in_port` and `out_port`; the reader in
+// midi_config knows them separately (this is the same file the examples load
+// with load_if_present).
 //
 // This is the file class from the engine's stream library - the manual's page
 // for it is doc/src/references/builtin/!Streams/file, and its Methods/open
 // page gives the exact signature: bool file::open(string filename, string
 // mode), modes a/w/r/r+, and a file opened for writing is created if it is
-// not there. The mode used to be "w" alone; the manual's own example passes
-// "wb", and the b is accepted and ignored for compatibility, so "w" is left
-// as it is. write() is the stream method and returns the byte count, and one
+// not there. write() is the stream method and returns the byte count, and one
 // newline ends each line because there is no write_line() on this class.
-//
-// The first version of this function called open() and write_line() as free
-// functions holding a file handle. That is not the engine's API at all: both
-// names failed to compile ("No matching symbol 'open'"), and this is the
-// version that the manual supports.
-bool write_config(const string&in path, int port) {
+bool write_config(const string&in path, int in_port, int out_port) {
 	file f;
 	if (!f.open(path, "w")) return false;
 	f.write("# Chosen with list_ports.nvgt. An empty match cannot match any\n");
-	f.write("# port name, so \"port\" is what decides which device is opened.\n");
+	f.write("# port name, so the numbers are what decide which devices open.\n");
 	f.write("match = \n");
-	f.write("port = " + port + "\n");
+	f.write("in_port = " + in_port + "\n");
+	f.write("out_port = " + out_port + "\n");
 	f.close();
 	return true;
 }
@@ -81,82 +79,82 @@ void main() {
 	ui_speak("MIDI backend: " + midi_api_name_text());
 
 	uint inputs = midi_input_port_count();
-	if (inputs == 0) {
-		ui_speak("No MIDI input ports found. Nothing to choose from. Press Alt+F4 to close.");
+	uint outputs = midi_output_port_count();
+	if (inputs == 0 || outputs == 0) {
+		ui_speak("Need at least one MIDI input and one output port. Found "
+			+ inputs + " input(s) and " + outputs + " output(s). "
+			+ "Nothing to choose from. Press Alt+F4 to close.");
 		while (ui_pump()) { if (stop_key()) return; }
 		return;
 	}
-	ui_speak(inputs + " input port(s). Up and down choose one, enter writes it to the config, escape leaves without writing.");
 
-	// Which port is already in the config, so the first arrow moves from
-	// there instead of from the top of the list.
+	// Which ports are already in the config, so each list opens on the file's
+	// current pick instead of on the top. One config object answers both
+	// questions; find_input_port() and find_output_port() each resolve their
+	// own line (src/nvmidi.cpp midi_config::pick).
 	midi_config@ current = midi_config_create();
 	current.load_if_present(config_path);
-	int chosen = current.find_input_port();
-	if (chosen < 0 || chosen >= int(inputs)) chosen = 0;
+	int in_index = current.find_input_port();
+	int out_index = current.find_output_port();
+	if (in_index < 0 || in_index >= int(inputs)) in_index = 0;
+	if (out_index < 0 || out_index >= int(outputs)) out_index = 0;
 
-	announce_port(0, chosen, inputs);
+	// The two lists, in the order they should be read: the input first (that
+	// is the one you play into), the output second.
+	audio_form form;
+	int in_list = form.create_list("Input port: what you play on", int(inputs));
+	int out_list = form.create_list("Output port: what receives the notes", int(outputs));
+	for (uint i = 0; i < inputs; i++) {
+		form.add_list_item(in_list, midi_input_port_name_text(i));
+	}
+	for (uint i = 0; i < outputs; i++) {
+		form.add_list_item(out_list, midi_output_port_name_text(i));
+	}
 
-	// The loop asks about keys, and it asks two different questions.
-	//
-	// Escape and Alt+F4 are the stop key, tested exactly the way
-	// nvmidi_ui_keys.nvgt tests it everywhere else. Up and down move the
-	// selection. Both are listed as just a key read: key_pressed() is level
-	// triggered - it answers true for as long as the key is held - so holding
-	// an arrow would otherwise run the list away, and key_repeating() is the
-	// engine's own name for a key that is held down. Listing both is what the
-	// engine's own bundled form and menu scripts do.
-	//
-	// Enter is different on purpose. "Write it" is a step in a dialog, not a
-	// state: the whole run either wrote the file or did not, and writing it a
-	// second time before the second is over changes nothing. So enter is a
-	// plain read with no edge logic in front of it, and the settle timer is
-	// what keeps it to one write - the file is only touched while `entered`
-	// is still zero.
-	//
-	// 30 ms is not a guess either: the engine's own form and menu code call
-	// wait(5) per turn, and measured on the engine, key_pressed(KEY_SPACE)
-	// stops answering once the turn is longer than 40 ms. 30 is the longest
-	// wait that still sees a tap on every one of them.
-	const double settle = 1000.0; // how long the last word is left to be spoken
-	const double frame = 30.0;
-	double entered = 0.0;
+	// The buttons are the engine's own default pair rather than two captions
+	// with hand wired keys: primary is what pressing enter anywhere on the
+	// form activates, cancel is what escape activates (create_button's
+	// signature: bool primary, bool cancel). That is what makes enter and
+	// escape work without this loop testing a single key.
+	form.create_button("OK", true, false);
+	form.create_button("Cancel", false, true);
+
+	// Land on the port from the file, in each list.
+	form.set_list_position(in_list, in_index);
+	form.focus(in_list);
+	ui_speak("Input port list: " + midi_input_port_name_text(in_index)
+		+ ". Tab for the output list. Enter writes both, escape cancels.");
+
+	// monitor() returns the pressed control, or -1 once the form is done, and
+	// it is the form's own default button rules that decide which one. The
+	// cancel button is fetched by index rather than compared to a caption, so
+	// a translated caption cannot turn OK into a cancel.
+	const int cancel_index = form.get_cancel_button();
 	while (true) {
-		if (!ui_pump()) return; // escape or Alt+F4: leave without writing
-		if (stop_key()) return;
+		if (!ui_pump()) return; // Alt+F4: leave without writing
+		int pressed = form.monitor();
+		if (pressed == -1) break;
+		if (pressed == cancel_index) return; // Cancel: leave without writing
+		// Any other button is OK, which is the only other button there is.
+		break;
+	}
 
-		const bool up = a_key(KEY_UP);
-		const bool down = a_key(KEY_DOWN);
-		// Enter can come from either key; a keyboard without a numpad has
-		// only the main one.
-		const bool enter = a_key(KEY_RETURN) || a_key(KEY_NUMPAD_ENTER);
+	// Read back what the cursor was on, not what was focused last: the user may
+	// have moved the input list and never tabbed to the output one.
+	const int picked_in = form.get_list_position(in_list);
+	const int picked_out = form.get_list_position(out_list);
 
-		if (up) {
-			chosen = (chosen - 1 + int(inputs)) % int(inputs); // wrap at the ends
-			announce_port(0, chosen, inputs);
-		}
-		if (down) {
-			chosen = (chosen + 1) % int(inputs);
-			announce_port(0, chosen, inputs);
-		}
-
-		// The file is only touched here, and only once, so nothing a held key
-		// does can write it twice.
-		if (enter && entered == 0.0) {
-			// Ask the write, do not assume it. write_config returns false when
-			// the file cannot be opened - a read-only folder, or a name an
-			// engine has locked - and the line after this used to say "Written"
-			// whatever happened, which is a window that lies about the one
-			// thing it did.
-			if (write_config(config_path, chosen)) {
-				ui_speak("Written to the config: input port " + chosen + ", " + midi_input_port_name_text(chosen) + ". Closing in a second.");
-			} else {
-				ui_speak("Could not write the config. Nothing was changed. Closing in a second.");
-			}
-			entered = ticks();
-		}
-		if (entered != 0.0 && ticks() - entered >= settle) return;
-
-		wait(frame);
+	if (write_config(config_path, picked_in, picked_out)) {
+		ui_speak("Written to the config: input " + picked_in + ", "
+			+ midi_input_port_name_text(picked_in) + "; output " + picked_out
+			+ ", " + midi_output_port_name_text(picked_out) + ". Closing in a second.");
+	} else {
+		ui_speak("Could not write the config. Nothing was changed. Closing in a second.");
+	}
+	const double settle = 1000.0; // how long the last word is left to be spoken
+	const double entered = ticks();
+	while (ticks() - entered < settle) {
+		if (!ui_pump()) return;
+		wait(30);
 	}
 }

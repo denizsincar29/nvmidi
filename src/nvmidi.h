@@ -727,7 +727,17 @@ public:
 
 	// The substring searched for, "nord" unless the file says otherwise.
 	std::string match;
-	int port; // index used when the substring finds nothing
+	// The fallback index used when the substring finds nothing. There are TWO,
+	// not one, because the input and output lists are ordered independently:
+	// "the third input" and "the third output" are different devices as soon
+	// as a machine lists them differently (Дениз's Nord on the input side and
+	// the MOTU on the output side, 2026-10-03). One shared index silently
+	// crossed the two, so the config file now carries in_port and out_port.
+	// `port` stays as the name of the input fallback for an old file that
+	// still writes the single key.
+	int input_port;
+	int output_port;
+	int port; // deprecated alias: reading an old "port = N" sets both of the above
 
 private:
 	int pick(bool input);
