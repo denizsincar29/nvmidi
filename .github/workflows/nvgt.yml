@@ -314,9 +314,8 @@ jobs:
           # that is only ever #included must not be run, and must not carry a
           # main() either - its includer has one, and an included main() is not
           # a declaration, it is a second definition. nvmidi_constants.nvgt is
-          # #included by midi.nvgt, midi.nvgt by nine scripts, and
-          # examples/nvmidi_ui_keys.nvgt by five examples. Append a main() to any
-          # of them and every includer fails with "A function with the same name
+          # #included by midi.nvgt, and midi.nvgt by every script. Append a
+          # main() to any of them and every includer fails with "A function with the same name
           # and parameters already exists", naming the appended line (measured,
           # runs 37012913997 and 37013162052); leave it out and the file, run on
           # its own, stops one check earlier with "No entry point found" (run
@@ -350,21 +349,18 @@ jobs:
           # TECHNICAL.md has the whole story under "No entry point found".
           for script in scripts/*.nvgt examples/*.nvgt tests/*.nvgt; do
             [ -e "$script" ] || continue
-            # The two ui helpers are headers and reach the sweep through the
-            # glob above, so they are excluded here by name. No "compiled alone"
-            # branch for them: what a header needs is its includer's context, and
-            # both are #included by five examples each, which are run below.
+            # No example is exempt any more. The two ui helpers that used to
+            # be named here are gone: the examples call show_window, wait and
+            # the screen reader directly now, so nothing included by an example
+            # sits in the glob above.
             #
-            # There is no second exemption. The script-side JSON reader that
+            # The script-side JSON reader that
             # needed one is gone: json support lives in the plugin's own
             # midi_config::load(), in C++, so the two files it used to hide in
             # (json_value_test.nvgt, json_config_test.nvgt) and the example
             # that reached them (octave-doubler-json-config.nvgt) have been
             # deleted. Every example now reads the same midi_config.json and
             # carries its own main(), so the sweep needs no case for it.
-            case "$script" in
-              examples/nvmidi_ui.nvgt | examples/nvmidi_ui_keys.nvgt) continue ;;
-            esac
             # get_nvmidi.nvgt is not a test, it is the downloader: running it
             # downloads the published release over the library this job just
             # built and placed, so every script after it is compiled against a

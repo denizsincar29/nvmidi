@@ -1,65 +1,37 @@
-// One include gets everything: the plugin itself, the note and controller
-// constants, the pitch table, and the string helpers. midi.nvgt carries the
-// #pragma plugin line, so nothing else here needs to ask for the library.
+// echo_monitor.nvgt - speak every message the device on the input port sends.
+// Run this first: it is the quickest way to see that input works.
+// Escape stops.
+
 #include "../midi.nvgt"
 
-// The window helpers are separate on purpose: they are about a window on the
-// screen, not about MIDI, and a script that only sends notes does not want them.
-#include "nvmidi_ui.nvgt"
-#include "nvmidi_ui_keys.nvgt"
+midi_input@ keyboard;
+midi_message m;
 
-
-// echo_monitor.nvgt - speak every message a MIDI device sends.
-//
-// The quickest way to confirm input works end to end. Play a few notes, turn
-// a knob, move the pitch wheel, and listen to what arrives.
-//
-// This one only listens: it opens an input port and speaks what arrives. It
-// does not send anything back, so a message you play does not come out twice.
-// octave-doubler.nvgt is the example that sends - run this one beside it if
-// you want to hear the same note arriving and leaving.
-//
-// The port comes from midi_config.json next to this script, so pointing it at
-// another keyboard is a matter of editing that file.
-//
-// Press escape to stop.
-
+void say(const string&in text) {
+	print(text + "\n");
+	if (SCREEN_READER_AVAILABLE) screen_reader_speak(text, false);
+}
 
 void main() {
-	if (!ui_open("nvmidi - echo")) {
-		return;
-	}
-	wait(50); // let the reader speak the window title first
+	show_window("nvmidi - echo");
 
 	if (midi_input_port_count() == 0) {
-		ui_speak("No MIDI input ports. Plug the keyboard in first.");
+		say("No MIDI input ports. Plug the keyboard in first.");
 		return;
 	}
 
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.json");
-
-	midi_input@ keyboard = midi_input_create();
+	@keyboard = midi_input_create();
 	if (!keyboard.open_config(config, "nvmidi echo")) {
-		ui_speak("Cannot open " + midi_config_text(config) + ": " + midi_last_error_text());
+		say("Cannot open " + midi_config_text(config) + ": " + midi_last_error_text());
 		return;
 	}
-	ui_speak("Listening on " + midi_input_name_text(keyboard) + ". Play. Alt+F4 stops.");
+	say("Listening on " + midi_input_name_text(keyboard) + ". Play. Escape stops.");
 
-	while (ui_pump()) {
-		if (stop_key()) break;
-		// A common variable, filled by reference: the engine copies the
-		// argument into it, which is what midi_message's opAssign behaviour is
-		// registered for. A handle cannot stand in for it - this is a value
-		// type, and a handle exists only for a reference type.
-		midi_message m;
-		while (keyboard.next_message(m)) {
-			// One line per message, spoken. midi_message_text(m) already reads
-			// like "note on, channel 1, note 60, velocity 100".
-			ui_speak(midi_message_text(m));
-		}
+	while (!key_pressed(KEY_ESCAPE)) {
+		while (keyboard.next_message(m)) say(midi_message_text(m));
+		wait(5);
 	}
-
 	keyboard.close();
-	ui_speak("Stopped.");
 }

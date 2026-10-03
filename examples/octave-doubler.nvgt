@@ -1,111 +1,53 @@
-// One include gets everything: the plugin itself, the note and controller
-// constants, the pitch table, and the string helpers. midi.nvgt carries the
-// #pragma plugin line, so nothing else here needs to ask for the library.
+// octave-doubler.nvgt - play a keyboard through a synth on the same computer:
+// every note arrives on the input port and leaves through the output port, an
+// octave higher. Escape stops.
+//
+// The handles are file scope globals and are assigned inside main(), not where
+// they are declared: a script global is initialised before the plugin has
+// registered its types, so a handle created there is not the one main() gets.
+
 #include "../midi.nvgt"
 
-// The window helpers are separate on purpose: they are about a window on the
-// screen, not about MIDI, and a script that only sends notes does not want them.
-#include "nvmidi_ui.nvgt"
-#include "nvmidi_ui_keys.nvgt"
-
-
-// octave-doubler.nvgt - play a keyboard plugged into the computer through a
-// synth running on the same computer.
-//
-// Reads note messages from one port and forwards them to another, transposed
-// and with the velocity scaled. Shows both directions working at once.
-// (Renamed from keyboard_to_synth.nvgt: the name should say what it does.)
-//
-// Press escape to stop. On the way out every note is released, so nothing is
-// left sounding. Both ports come from midi_config.json next to this script.
-
-// Declared here rather than at file scope: a script global is initialised
-// before the plugin has registered its types, so a handle kept outside a
-// function cannot be assigned to once main() runs.
 midi_input@ input;
 midi_output@ output;
-
-void panic() {
-	output.all_notes_off();
-	input.close();
-	output.close();
-	ui_speak("Stopped.");
-}
-
+midi_message m;
 
 void main() {
-	if (!ui_open("nvmidi - keyboard to synth")) {
-		return;
-	}
-	wait(50); // let the reader speak the window title first
-
-	if (midi_input_port_count() == 0 || midi_output_port_count() == 0) {
-		ui_speak("Need at least one input and one output port.");
-		return;
-	}
+	show_window("nvmidi - keyboard to synth");
 
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.json");
-
-	// The config is read here, by this script, from a file - not by the plugin
-	// and not over a network. This block says which file answered, in case it
-	// is not the one expected: a relative path is taken from the process
-	// working directory, which is not always this folder. The two the plugin
-	// reads itself are named below too, so the three lines together are the
-	// whole picture of what decided the ports.
-	{
-		const string path = midi_config_path_text(config);
-		if (path == "") {
-			ui_speak("No config file. Defaults: " + midi_config_text(config));
-		} else {
-			ui_speak("Config " + path + ": " + midi_config_text(config));
-		}
-	}
-
 	@input = midi_input_create();
 	@output = midi_output_create();
-
 	if (!input.open_config(config, "nvmidi forward in")) {
-		ui_speak("Input (" + midi_config_text(config) + "): " + midi_last_error_text());
+		print("Cannot open the input: " + midi_last_error_text() + "\n");
 		return;
 	}
 	if (!output.open_config(config, "nvmidi forward out")) {
-		ui_speak("Output (" + midi_config_text(config) + "): " + midi_last_error_text());
+		print("Cannot open the output: " + midi_last_error_text() + "\n");
 		input.close();
 		return;
 	}
-	ui_speak("From " + midi_input_name_text(input) + " to " + midi_output_name_text(output)
-		+ " (" + midi_input_port_name_text(input.get_port()) + " to "
-		+ midi_output_port_name_text(output.get_port()) + "), an octave up. Alt+F4 stops.");
 
-	// ui_pump() keeps the window alive and is also the Alt+F4 test, so this
-	// loop can always be stopped from the keyboard.
-	while (ui_pump()) {
-		if (stop_key()) break;
-		// As in echo_monitor: one common variable filled by reference, copied
-		// into it through midi_message's opAssign behaviour.
-		midi_message m;
+	while (!key_pressed(KEY_ESCAPE)) {
 		while (input.next_message(m)) {
 			uint command = m.status & 0xf0;
-
-			if (command == 0x90 && m.data2 > 0) {
-				// Note on. Transpose up an octave, but keep it in range.
-				int note = m.data1 + 12;
-				if (note > 127) note -= 12;
-				output.send_note_on(m.channel, note, m.data2);
-			} else if (command == 0x80 || (command == 0x90 && m.data2 == 0)) {
-				// Note off, including the note-on-with-velocity-zero form
-				// many keyboards use.
-				int note = m.data1 + 12;
-				if (note > 127) note -= 12;
-				output.send_note_off(m.channel, note, m.data2);
-			} else if (command == 0xe0) {
-				// Pitch bend passes through unchanged.
-				output.send(m.status, m.data1, m.data2);
+			if (command == 0xe0) {
+				output.send(m.status, m.data1, m.data2); // pitch bend passes through
+				continue;
 			}
-			// Everything else is dropped. Add cases here as you need them.
+			const bool on = (command == 0x90 && m.data2 > 0);
+			const bool off = (command == 0x80 || (command == 0x90 && m.data2 == 0));
+			if (!on && !off) continue;
+			int note = m.data1 + 12; // an octave up, kept inside 0..127
+			if (note > 127) note -= 12;
+			if (on) output.send_note_on(m.channel, note, m.data2);
+			else output.send_note_off(m.channel, note, m.data2);
 		}
+		wait(5);
 	}
 
-	panic();
+	output.all_notes_off(); // never leave a note sounding
+	output.close();
+	input.close();
 }

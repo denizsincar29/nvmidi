@@ -616,6 +616,56 @@ thread is not safe.
 The queue holds 4096 messages. If a script stops draining it, the oldest are
 dropped rather than memory growing without bound.
 
+## The wrapper
+
+`midi.nvgt` is the way a script uses this plugin. It is a thin script layer
+over the library and changes nothing about what the library does; it removes
+three things every script would otherwise write for itself.
+
+It wraps the awkward types in classes, so a function that hands back a message
+hands back something a script can read:
+
+```angelscript
+midi_message_view v(m);
+if (v.is_note_on()) screen_reader_speak(v.note_name() + " velocity " + v.velocity());
+```
+
+The view answers the same questions the message does — `is_note()`,
+`is_note_on()`, `is_note_off()`, `is_control_change()`, `is_pedal()`, `note()`,
+`velocity()`, `controller()`, `pedal_type()`, `pitch_bend()`, `program()`,
+`aftertouch()`, `channel_pressure()`, `note_name()`, `name()` — as calls rather
+than as properties, because they are forwarding to the message and a script
+class cannot turn a function into a property for its caller.
+
+It turns text into strings, so a name is a name rather than a byte count and an
+index:
+
+```angelscript
+screen_reader_speak(midi_input_port_name_text(0));
+screen_reader_speak(midi_last_error_text());
+screen_reader_speak(midi_message_text(m));
+```
+
+And it lets a note be named rather than numbered, on both the input and the
+output side:
+
+```angelscript
+midi_output_play_note(out, "E4", 100);
+midi_output_play_chord(out, "C4 E4 G4".split(" "), 100);
+midi_input_play_note(in, "C5", 100);   // back out of the keyboard's own port
+```
+
+Those are free functions rather than methods of the port, because AngelScript
+cannot add methods to a class the library has already registered — the port
+classes belong to the library, and a script cannot extend them. The chord
+functions take the same `array<midi_note@>` the library does; for a named chord
+that means splitting a string into an array first, as above.
+
+Everything the library documents works from AngelScript directly — this is a
+wrapper, not a replacement — but a new script should not need to touch the byte
+tables at all. Whether the string helpers are needed at all, and why text
+crosses the plugin boundary as bytes, is under "Strings arrive as bytes" above.
+
 ## Examples
 
 `examples/` holds the five demonstration scripts, all of which read
@@ -625,8 +675,9 @@ the config picks), `echo_monitor` (speaks every incoming message),
 (chords and patterns on the keyboard's own sound engine) and `music_quickstart`
 (the music API in the fewest lines). Each opens a window with `show_window`,
 speaks its messages through the screen reader as well as printing them, and
-exits on Alt+F4. `nvmidi_ui.nvgt` is the shared helper they include; its own
-header says what it gives and why.
+exits on escape. They are deliberately short and include nothing but
+`midi.nvgt`: an example that hid the API behind a helper of its own would not
+be showing the API.
 
 ## Tests
 

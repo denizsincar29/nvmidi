@@ -1,141 +1,55 @@
-// One include gets everything: the plugin itself, the note and controller
-// constants, the pitch table, and the string helpers. midi.nvgt carries the
-// #pragma plugin line, so nothing else here needs to ask for the library.
+// play_chord.nvgt - one chord, every pattern the player knows, and a key that
+// plays it again. Escape stops.
+//
+// The length is set through a local handle rather than through notes[i]: the
+// engine refuses a field assignment through an indexed handle.
+
 #include "../midi.nvgt"
 
-// The window helpers are separate on purpose: they are about a window on the
-// screen, not about MIDI, and a script that only sends notes does not want them.
-#include "nvmidi_ui.nvgt"
-#include "nvmidi_ui_keys.nvgt"
+midi_output@ synth;
 
-// This file has no working chord() helper to fall back on: the plugin registers
-// no such function, so the note array is built by hand below, in triad().
+void say(const string&in text) {
+	print(text + "\n");
+	if (SCREEN_READER_AVAILABLE) screen_reader_speak(text, false);
+}
 
-// play_chord.nvgt - play chords and patterns, and keep playing while the
-// window stays open.
-//
-// The port is an *output* port, and it has to be: the chord methods are
-// registered on midi_output, so a midi_input either fails to compile or, on a
-// build where it did compile, sends nothing anywhere. music_quickstart.nvgt
-// had this right from the start, and this reads like it now.
-//
-// What this file adds over music_quickstart is the pattern player. That is the
-// whole difference, and it is worth an example because the patterns are the
-// part of the high level layer nobody guesses: one note array, and a name -
-// spread, arpeggio, quick, fast, strum, repeat - lays the same notes out in
-// time differently. music_quickstart builds every arrangement by hand, note by
-// note, which is what you have to do when the pattern player is not the point.
-//
-// The earlier version did neither in a form anyone could hear. It opened the
-// port, ran four chords and closed it in one pass: on a keyboard that listens
-// to its own MIDI in, closing the port before the first _wait returns can drop
-// the notes, and there was no loop to show anything afterwards, so the window
-// appeared, closed, and the run was over. The port now stays open until the
-// user stops it, the same way music_quickstart.nvgt does it.
-
-// The three notes of the chord this file plays, as one array. Every pattern
-// below is handed a fresh array built the same way, so the only thing that
-// changes between runs is the pattern itself.
-//
-// The length is set through a local handle and not through notes[i] directly:
-// assigning a field through an indexed handle is a shape this engine refuses
-// (play_chord.nvgt, 1 October - the "No matching symbol" family on a line that
-// looks ordinary). Copy the handle out, set the field, and the change is the
-// one that travels.
 array<midi_note@>@ triad(double ms) {
 	array<midi_note@>@ notes = array<midi_note@>();
-	notes.insert_last(nvmidi_note_create(60, 100)); // middle C
-	notes.insert_last(nvmidi_note_create(64, 100));
-	notes.insert_last(nvmidi_note_create(67, 100));
-	for (uint i = 0; i < notes.length(); i++) {
-		midi_note@ n = notes[i];
-		n.length = midi_duration(ms, MIDI_MS);
+	string[] names = {"C4", "E4", "G4"};
+	for (uint i = 0; i < names.length(); i++) {
+		midi_note@ n = midi_note_named(names[i], 100);
+		n.length = midi_duration_create(ms, MIDI_MS);
+		notes.insert_last(n);
 	}
 	return notes;
 }
 
 void main() {
-	if (!ui_open("nvmidi - chords")) {
-		return;
-	}
-	wait(50); // let the reader speak the window title first
+	show_window("nvmidi - chords");
 
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.json");
-
-	int port = config.find_output_port();
-	if (port < 0) {
-		ui_speak("No port matches " + config.match + " and the fallback is empty. Check midi_config.json.");
+	@synth = midi_output_create();
+	if (!synth.open_config(config, "nvmidi chords")) {
+		say("Cannot open an output port: " + midi_last_error_text());
 		return;
 	}
+	synth.tempo = 96.0;
 
-	midi_output@ keyboard = midi_output_create();
-	if (!keyboard.open_config(config, "nvmidi chord test")) {
-		ui_speak("Cannot open: " + midi_last_error_text());
-		return;
-	}
-	// A midi_input's describe* carries the port the input side chose; on an
-	// output it comes back empty, which is why this reads the picked index
-	// instead of the config text. Measured: the same call works from
-	// list_ports.nvgt on a midi_input, and the input-only comment in the
-	// readme's chord section is what pointed at the difference.
-	ui_speak("Playing on output port " + port + ". Alt+F4 stops.");
+	say("All three at once.");
+	synth.play_chord_wait(triad(700.0));
 
-	// The tempo lives on the music class, so a note written as "a beat" means
-	// one beat here and not the 120 default. duration() reads that tempo for
-	// you: change keyboard.tempo once and every length follows.
-	keyboard.tempo = 96.0;
-
-	// A major chord, all notes at once, held for a second.
-	keyboard.play_chord_wait(triad(1000.0));
-
-	// The same chord in every unit the duration object understands: a beat
-	// at the class tempo, half a bar, and a length counted in MIDI ticks.
-	// Beats and bars are converted by the duration itself, so a script can
-	// think in music and pass milliseconds only where the hardware demands it.
-	midi_duration beat = keyboard.duration(1.0, MIDI_BEATS);
-	midi_duration half_bar = keyboard.duration(0.5, MIDI_BARS);
-	midi_duration ticks = midi_duration_create(96.0, MIDI_TICKS);
-
-	ui_speak("At " + keyboard.tempo + " bpm a beat is " + beat.to_ms() + " milliseconds, half a bar is " + half_bar.to_ms() + ".");
-
-	// One note of the triad written in ticks rather than milliseconds, to show
-	// the two lengths are the same note. The other two keep the array's length.
-	array<midi_note@>@ held = triad(0.0);
-	midi_note@ held_lead = held[0];
-	held_lead.length = ticks;
-	keyboard.play_chord_wait(held);
-
-	// An explicitly qualified unit wins over the class tempo: MUSIC_BEATS_120
-	// is always a beat at 120, whatever keyboard.tempo says. Useful for a
-	// short test that should sound the same on every run.
-	array<midi_note@>@ steady = triad(0.0);
-	midi_note@ steady_lead = steady[0];
-	steady_lead.length = keyboard.duration(1.0, MUSIC_BEATS_120);
-	keyboard.play_chord_wait(steady);
-
-	// Every pattern the player knows, one after another on the same chord, so
-	// the difference between them is audible in one run. Between two patterns
-	// the loop pumps the window, which is where Alt+F4 gets its chance even
-	// though each pattern itself waits for its own notes.
 	string[]@ patterns = {"chord", "spread", "arpeggio", "quick", "fast", "strum", "repeat"};
 	for (uint i = 0; i < patterns.length(); i++) {
-		if (!ui_pump()) break;
-		ui_speak(patterns[i]);
-		keyboard.play_midi_chord_wait(triad(220.0), patterns[i]);
+		say(patterns[i]);
+		synth.play_midi_chord_wait(triad(220.0), patterns[i]);
 	}
 
-	// The run is over, but the window stays: the port is still open, and a key
-	// press plays one more chord to show it is. Closing here instead is what
-	// made the old version silent on some keyboards - a port closed while its
-	// notes are still sounding takes the notes with it.
-	keyboard.all_notes_off();
-	ui_speak("Done. Press a key for one more chord, or Alt+F4 to close.");
-	while (ui_pump()) {
-		if (stop_key()) break;
-		if (key_pressed(KEY_SPACE)) keyboard.play_chord_wait(triad(700.0));
+	say("Space plays it again. Escape stops.");
+	while (!key_pressed(KEY_ESCAPE)) {
+		if (key_pressed(KEY_SPACE)) synth.play_chord_wait(triad(700.0));
+		wait(5);
 	}
-	keyboard.all_notes_off();
-	keyboard.close();
-	ui_speak("Stopped.");
+	synth.all_notes_off();
+	synth.close();
 }
