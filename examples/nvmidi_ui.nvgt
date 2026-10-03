@@ -38,17 +38,22 @@ void ui_speak(const string&in text) {
 
 // Open the example's window, or say why it could not be opened.
 //
-// The two lines of this function are not ceremony. show_window answers a
-// `game_window@`, a handle, and *not* a bool: the engine's own registration
-// reads "game_window@ show_window(const string& in title, uint flags = 0)",
-// read out of the engine binary's string table, and the compiler names the
-// same type when handed `if (!show_window(...))` - "Can't implicitly convert
-// from 'game_window@&' to 'bool'". A null handle is the only failure, so the
-// test is `is null` and never a truth test on the handle itself. An example
-// that got this wrong compiled on an older engine and stopped compiling here.
+// show_window answers a `bool`, and that is the engine's current registration,
+// not a guess: samtupy/nvgt src/UI.cpp:785 reads
+// "bool show_window(const string& in title, uint flags = 0)", and the reference
+// under doc/src/references/builtin/User Interface/Functions/show_window.nvgt
+// calls it as a bare statement and tests nothing. Its return is "true if window
+// creation was successful, false otherwise".
+//
+// An earlier version of this file declared `game_window@ w = show_window(...)`
+// and tested `w is null`. That compiled on the engine it was written against
+// and fails on the current one with "Identifier 'game_window' is not a data
+// type" - the type is not registered in the scripting interface at all. Caught
+// by Дениз running list_ports, 2026-10-03. The honest lesson: the old comment
+// claimed it had read that signature out of the engine binary's string table,
+// and a string table is not the registration list.
 bool ui_open(const string&in title) {
-	game_window@ w = show_window(title);
-	if (w is null) {
+	if (!show_window(title)) {
 		ui_speak("could not open a window");
 		return false;
 	}
