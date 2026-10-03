@@ -1,0 +1,329 @@
+// nvmidi_json.nvgt - a small JSON reader, enough for a config file.
+//
+// Written because a script that wants its settings in JSON should not need the
+// plugin rebuilt, and because pulling a JSON library into NVGT is a worse trade
+// than sixty lines that only have to be right about the subset a config uses.
+//
+// What it accepts, in full: objects, arrays, strings (with \" \\ \/ \b \f \n
+// \r \t and \uXXXX escapes), numbers, true, false, null. What it does not do:
+// no unicode normalisation beyond decoding \uXXXX to one byte when it fits in
+// ASCII and to '?' otherwise, no duplicate-key error (last one wins, which is
+// what every parser a config is written by already does), no comments inside
+// strings (correctly), and no streaming - the whole text is read at once.
+//
+// Measured against AngelScript's own behaviour, not against a mental model:
+//   * `array<T>` holds values, so the array is `array<json_value@>` and each
+//     entry is a handle. A local `json_value child; array.insert_last(child)`
+//     inserts a value into an array expecting a handle and does not compile;
+//     `json_value@ child = json_value();` does.
+//   * The parser is one function with an index, not a recursive-descent tree of
+//     functions, because a script cannot declare a function that returns a
+//     handle to a class declared after it in the same file.
+//   * A recursive class needs its own type in a member: `array<json_value@>`
+//     inside `json_value` is allowed, but `json_value@ parent` would make the
+//     class infinitely sized at *declaration* time on some engines. Not used
+//     here; the reader is iterative over the token stream instead.
+
+#pragma plugin nvmidi
+
+const int JSON_NULL = 0;
+const int JSON_BOOL = 1;
+const int JSON_NUMBER = 2;
+const int JSON_STRING = 3;
+const int JSON_ARRAY = 4;
+const int JSON_OBJECT = 5;
+
+class json_value {
+	int kind;
+	bool bool_value;
+	double number_value;
+	string string_value;
+
+	// Both collections are kept side by side: `keys` is empty for an array, and
+	// an object's value i lives at values[i] under keys[i]. A string key array
+	// for arrays too would waste nothing but bytes in a config file, and one
+	// class is easier to reason about than two.
+	array<string> keys;
+	array<json_value@> values;
+
+	json_value() {
+		kind = JSON_NULL;
+		bool_value = false;
+		number_value = 0.0;
+		string_value = "";
+	}
+
+	// ---- typed answers, each with the default the caller asked for --------
+	//
+	// A config file written by hand gets keys wrong. The *_or family lets the
+	// caller decide what a wrong type means (usually "keep the default") rather
+	// than forcing a check at every use.
+
+	string string_or(const string&in key, const string&in fallback) const {
+		json_value@ v = get(key);
+		if (@v == null || v.kind != JSON_STRING) return fallback;
+		return v.string_value;
+	}
+
+	int int_or(const string&in key, int fallback) const {
+		json_value@ v = get(key);
+		if (@v == null || v.kind != JSON_NUMBER) return fallback;
+		return int(v.number_value);
+	}
+
+	double number_or(const string&in key, double fallback) const {
+		json_value@ v = get(key);
+		if (@v == null || v.kind != JSON_NUMBER) return fallback;
+		return v.number_value;
+	}
+
+	bool bool_or(const string&in key, bool fallback) const {
+		json_value@ v = get(key);
+		if (@v == null || v.kind != JSON_BOOL) return fallback;
+		return v.bool_value;
+	}
+
+	// An object's member, or null. Keys beginning with '#' are skipped by the
+	// parser itself rather than here, so a documented config reads as if the
+	// comments were not there.
+	json_value@ get(const string&in key) const {
+		for (uint i = 0; i < keys.length(); i++)
+			if (keys[i] == key) return values[i];
+		return null;
+	}
+
+	uint length() const { return values.length(); }
+	json_value@ at(uint index) const {
+		if (index >= values.length()) return null;
+		return values[index];
+	}
+	string key_at(uint index) const {
+		if (index >= keys.length()) return "";
+		return keys[index];
+	}
+
+	// A string member of an object, or a string element of an array; a number
+	// asked for as text prints without a trailing ".0" when it is whole, which
+	// is what a config writer means by "port": 2.
+	string to_text() const {
+		if (kind == JSON_STRING) return string_value;
+		if (kind == JSON_NUMBER) {
+			if (number_value == floor(number_value) && abs(number_value) < 1e15)
+				return "" + int(number_value);
+			return "" + number_value;
+		}
+		if (kind == JSON_BOOL) return bool_value ? "true" : "false";
+		if (kind == JSON_NULL) return "null";
+		return "";
+	}
+}
+
+// ---- the reader -----------------------------------------------------------
+
+class json_reader {
+	string text;
+	uint pos;
+	string error;
+
+	// Parses one value and leaves `out` pointing at it. Returns false with
+	// `error` set on anything malformed; `out` is null in that case.
+	bool parse(const string&in source, json_value@&out root) {
+		text = source;
+		pos = 0;
+		error = "";
+		@root = null;
+		skip_space();
+		json_value@ value = read_value();
+		if (@value == null) return false;
+		skip_space();
+		if (pos < text.length()) {
+			error = "trailing text after the value at offset " + pos;
+			return false;
+		}
+		@root = value;
+		return true;
+	}
+
+	private void skip_space() {
+		while (pos < text.length()) {
+			const uint8 c = text[pos];
+			if (c == 32 || c == 9 || c == 10 || c == 13) pos++;
+			else break;
+		}
+	}
+
+	private json_value@ read_value() {
+		skip_space();
+		if (pos >= text.length()) { error = "unexpected end of input"; return null; }
+		const uint8 c = text[pos];
+		if (c == 0x7b) return read_object();
+		if (c == 0x5b) return read_array();
+		if (c == 0x22) {
+			string s;
+			if (!read_string(s)) return null;
+			json_value@ v = json_value();
+			v.kind = JSON_STRING;
+			v.string_value = s;
+			return v;
+		}
+		if (c == 0x74) return read_literal("true", true, JSON_BOOL);
+		if (c == 0x66) return read_literal("false", false, JSON_BOOL);
+		if (c == 0x6e) return read_literal("null", false, JSON_NULL);
+		return read_number();
+	}
+
+	private json_value@ read_literal(const string&in word, bool flag, int kind) {
+		if (pos + word.length() > text.length() || text.substr(pos, word.length()) != word) {
+			error = "expected " + word + " at offset " + pos;
+			return null;
+		}
+		pos += word.length();
+		json_value@ v = json_value();
+		v.kind = kind;
+		v.bool_value = flag;
+		return v;
+	}
+
+	private json_value@ read_object() {
+		json_value@ v = json_value();
+		v.kind = JSON_OBJECT;
+		pos++; // the opening brace
+		skip_space();
+		if (pos < text.length() && text[pos] == 0x7d) { pos++; return v; }
+		while (true) {
+			skip_space();
+			if (pos >= text.length() || text[pos] != 0x22) {
+				error = "expected a key string at offset " + pos;
+				return null;
+			}
+			string key;
+			if (!read_string(key)) return null;
+			skip_space();
+			if (pos >= text.length() || text[pos] != 0x3a) {
+				error = "expected ':' after key \"" + key + "\" at offset " + pos;
+				return null;
+			}
+			pos++;
+			json_value@ member = read_value();
+			if (@member == null) return null;
+			// A key starting with '#' is a comment. Dropped here rather than at
+			// use, so every reader of the object sees the same keys.
+			if (key.length() == 0 || key[0] != 0x23) {
+				v.keys.insert_last(key);
+				v.values.insert_last(member);
+			}
+			skip_space();
+			if (pos >= text.length()) { error = "unterminated object"; return null; }
+			if (text[pos] == 0x2c) { pos++; continue; }
+			if (text[pos] == 0x7d) { pos++; return v; }
+			error = "expected ',' or '}' at offset " + pos;
+			return null;
+		}
+		return null; // unreachable, but a function that ends in while(true) needs it
+	}
+
+	private json_value@ read_array() {
+		json_value@ v = json_value();
+		v.kind = JSON_ARRAY;
+		pos++; // the opening bracket
+		skip_space();
+		if (pos < text.length() && text[pos] == 0x5d) { pos++; return v; }
+		while (true) {
+			json_value@ member = read_value();
+			if (@member == null) return null;
+			v.values.insert_last(member);
+			skip_space();
+			if (pos >= text.length()) { error = "unterminated array"; return null; }
+			if (text[pos] == 0x2c) { pos++; continue; }
+			if (text[pos] == 0x5d) { pos++; return v; }
+			error = "expected ',' or ']' at offset " + pos;
+			return null;
+		}
+		return null; // unreachable
+	}
+
+	private bool read_string(string&out s) {
+		s = "";
+		pos++; // the opening quote
+		while (true) {
+			if (pos >= text.length()) { error = "unterminated string"; return false; }
+			const uint8 c = text[pos];
+			if (c == 0x22) { pos++; return true; }
+			if (c == 0x5c) {
+				pos++;
+				if (pos >= text.length()) { error = "unterminated escape"; return false; }
+				const uint8 e = text[pos];
+				if (e == 0x22) { s += "\""; pos++; }
+				else if (e == 0x5c) { s += "\\"; pos++; }
+				else if (e == 0x2f) { s += "/"; pos++; }
+				else if (e == 0x62) { s += "\b"; pos++; }
+				else if (e == 0x66) { s += "\f"; pos++; }
+				else if (e == 0x6e) { s += "\n"; pos++; }
+				else if (e == 0x72) { s += "\r"; pos++; }
+				else if (e == 0x74) { s += "\t"; pos++; }
+				else if (e == 0x75) {
+					uint code = 0;
+					pos++;
+					for (int i = 0; i < 4; i++) {
+						if (pos >= text.length()) { error = "short \\u escape"; return false; }
+						const int nibble = hex_digit(text[pos]);
+						if (nibble < 0) { error = "bad \\u escape at offset " + pos; return false; }
+						code = code * 16 + uint(nibble);
+						pos++;
+					}
+					// One byte when it fits, '?' otherwise. A config's strings
+					// are port names and paths, so this is stated rather than
+					// grown into a UTF-8 encoder.
+					if (code < 0x80) s += byte(code);
+					else s += "?";
+				} else {
+					error = "unknown escape at offset " + pos;
+					return false;
+				}
+			} else {
+				s += byte(c);
+				pos++;
+			}
+		}
+		return false; // unreachable
+	}
+
+	private json_value@ read_number() {
+		const uint start = pos;
+		if (pos < text.length() && (text[pos] == 0x2d || text[pos] == 0x2b)) pos++;
+		bool digits = false;
+		while (pos < text.length() && text[pos] >= 0x30 && text[pos] <= 0x39) { pos++; digits = true; }
+		if (pos < text.length() && text[pos] == 0x2e) {
+			pos++;
+			while (pos < text.length() && text[pos] >= 0x30 && text[pos] <= 0x39) { pos++; digits = true; }
+		}
+		if (!digits) {
+			error = "expected a value at offset " + start;
+			return null;
+		}
+		if (pos < text.length() && (text[pos] == 0x65 || text[pos] == 0x45)) {
+			pos++;
+			if (pos < text.length() && (text[pos] == 0x2d || text[pos] == 0x2b)) pos++;
+			while (pos < text.length() && text[pos] >= 0x30 && text[pos] <= 0x39) pos++;
+		}
+		json_value@ v = json_value();
+		v.kind = JSON_NUMBER;
+		v.number_value = parseFloat(text.substr(start, pos - start));
+		return v;
+	}
+}
+
+// One call, the shape a caller wants: parse text, get a value or an error.
+bool json_parse(const string&in source, json_value@&out root, string&out error) {
+	json_reader reader;
+	const bool ok = reader.parse(source, root);
+	error = ok ? "" : reader.error;
+	return ok;
+}
+
+int hex_digit(uint8 c) {
+	if (c >= 0x30 && c <= 0x39) return int(c - 0x30);
+	if (c >= 0x61 && c <= 0x66) return int(c - 0x61) + 10;
+	if (c >= 0x41 && c <= 0x46) return int(c - 0x41) + 10;
+	return -1;
+}

@@ -1,0 +1,120 @@
+// octave-doubler-json.nvgt - the octave doubler, configured from JSON.
+//
+// Same job as octave-doubler.nvgt: read notes from one port, play them an
+// octave up on another. The one difference is where the two ports come from.
+// The older example hands a `midi_config` to open_config() and lets the plugin
+// decide; this one parses `midi_config.json` itself and then opens the ports it
+// picked, so a config that names a device the machine does not have is reported
+// instead of quietly replaced by port 0.
+//
+// Copy midi_config.json next to this script, or run it with none - the
+// defaults below are usable on their own.
+
+#include "../midi.nvgt"
+#include "nvmidi_ui.nvgt"
+#include "nvmidi_ui_keys.nvgt"
+#include "midi_config_json.nvgt"
+
+midi_input@ input;
+midi_output@ output;
+
+void panic() {
+	output.all_notes_off();
+	input.close();
+	output.close();
+	ui_speak("Stopped.");
+}
+
+void main() {
+	if (!ui_open("nvmidi - keyboard to synth, JSON config")) return;
+	wait(50);
+
+	if (midi_input_port_count() == 0 || midi_output_port_count() == 0) {
+		ui_speak("Need at least one input and one output port.");
+		return;
+	}
+
+	midi_config_json@ config = midi_config_json();
+	if (!config.load("midi_config.json")) {
+		ui_speak("Config: " + config.error_text);
+		return;
+	}
+	ui_speak(config.to_text());
+
+	const int in_port = config.pick_input();
+	if (in_port < 0) {
+		ui_speak("Input: " + config.describe(true) + ". Available: " + port_list_text(false));
+		return;
+	}
+	const int out_port = config.pick_output();
+	if (out_port < 0) {
+		ui_speak("Output: " + config.describe(false) + ". Available: " + port_list_text(true));
+		return;
+	}
+
+	@input = midi_input_create();
+	@output = midi_output_create();
+	if (!input.open(in_port)) {
+		ui_speak("Cannot open input " + in_port + ": " + midi_last_error_text());
+		return;
+	}
+	if (!output.open(out_port)) {
+		ui_speak("Cannot open output " + out_port + ": " + midi_last_error_text());
+		input.close();
+		return;
+	}
+	ui_speak("From " + midi_input_name_text(input) + " to " + midi_output_name_text(output)
+		+ ", an octave up. Alt+F4 stops.");
+
+	// Opening by number is what the JSON path buys, so the channel and the
+	// velocity scale come from the file too. -1 means "keep each message's own
+	// channel"; a scale of 1.0 is handed through untouched rather than written
+	// back through a multiply, which would round.
+	const int forced_channel = (config.channel >= 0 && config.channel <= 15) ? config.channel : -1;
+	const double scale = config.velocity_scale;
+
+	while (ui_pump()) {
+		if (stop_key()) break;
+		midi_message m;
+		while (input.next_message(m)) {
+			const uint command = m.status & 0xf0;
+			const int channel = (forced_channel >= 0) ? forced_channel : m.channel;
+			int velocity = m.data2;
+			if (scale != 1.0) velocity = clamp_int(int(double(velocity) * scale), 0, 127);
+
+			if (command == 0x90 && velocity > 0) {
+				int note = m.data1 + 12;
+				if (note > 127) note -= 12;
+				output.send_note_on(channel, note, velocity);
+			} else if (command == 0x80 || (command == 0x90 && velocity == 0)) {
+				int note = m.data1 + 12;
+				if (note > 127) note -= 12;
+				output.send_note_off(channel, note, velocity);
+			} else if (command == 0xe0) {
+				output.send(m.status, m.data1, m.data2);
+			}
+		}
+	}
+
+	panic();
+}
+
+// "Nord Piano 6 MIDI (0), Clavia Nord (3)" - the list a person needs when the
+// config named something that is not there.
+string port_list_text(bool outputs) {
+	string s = "";
+	const uint count = outputs ? midi_output_port_count() : midi_input_port_count();
+	for (uint i = 0; i < count; i++) {
+		if (s != "") s += ", ";
+		s += outputs ? midi_output_port_name_text(i) : midi_input_port_name_text(i);
+		s += " (" + i + ")";
+	}
+	if (s == "") return "none";
+	return s;
+}
+
+int clamp_int(int value, int low, int high) {
+	if (value < low) return low;
+	if (value > high) return high;
+	return value;
+}

@@ -47,6 +47,21 @@ void main() {
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.txt");
 
+	// The config is read here, by this script, from a file - not by the plugin
+	// and not over a network. This block says which file answered, in case it
+	// is not the one expected: a relative path is taken from the process
+	// working directory, which is not always this folder. The two the plugin
+	// reads itself are named below too, so the three lines together are the
+	// whole picture of what decided the ports.
+	{
+		const string path = midi_config_path_text(config);
+		if (path == "") {
+			ui_speak("No config file. Defaults: " + midi_config_text(config));
+		} else {
+			ui_speak("Config " + path + ": " + midi_config_text(config));
+		}
+	}
+
 	@input = midi_input_create();
 	@output = midi_output_create();
 
@@ -59,7 +74,9 @@ void main() {
 		input.close();
 		return;
 	}
-	ui_speak("From " + midi_input_name_text(input) + " to " + midi_output_name_text(output) + ", an octave up. Alt+F4 stops.");
+	ui_speak("From " + midi_input_name_text(input) + " to " + midi_output_name_text(output)
+		+ " (" + midi_input_port_name_text(input.get_port()) + " to "
+		+ midi_output_port_name_text(output.get_port()) + "), an octave up. Alt+F4 stops.");
 
 	// ui_pump() keeps the window alive and is also the Alt+F4 test, so this
 	// loop can always be stopped from the keyboard.
