@@ -38,6 +38,12 @@
 #define _MMDDK_
 #define _MMISCAPI_
 
+// A guard of this file's own, so a header that must not be reached without it
+// can say so by name. The windows sentinels above are deliberately the names
+// windows.h uses and cannot be reused for this: they are defined on the
+// windows build too, where this file is not included at all.
+#define NVMIDI_WIN_SHIM_H 1
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>

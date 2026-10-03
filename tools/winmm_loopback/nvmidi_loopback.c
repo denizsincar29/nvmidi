@@ -72,6 +72,12 @@
 #ifndef _WINDOWS_
 #include <windows.h>
 #endif
+// The wide-string and caps-width names this file calls, defined for whichever
+// compiler is reading it. On windows they are the real functions; under the
+// offline harness the shim has already defined them and this header adds
+// nothing. Including it here rather than in each build script is what keeps
+// one source compiling under both - see the header for why that matters.
+#include "nvmidi_win_compat.h"
 #ifndef _MMSYSTEM_H_
 #include <mmsystem.h>
 #endif
