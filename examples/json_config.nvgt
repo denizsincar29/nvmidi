@@ -1,4 +1,4 @@
-// midi_config_json.nvgt - read the examples' MIDI port config from JSON,
+// json_config.nvgt - read the examples' MIDI port config from JSON,
 // without the plugin's midi_config class.
 //
 // This file exists because the class is C++ and the format is a fact of the
@@ -32,12 +32,12 @@
 // JSON path buys, and it is the reason this file is worth having.
 
 #pragma plugin nvmidi
-#include "nvmidi_json.nvgt"
+#include "json_value.nvgt"
 #include "nvmidi_string.nvgt"
 
 // ---- the config in memory -------------------------------------------------
 
-class midi_config_json {
+class json_config {
 	// The file that answered, or "" when none was found. `loaded` says which of
 	// the two happened; `path` alone cannot, because a missing file still
 	// records the name it looked for.
@@ -50,7 +50,7 @@ class midi_config_json {
 	double velocity_scale;
 	int channel;
 
-	midi_config_json() {
+	json_config() {
 		path = "";
 		loaded = false;
 		match = "";
@@ -145,7 +145,7 @@ class midi_config_json {
 //
 // A script that wants no config at all still gets a usable object; this is the
 // counterpart of midi_config_create().
-midi_config_json@ midi_config_json_default() {
-	midi_config_json@ c = midi_config_json();
+json_config@ json_config_default() {
+	json_config@ c = json_config();
 	return c;
 }

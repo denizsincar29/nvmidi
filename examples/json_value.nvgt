@@ -1,4 +1,4 @@
-// nvmidi_json.nvgt - a small JSON reader, enough for a config file.
+// json_value.nvgt - a small JSON reader, enough for a config file.
 //
 // Written because a script that wants its settings in JSON should not need the
 // plugin rebuilt, and because pulling a JSON library into NVGT is a worse trade
@@ -146,7 +146,14 @@ class json_reader {
 
 	private void skip_space() {
 		while (pos < text.length()) {
-			const uint8 c = text[pos];
+			// text[pos] is a const string of one character, not a uint8:
+			// the engine's string indexer has no byte overload, so every
+			// comparison and every byte-typed call here goes through the
+			// byte_at() helper below rather than through the index itself.
+			// Measured on run 37140538994 - "Can't implicitly convert from
+			// 'const string' to 'uint8'" at each of the five sites that
+			// assigned text[pos] to a uint8.
+			const uint8 c = byte_at(text, pos);
 			if (c == 32 || c == 9 || c == 10 || c == 13) pos++;
 			else break;
 		}
@@ -155,7 +162,7 @@ class json_reader {
 	private json_value@ read_value() {
 		skip_space();
 		if (pos >= text.length()) { error = "unexpected end of input"; return null; }
-		const uint8 c = text[pos];
+		const uint8 c = byte_at(text, pos);
 		if (c == 0x7b) return read_object();
 		if (c == 0x5b) return read_array();
 		if (c == 0x22) {
@@ -189,17 +196,17 @@ class json_reader {
 		v.kind = JSON_OBJECT;
 		pos++; // the opening brace
 		skip_space();
-		if (pos < text.length() && text[pos] == 0x7d) { pos++; return v; }
+		if (pos < text.length() && byte_at(text, pos) == 0x7d) { pos++; return v; }
 		while (true) {
 			skip_space();
-			if (pos >= text.length() || text[pos] != 0x22) {
+			if (pos >= text.length() || byte_at(text, pos) != 0x22) {
 				error = "expected a key string at offset " + pos;
 				return null;
 			}
 			string key;
 			if (!read_string(key)) return null;
 			skip_space();
-			if (pos >= text.length() || text[pos] != 0x3a) {
+			if (pos >= text.length() || byte_at(text, pos) != 0x3a) {
 				error = "expected ':' after key \"" + key + "\" at offset " + pos;
 				return null;
 			}
@@ -214,8 +221,8 @@ class json_reader {
 			}
 			skip_space();
 			if (pos >= text.length()) { error = "unterminated object"; return null; }
-			if (text[pos] == 0x2c) { pos++; continue; }
-			if (text[pos] == 0x7d) { pos++; return v; }
+			if (byte_at(text, pos) == 0x2c) { pos++; continue; }
+			if (byte_at(text, pos) == 0x7d) { pos++; return v; }
 			error = "expected ',' or '}' at offset " + pos;
 			return null;
 		}
@@ -227,15 +234,15 @@ class json_reader {
 		v.kind = JSON_ARRAY;
 		pos++; // the opening bracket
 		skip_space();
-		if (pos < text.length() && text[pos] == 0x5d) { pos++; return v; }
+		if (pos < text.length() && byte_at(text, pos) == 0x5d) { pos++; return v; }
 		while (true) {
 			json_value@ member = read_value();
 			if (@member == null) return null;
 			v.values.insert_last(member);
 			skip_space();
 			if (pos >= text.length()) { error = "unterminated array"; return null; }
-			if (text[pos] == 0x2c) { pos++; continue; }
-			if (text[pos] == 0x5d) { pos++; return v; }
+			if (byte_at(text, pos) == 0x2c) { pos++; continue; }
+			if (byte_at(text, pos) == 0x5d) { pos++; return v; }
 			error = "expected ',' or ']' at offset " + pos;
 			return null;
 		}
@@ -247,12 +254,12 @@ class json_reader {
 		pos++; // the opening quote
 		while (true) {
 			if (pos >= text.length()) { error = "unterminated string"; return false; }
-			const uint8 c = text[pos];
+			const uint8 c = byte_at(text, pos);
 			if (c == 0x22) { pos++; return true; }
 			if (c == 0x5c) {
 				pos++;
 				if (pos >= text.length()) { error = "unterminated escape"; return false; }
-				const uint8 e = text[pos];
+				const uint8 e = byte_at(text, pos);
 				if (e == 0x22) { s += "\""; pos++; }
 				else if (e == 0x5c) { s += "\\"; pos++; }
 				else if (e == 0x2f) { s += "/"; pos++; }
@@ -266,7 +273,7 @@ class json_reader {
 					pos++;
 					for (int i = 0; i < 4; i++) {
 						if (pos >= text.length()) { error = "short \\u escape"; return false; }
-						const int nibble = hex_digit(text[pos]);
+						const int nibble = hex_digit(byte_at(text, pos));
 						if (nibble < 0) { error = "bad \\u escape at offset " + pos; return false; }
 						code = code * 16 + uint(nibble);
 						pos++;
@@ -274,14 +281,14 @@ class json_reader {
 					// One byte when it fits, '?' otherwise. A config's strings
 					// are port names and paths, so this is stated rather than
 					// grown into a UTF-8 encoder.
-					if (code < 0x80) s += byte(code);
+					if (code < 0x80) s += char(code);
 					else s += "?";
 				} else {
 					error = "unknown escape at offset " + pos;
 					return false;
 				}
 			} else {
-				s += byte(c);
+				s += char(c);
 				pos++;
 			}
 		}
@@ -290,25 +297,25 @@ class json_reader {
 
 	private json_value@ read_number() {
 		const uint start = pos;
-		if (pos < text.length() && (text[pos] == 0x2d || text[pos] == 0x2b)) pos++;
+		if (pos < text.length() && (byte_at(text, pos) == 0x2d || byte_at(text, pos) == 0x2b)) pos++;
 		bool digits = false;
-		while (pos < text.length() && text[pos] >= 0x30 && text[pos] <= 0x39) { pos++; digits = true; }
-		if (pos < text.length() && text[pos] == 0x2e) {
+		while (pos < text.length() && byte_at(text, pos) >= 0x30 && byte_at(text, pos) <= 0x39) { pos++; digits = true; }
+		if (pos < text.length() && byte_at(text, pos) == 0x2e) {
 			pos++;
-			while (pos < text.length() && text[pos] >= 0x30 && text[pos] <= 0x39) { pos++; digits = true; }
+			while (pos < text.length() && byte_at(text, pos) >= 0x30 && byte_at(text, pos) <= 0x39) { pos++; digits = true; }
 		}
 		if (!digits) {
 			error = "expected a value at offset " + start;
 			return null;
 		}
-		if (pos < text.length() && (text[pos] == 0x65 || text[pos] == 0x45)) {
+		if (pos < text.length() && (byte_at(text, pos) == 0x65 || byte_at(text, pos) == 0x45)) {
 			pos++;
-			if (pos < text.length() && (text[pos] == 0x2d || text[pos] == 0x2b)) pos++;
-			while (pos < text.length() && text[pos] >= 0x30 && text[pos] <= 0x39) pos++;
+			if (pos < text.length() && (byte_at(text, pos) == 0x2d || byte_at(text, pos) == 0x2b)) pos++;
+			while (pos < text.length() && byte_at(text, pos) >= 0x30 && byte_at(text, pos) <= 0x39) pos++;
 		}
 		json_value@ v = json_value();
 		v.kind = JSON_NUMBER;
-		v.number_value = parseFloat(text.substr(start, pos - start));
+		v.number_value = json_number(text.substr(start, pos - start));
 		return v;
 	}
 }
@@ -326,4 +333,58 @@ int hex_digit(uint8 c) {
 	if (c >= 0x61 && c <= 0x66) return int(c - 0x61) + 10;
 	if (c >= 0x41 && c <= 0x46) return int(c - 0x41) + 10;
 	return -1;
+}
+
+// A byte of a string as a number.
+//
+// The engine's string index returns a one-character const string, and the
+// compiler refuses to widen that into a uint8 ("Can't implicitly convert from
+// 'const string' to 'uint8'", measured on run 37140538994). at() keeps the
+// type and takes the low byte out; everything in this file reads text through
+// here so the indexer appears in exactly one place.
+uint8 byte_at(const string&in source, int index) {
+	if (index < 0 || index >= int(source.length())) return 0;
+	// at(index) is the engine's own accessor and returns uint8 - the
+	// arithmetic below is what turns it into AngelScript's uint8.
+	return uint8(source.at(uint(index)) & 0xff);
+}
+
+// A number from its text. The engine has no parseFloat (measured on the same
+// run: "No matching symbol 'parseFloat'"), so this does the four corners a
+// JSON config needs: an optional sign, digits, a fraction, an exponent. It is
+// not a full strtod - it does not read nan or inf, and it stops at the first
+// byte it does not know, which is what a config's numbers are.
+double json_number(const string&in text) {
+	double value = 0.0;
+	double sign = 1.0;
+	int i = 0;
+	const int n = int(text.length());
+	if (i < n && byte_at(text, i) == 0x2d) { sign = -1.0; i++; }
+	else if (i < n && byte_at(text, i) == 0x2b) i++;
+	while (i < n && byte_at(text, i) >= 0x30 && byte_at(text, i) <= 0x39) {
+		value = value * 10.0 + double(byte_at(text, i) - 0x30);
+		i++;
+	}
+	if (i < n && byte_at(text, i) == 0x2e) {
+		i++;
+		double scale = 0.1;
+		while (i < n && byte_at(text, i) >= 0x30 && byte_at(text, i) <= 0x39) {
+			value += double(byte_at(text, i) - 0x30) * scale;
+			scale *= 0.1;
+			i++;
+		}
+	}
+	if (i < n && (byte_at(text, i) == 0x65 || byte_at(text, i) == 0x45)) {
+		i++;
+		double esign = 1.0;
+		if (i < n && byte_at(text, i) == 0x2d) { esign = -1.0; i++; }
+		else if (i < n && byte_at(text, i) == 0x2b) i++;
+		int exponent = 0;
+		while (i < n && byte_at(text, i) >= 0x30 && byte_at(text, i) <= 0x39) {
+			exponent = exponent * 10 + int(byte_at(text, i) - 0x30);
+			i++;
+		}
+		for (int k = 0; k < exponent; k++) value *= esign > 0.0 ? 10.0 : 0.1;
+	}
+	return value * sign;
 }

@@ -13,7 +13,7 @@
 #include "../midi.nvgt"
 #include "nvmidi_ui.nvgt"
 #include "nvmidi_ui_keys.nvgt"
-#include "midi_config_json.nvgt"
+#include "json_config.nvgt"
 
 midi_input@ input;
 midi_output@ output;
@@ -34,7 +34,7 @@ void main() {
 		return;
 	}
 
-	midi_config_json@ config = midi_config_json();
+	json_config@ config = json_config();
 	if (!config.load("midi_config.json")) {
 		ui_speak("Config: " + config.error_text);
 		return;
