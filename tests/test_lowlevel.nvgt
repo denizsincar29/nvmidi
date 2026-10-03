@@ -1,4 +1,4 @@
-#include "midi.nvgt"
+#include "../midi.nvgt"
 
 // test_lowlevel.nvgt - end to end smoke test of every midi_output method and
 // of the plugin's free functions. One line per check, printed and appended to

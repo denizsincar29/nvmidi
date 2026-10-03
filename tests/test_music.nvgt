@@ -1,4 +1,4 @@
-#include "midi.nvgt"
+#include "../midi.nvgt"
 
 // test_music.nvgt - end to end smoke test of the music layer: midi_note,
 // midi_duration, the unit constants, midi_note_number / pitch names, and the

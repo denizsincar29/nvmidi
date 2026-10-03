@@ -1,12 +1,12 @@
 // One include gets everything: the plugin itself, the note and controller
 // constants, the pitch table, and the string helpers. midi.nvgt carries the
 // #pragma plugin line, so nothing else here needs to ask for the library.
-#include "midi.nvgt"
+#include "../midi.nvgt"
 
 // The window helpers are separate on purpose: they are about a window on the
 // screen, not about MIDI, and a script that only sends notes does not want them.
-#include "nvmidi_ui.nvgt"
-#include "nvmidi_ui_keys.nvgt"
+#include "../nvmidi_ui.nvgt"
+#include "../nvmidi_ui_keys.nvgt"
 
 
 // octave-doubler.nvgt - play a keyboard plugged into the computer through a

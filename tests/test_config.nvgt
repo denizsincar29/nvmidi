@@ -1,4 +1,4 @@
-#include "midi.nvgt"
+#include "../midi.nvgt"
 
 // test_config.nvgt - end to end smoke test of midi_config: the match and port
 // members, load, load_if_present, find_input_port, find_output_port,

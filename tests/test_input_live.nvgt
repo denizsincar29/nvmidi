@@ -1,4 +1,4 @@
-#include "midi.nvgt"
+#include "../midi.nvgt"
 
 // test_input_live.nvgt - the half of the transport no build machine can reach:
 // a byte that comes out of a real instrument and through the queue.
