@@ -434,3 +434,27 @@ double json_number(const string&in text) {
 	}
 	return value * sign;
 }
+
+// ---- run it ---------------------------------------------------------------
+//
+// Parsed and read back, field by field, through the typed accessors a script
+// actually uses. Fixed text rather than a file: this is a check of the reader
+// in json_value.nvgt, and a file would put the parse of it in json_config.nvgt
+// instead. Nothing here opens a device.
+
+void main() {
+	json_value@ root = null;
+	string error;
+	const bool ok = json_parse(
+		"{\"match\": \"nord\", \"in_port\": 2, \"velocity_scale\": 0.75,"
+		" \"nested\": {\"on\": true}, \"names\": [\"a\", \"b\"]}", root, error);
+	if (!ok) {
+		print("json_value: parse failed: " + error);
+		return;
+	}
+	print("json_value: match " + root.string_or("match", "(none)")
+		+ ", in_port " + root.int_or("in_port", -1)
+		+ ", velocity_scale " + root.number_or("velocity_scale", 1.0));
+	print("json_value: nested,on is " + (root.get("nested").bool_or("on", false) ? "true" : "false")
+		+ ", names has " + root.get("names").length() + " entries");
+}

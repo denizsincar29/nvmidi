@@ -153,3 +153,26 @@ json_config@ json_config_default() {
 	json_config@ c = json_config();
 	return c;
 }
+
+// ---- run it ---------------------------------------------------------------
+//
+// The sweep compiles and runs every examples/*.nvgt, and a script is run for
+// its body rather than its exit code - so this one has to say what the config
+// parses to and stop, without opening a port. It reads the repository's own
+// committed examples/midi_config.json, whose keys it only takes back out, so
+// it needs no MIDI device and cannot fail on one.
+//
+// A missing or malformed file is reported and is not a fault: this is a check
+// of the reader, and the message is what a user would see.
+
+void main() {
+	json_config@ c = json_config();
+	if (!c.load("midi_config.json")) {
+		print("json_config: no config read: " + c.error_text);
+		return;
+	}
+	print("json_config: " + c.to_text());
+	print("json_config: match \"" + c.match + "\", in_port " + c.in_port
+		+ ", out_port " + c.out_port + ", velocity_scale " + c.velocity_scale
+		+ ", channel " + c.channel);
+}
