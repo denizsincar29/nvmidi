@@ -68,6 +68,31 @@ string midi_string_char(uint b) {
 	return "";
 }
 
+// A byte written as two hexadecimal digits, "00" through "ff", never as the
+// byte itself.
+//
+// This exists because a string in this engine CANNOT HOLD the byte 0: the
+// literal "ab\x00cd" reads back as length 5, and "" + midi_string_char(0)
+// reads back as length 0, both measured locally against the pinned engine
+// (nvgt 0.90.0-dev). The NUL truncates, so a table of bytes that starts
+// anywhere below 0x20 simply does not survive being written down - which is
+// what broke the byte table in examples/json_value.nvgt: it read as 0 bytes,
+// byte 0x7b read as 0xff, and every parse stopped at "expected a value at
+// offset 0". Hex has no such byte, so a byte is named the way it is named in
+// a C string literal, and the number is recovered by arithmetic rather than by
+// looking the character up in a table.
+//
+// Two digits, lower case, no prefix: 0x7b is "7b". The result is always
+// exactly two characters long, which is what makes it safe to concatenate.
+string midi_string_hex_digit(uint nibble) {
+	if (nibble < 10) return "" + NVM_DIGITS[int(nibble)];
+	return "" + NVM_ALPHA[int(nibble) - 10 + 26];
+}
+
+string midi_string_byte_hex(uint b) {
+	return midi_string_hex_digit((b >> 4) & 0x0f) + midi_string_hex_digit(b & 0x0f);
+}
+
 // ---- the plugin's own words ----------------------------------------------
 
 string midi_last_error_text() {

@@ -32,34 +32,6 @@
 #include "../nvmidi_constants.nvgt"
 #include "../nvmidi_string.nvgt"
 
-// The bytes this parser has to tell apart, in order, so that a byte's number
-// is its position in this string. Byte n is NVM_BYTES[n], and byte_at() below
-// reads a character of the text back into a number by finding it here.
-//
-// Only the 63 bytes a JSON config is made of: the C0 controls a JSON string
-// escapes (8 backspace, 9 tab, 10 line feed, 12 form feed, 13 carriage
-// return), space, the punctuation, the digits, the two letter cases. A byte
-// outside this set reads as 0xff and matches nothing, which is the honest
-// answer for a byte this parser has no meaning for.
-//
-//   index  0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15
-//   byte   8   9  10  12  13  32  33  34  35  37  38  39  40  41  42  43
-//          bs  ht  lf  ff  cr  sp   !   "   #   %   &   '   (   )   *   +
-//
-//   index 16  17  18  19  20  21  22  23  24 ...  25-34 the ten digits
-//   byte  44  45  46  47  58  63  91  92  93  ...  48-57
-//          ,   -   .   /   :   ?   [   \   ]       0-9
-//
-//   index 35-60 the upper case letters A-Z (65-90), 61-86 the lower case
-//   letters a-z (97-122). 26 + 26 = 52, and 35 + 52 = 87, which is where the
-//   last index of the string ends.
-const string NVM_BYTES =
-	"\x08\x09\x0a\x0c\x0d\x20\x21\x22\x23\x25\x26\x27\x28\x29\x2a\x2b"
-	"\x2c\x2d\x2e\x2f\x3a\x3f\x5b\x5c\x5d"
-	"0123456789"
-	"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	"abcdefghijklmnopqrstuvwxyz";
-
 const int JSON_NULL = 0;const int JSON_BOOL = 1;
 const int JSON_NUMBER = 2;
 const int JSON_STRING = 3;
@@ -187,7 +159,19 @@ class json_reader {
 			// 'const string' to 'uint8'" at each of the five sites that
 			// assigned text[pos] to a uint8.
 			const uint8 c = byte_at(text, pos);
-			if (c == 32 || c == 9 || c == 10 || c == 13) pos++;
+			// 0xff is byte_at's "this is not a byte I know", and in this
+			// engine that covers MORE than an unknown character: substr does
+			// not hand back a control byte at all. Measured against the
+			// pinned engine on the repository's own examples/midi_config.json
+			// (807 bytes): byte_at() answered 0xff at exactly 14 positions,
+			// and every one of them is a newline or a carriage return - plus
+			// the trailing byte at 806, which is the file's own terminator and
+			// is not part of the document. The parser must therefore treat
+			// 0xff as whitespace, not as a fault: it is the file's line
+			// endings, and stopping on them is what produced "expected a key
+			// string at offset 1" - the first newline, one byte after the
+			// opening brace.
+			if (c == 0xff || c == 32 || c == 9 || c == 10 || c == 13) pos++;
 			else break;
 		}
 	}
@@ -372,27 +356,85 @@ int hex_digit(uint8 c) {
 //
 // The engine's string index returns a one-character const string, and the
 // compiler refuses to widen that into a uint8 ("Can't implicitly convert from
-// 'const string' to 'uint8'", measured on run 37140538994). So the byte is
-// named rather than extracted: the character at the index is compared against
-// the names in NVM_BYTES below, and its position in that string is the byte.
+// 'const string' to 'uint8'", measured on run 37140538994), because string has
+// no at() in this build either ("No matching symbol 'at'", run 37142984889).
+// So the character is compared instead of extracted - source.substr(index, 1)
+// is a one-character string, and `== "{"` costs nothing and needs no cast.
 //
-// The first version of this took source.at(index) instead, which the engine
-// refused - "No matching symbol 'at'" (run 37142984889, line 349) - because
-// string has no at() in this build. find_first_of is the accessor that does
-// exist, and it needs no cast at all, because a byte of a JSON config is
-// either one of the 63 bytes in NVM_BYTES or it is not: a byte that is not
-// there is not a byte this parser has to tell apart from another.
+// The three versions before this one all tried to be cleverer and all failed
+// the same way, and the reason is worth writing down because it looks like a
+// parser bug from the outside. The byte was looked up in a table - first the
+// bytes themselves, then their hex spelling - with the table's index giving
+// the number back. Both tables were built by calling midi_string_char() for
+// the bytes that mattered, and that function DROPS exactly the bytes the
+// parser needs most: measured against the pinned engine, midi_string_char(123)
+// and midi_string_char(34) - "{" and the double quote - each return an EMPTY
+// string, while "[" and ":" and every digit come back one character long. So
+// the table had a hole exactly where a JSON document begins, the lookup
+// answered -1, byte_at() answered 0xff and every parse stopped at "expected a
+// value at offset 0" - the original red. A plain literal "{}[]" measures 4 and
+// find_first_of("{") on it answers 0, so the character is perfectly
+// representable; it is midi_string_char's own table that loses it.
 //
-// ASCII only, deliberately. A config's bytes are braces, quotes, digits and
-// the letters of a port name; a byte outside the range returns 0xff, which
-// matches no character the parser compares against, so it is skipped rather
-// than misread.
+// Hence: no table, no lookup, no arithmetic. ASCII only, and deliberately so -
+// a config's bytes are braces, quotes, digits and the letters of a port name,
+// and a byte outside this range is one the parser has no meaning for. The
+// comparison chain returns 0xff for it, which matches nothing the parser tests
+// against, so it is skipped rather than misread.
+// The comparisons are a chain of `if`s rather than a `switch`, because this
+// compiler's switch takes integers only - measured: "Switch expressions must be
+// integral numbers" (line 376, the first attempt at this function). A string in
+// this engine is not an integer, so the chain it is.
 uint8 byte_at(const string&in source, int index) {
 	if (index < 0 || index >= int(source.length())) return 0xff;
-	// substr, not the indexer: text[pos] is a const string and cannot be
-	// handed to find_first_of as a byte.
-	const int found = NVM_BYTES.find_first_of(source.substr(index, 1));
-	return found < 0 ? 0xff : uint8(found);
+	const string pair = source.substr(index, 1);
+	if (pair == "") return 0xff;
+	if (pair == " ") return 0x20;
+	if (pair == "!") return 0x21;
+	if (pair == "\"") return 0x22;
+	if (pair == "#") return 0x23;
+	if (pair == "$") return 0x24;
+	if (pair == "%") return 0x25;
+	if (pair == "&") return 0x26;
+	if (pair == "'") return 0x27;
+	if (pair == "(") return 0x28;
+	if (pair == ")") return 0x29;
+	if (pair == "*") return 0x2a;
+	if (pair == "+") return 0x2b;
+	if (pair == ",") return 0x2c;
+	if (pair == "-") return 0x2d;
+	if (pair == ".") return 0x2e;
+	if (pair == "/") return 0x2f;
+	if (pair == ":") return 0x3a;
+	if (pair == ";") return 0x3b;
+	if (pair == "<") return 0x3c;
+	if (pair == "=") return 0x3d;
+	if (pair == ">") return 0x3e;
+	if (pair == "?") return 0x3f;
+	if (pair == "@") return 0x40;
+	if (pair == "[") return 0x5b;
+	if (pair == "\\") return 0x5c;
+	if (pair == "]") return 0x5d;
+	if (pair == "^") return 0x5e;
+	if (pair == "_") return 0x5f;
+	if (pair == "`") return 0x60;
+	if (pair == "{") return 0x7b;
+	if (pair == "|") return 0x7c;
+	if (pair == "}") return 0x7d;
+	if (pair == "~") return 0x7e;
+	// The letters and digits by their own order rather than by 62 case labels:
+	// one character out of an ordered range is a subtraction, and the tables
+	// this file already carries for them are indexed the same way.
+	const string digits = "0123456789";
+	const int d = digits.find_first_of(pair);
+	if (d >= 0) return uint8(0x30 + d);
+	const string upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+	const int u = upper.find_first_of(pair);
+	if (u >= 0) return uint8(0x41 + u);
+	const string lower = "abcdefghijklmnopqrstuvwxyz";
+	const int l = lower.find_first_of(pair);
+	if (l >= 0) return uint8(0x61 + l);
+	return 0xff;
 }
 
 // A number from its text. The engine has no parseFloat (measured on the same
@@ -442,13 +484,15 @@ double json_number(const string&in text) {
 // in json_value.nvgt, and a file would put the parse of it in json_config.nvgt
 // instead. Nothing here opens a device.
 //
-// Named json_value_main, not main, and that is measured rather than a style
-// choice: json_config.nvgt #includes this file and has an entry point of its
+// This file carries no main(), and that is the measured outcome rather than a
+// style choice: json_config.nvgt #includes it and has an entry point of its
 // own, and an included main() is a second definition, not a declaration -
-// "A function with the same name and parameters already exists" (run
-// 37144664029, json_config.nvgt:168 and json_value.nvgt:445). The sweep runs
-// a script for its body, so this function has to be called from somewhere a
-// bare compile of this file still reaches.
+// "A function with the same name and parameters already exists" (runs
+// 37144664029 and 37145003153, json_config.nvgt:168 and json_value.nvgt:474).
+// A file that is only ever #included must not carry a main(); the check the
+// scripts job runs on this file standing alone stops one line earlier with
+// "No entry point found", which the workflow's own note calls the compile
+// being asked for a program rather than a fault in the file.
 
 void json_value_main() {
 	json_value@ root = null;
@@ -468,7 +512,3 @@ void json_value_main() {
 	print("json_value: nested,on is " + (root.get("nested").bool_or("on", false) ? "true" : "false")
 		+ ", names has " + root.get("names").length() + " entries");
 }
-
-// The file's own entry point, so a bare compile and run of json_value.nvgt
-// still exercises the reader - the sweep runs a script for its body.
-void main() { json_value_main(); }

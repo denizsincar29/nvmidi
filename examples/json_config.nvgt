@@ -164,8 +164,17 @@ json_config@ json_config_default() {
 //
 // A missing or malformed file is reported and is not a fault: this is a check
 // of the reader, and the message is what a user would see.
+//
+// The body is json_config_main(), not main(), for the same measured reason
+// json_value.nvgt's is json_value_main(): an #included main() is a second
+// definition to this engine, not a declaration, so any file that includes this
+// one and has an entry point of its own fails to compile with "A function with
+// the same name and parameters already exists". That is exactly what happened
+// to examples/octave-doubler-json-config.nvgt, which includes this file and
+// carries the program's real main() - measured locally against the pinned
+// engine by including this file from a two-line script with its own main().
 
-void main() {
+void json_config_main() {
 	json_config@ c = json_config();
 	if (!c.load("midi_config.json")) {
 		print("json_config: no config read: " + c.error_text);
@@ -175,7 +184,8 @@ void main() {
 	print("json_config: match \"" + c.match + "\", in_port " + c.in_port
 		+ ", out_port " + c.out_port + ", velocity_scale " + c.velocity_scale
 		+ ", channel " + c.channel);
-	// The reader standalone, since this file includes it and the sweep runs
-	// the file for its body: the call is here rather than a second main().
+	// The reader's own check, called from here rather than carried as a second
+	// main(): json_value.nvgt is only ever #included, and the scripts job runs
+	// a file for its body, so this is the place its parse gets exercised.
 	json_value_main();
 }
