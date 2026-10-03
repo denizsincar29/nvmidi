@@ -175,4 +175,7 @@ void main() {
 	print("json_config: match \"" + c.match + "\", in_port " + c.in_port
 		+ ", out_port " + c.out_port + ", velocity_scale " + c.velocity_scale
 		+ ", channel " + c.channel);
+	// The reader standalone, since this file includes it and the sweep runs
+	// the file for its body: the call is here rather than a second main().
+	json_value_main();
 }

@@ -441,13 +441,23 @@ double json_number(const string&in text) {
 // actually uses. Fixed text rather than a file: this is a check of the reader
 // in json_value.nvgt, and a file would put the parse of it in json_config.nvgt
 // instead. Nothing here opens a device.
+//
+// Named json_value_main, not main, and that is measured rather than a style
+// choice: json_config.nvgt #includes this file and has an entry point of its
+// own, and an included main() is a second definition, not a declaration -
+// "A function with the same name and parameters already exists" (run
+// 37144664029, json_config.nvgt:168 and json_value.nvgt:445). The sweep runs
+// a script for its body, so this function has to be called from somewhere a
+// bare compile of this file still reaches.
 
-void main() {
+void json_value_main() {
 	json_value@ root = null;
 	string error;
-	const bool ok = json_parse(
-		"{\"match\": \"nord\", \"in_port\": 2, \"velocity_scale\": 0.75,"
-		" \"nested\": {\"on\": true}, \"names\": [\"a\", \"b\"]}", root, error);
+	// Single-quoted: the text is pasted into the source, so a JSON double
+	// quote built into a double-quoted literal is a quote that closes it.
+	const string document = '{"match": "nord", "in_port": 2, "velocity_scale": 0.75,'
+		' "nested": {"on": true}, "names": ["a", "b"]}';
+	const bool ok = json_parse(document, root, error);
 	if (!ok) {
 		print("json_value: parse failed: " + error);
 		return;
@@ -458,3 +468,7 @@ void main() {
 	print("json_value: nested,on is " + (root.get("nested").bool_or("on", false) ? "true" : "false")
 		+ ", names has " + root.get("names").length() + " entries");
 }
+
+// The file's own entry point, so a bare compile and run of json_value.nvgt
+// still exercises the reader - the sweep runs a script for its body.
+void main() { json_value_main(); }
