@@ -28,14 +28,22 @@
 // The driver's DllMain. Declared once, here, and called by this file only.
 BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved);
 
+// The driver source, in this compile unit. It is here rather than compiled
+// beside us for one reason: this file is the only one that knows what the
+// shim is, and the driver must be compiled under the shim or not at all.
+// Its own #include <windows.h> is skipped by the include guard the shim
+// installed, and it also means the driver's DWORD WINAPI publish_thread is
+// declared before the caller below - a separate declaration with a subtly
+// different calling convention is a link error, not a diagnostic.
+#include "../../tools/winmm_loopback/nvmidi_loopback.c"
+
 // The shim's CreateThread runs the thread body inline, so publish_thread's
 // `for (;;) Sleep(1000)` never yields - which is useful for the crash
 // question and useless for the "does the thread do its first step" question.
-// Splitting them is the shell's job: the PTHREAD_ATTACH mode below re-enters
+// Splitting them is the shell's job: the PTHREAD mode below re-enters
 // the driver's thread body on a real pthread, with a real Sleep, so the
 // status file records what a live thread writes before anyone times out.
 static void *thread_entry(void *arg) {
-	DWORD WINAPI publish_thread(LPVOID);
 	return (void *)(uintptr_t)publish_thread(arg);
 }
 
