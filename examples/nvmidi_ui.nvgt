@@ -36,43 +36,31 @@ void ui_speak(const string&in text) {
 	if (SCREEN_READER_AVAILABLE) screen_reader_speak(text, false);
 }
 
-// Open the example's window, or say why it could not be opened.
+// Open the example's window.
 //
 // show_window does NOT answer a bool on the engine this repository pins. CI
 // says so in as many words: "ERROR: Can't implicitly convert from
 // 'game_window@&' to 'bool'." (run 37131438296, examples/nvmidi_ui.nvgt:56).
-// The handle is what it returns; a bare `if (!show_window(title))` does not
-// compile against it.
+// The handle is what it returns, and neither spelling of a test on that handle
+// has survived both engines: `if (show_window(title) is null)` compiles on the
+// local Linux engine and is refused by Дениз's build ("Both operands must be
+// handles when comparing identity", 2026-10-03), while `!is null` - the
+// spelling the engine uses on itself at bgt_compat.nvgt:89 - was rejected by
+// the same build the next time round. `game_window@ w = show_window(...)` is
+// no way out either: the type name is not in the engine's scripting
+// registration ("Identifier 'game_window' is not a data type"), and `auto`
+// holds a value rather than a handle, so it cannot be compared with null
+// either.
 //
-// The type name `game_window` is equally unusable - it is not in the engine's
-// scripting registration, so `game_window@ w = show_window(...)` answers
-// "Identifier 'game_window' is not a data type". Recording that here cost two
-// wrong attempts on 2026-10-03: `auto w = show_window(title); if (w is null)`
-// was tried, on the theory that `auto` adopts a handle, and Дениз's build
-// answered "both operands must be handles when comparing identity" - `auto`
-// holds a *value*, and `is null` wants a handle on both sides. The form that
-// works is no intermediate variable at all: test the call's result directly
-// with `!is`, as the body below does.
-//
-// Caught twice, and the two failures are why this comment is long. Дениз hit
-// the game_window version first, 2026-10-03; then a "fix" that read the
-// signature out of a source tree (src/UI.cpp:785 says `bool show_window(...)`)
-// was committed as 4f66485 and broke the build the other way. A source tree is
-// not the registration list, and this file has now been wrong in both
-// directions from assuming which one it was.
-//
-// The test is written the way the engine writes it for itself: bgt_compat.nvgt
-// line 89 is `return show_window(title) !is null;` - the test applied to the
-// call's result, and the operator is `!is`, not `is`. Дениз's build rejected
-// `show_window(title) is null` at the line that carried it (2026-10-03), while
-// the same line compiled clean on the local Linux engine - so the two engines
-// disagree on the `is` spelling, and the local one is not the one to trust
-// here. The `!is` spelling is the one that ships inside the engine's own
-// compat layer, so that is the one written below.
+// So the call is made for its effect and its result is not tested at all.
+// Дениз's call, 2026-10-03: "либо не проверяй совсем". The cost is stated
+// plainly - a window that fails to open is not reported, the example just
+// carries on - and it is the only shape that carries no comparison for either
+// engine to disagree about. If a script ever needs to know, that has to be a
+// question asked of the plugin, not of this return value.
 bool ui_open(const string&in title) {
-	if (show_window(title) !is null) return true;
-	ui_speak("could not open a window");
-	return false;
+	show_window(title);
+	return true;
 }
 
 // Keep the window's event loop alive and report whether the user asked to
