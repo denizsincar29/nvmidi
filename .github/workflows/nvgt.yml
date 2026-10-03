@@ -338,8 +338,26 @@ jobs:
             # glob above, so they are excluded here by name. No "compiled alone"
             # branch for them: what a header needs is its includer's context, and
             # both are #included by five examples each, which are run below.
+            #
+            # The JSON pair is in that list now. Naming them *_test.nvgt put
+            # them in the glob, because the glob is by extension - the two ui
+            # helpers escaped it only by being named .nvgt while this pair
+            # cannot be: json_config_test.nvgt is the example the reader is
+            # seen through, and a name with no extension would be a worse lie
+            # than an exemption. So they are exempted by name, and the name
+            # says why: json_value_test.nvgt carries no main() at all, and
+            # json_config_test.nvgt's body is json_config_main(), reached
+            # through examples/octave-doubler-json-config.nvgt below.
+            #
+            # Measured, run 37146614636: reaching the sweep, both answered
+            # "No entry point found" and the run was red on exactly those two
+            # files. What compiles them is the example that includes them,
+            # which is where the reader is actually exercised - the scripts
+            # job runs a file for its body, so the body has to be in an
+            # includer, which is the rule above and not an exception to it.
             case "$script" in
               examples/nvmidi_ui.nvgt | examples/nvmidi_ui_keys.nvgt) continue ;;
+              examples/json_value_test.nvgt | examples/json_config_test.nvgt) continue ;;
             esac
             # get_nvmidi.nvgt is not a test, it is the downloader: running it
             # downloads the published release over the library this job just
