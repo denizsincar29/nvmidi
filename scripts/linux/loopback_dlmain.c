@@ -21,6 +21,7 @@
 // protocol are not, and cannot be.
 
 #include "nvmidi_win_shim.h"
+#include <pthread.h>
 #include <unistd.h>
 #include <time.h>
 

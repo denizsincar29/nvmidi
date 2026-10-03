@@ -32,6 +32,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <wchar.h>
+#include <time.h>
 
 // -- the types, and nothing else --------------------------------------------
 
@@ -142,11 +143,16 @@ static inline DWORD GetModuleFileNameA(HMODULE h, LPSTR buf, DWORD n) {
 
 static inline DWORD GetModuleFileNameW(HMODULE h, LPWSTR buf, DWORD n) {
 	(void)h;
-	static const WCHAR name[] = L"nvmidi_loopback.linux";
+	// No L"..." here on purpose: this WCHAR is the two-byte windows one,
+	// while the compiler's L"" is its own four-byte wchar_t - assigning one
+	// to the other does not compile, and casting would give the driver a
+	// "wide" string of interleaved zero bytes. The name is ASCII, so the
+	// widening is a byte-per-character copy and nothing about it is a guess.
+	static const char name[] = "nvmidi_loopback.linux";
 	if (!buf || n == 0) return 0;
-	size_t len = (sizeof(name) / sizeof(name[0])) - 1;
+	size_t len = sizeof(name) - 1;
 	if (len >= n) len = n - 1;
-	memcpy(buf, name, len * sizeof(WCHAR));
+	for (size_t i = 0; i < len; i++) buf[i] = (WCHAR)(unsigned char)name[i];
 	buf[len] = 0;
 	return (DWORD)len;
 }
