@@ -58,7 +58,7 @@ ROOT = _find_root()
 SCRIPT = os.path.join(ROOT, "hear_test.nvgt")
 if not os.path.isfile(SCRIPT):
     SCRIPT = os.path.join(ROOT, "scripts", "hear_test.nvgt")
-CONFIG = os.path.join(ROOT, "midi_config.txt")
+CONFIG = os.path.join(ROOT, "midi_config.json")
 
 CANDIDATES = ["nvgt", "nvgt.exe", "nvgt_console", "nvgt_console.exe"]
 
@@ -157,13 +157,18 @@ def write_config(in_name, out_name):
     because the echo half wants the input and the output to be different ports
     and a stale output line from an earlier run would silently decide this one.
     """
-    text = ["# written by scripts/hear_test.py",
-            "# match is a substring of the port name, case-insensitive",
-            "match=" + in_name]
+    names = [in_name]
     if out_name and out_name != in_name:
-        text.append("match=" + out_name)
+        names.append(out_name)
+    # JSON, and two "match" keys when the two directions differ: the plugin's
+    # reader applies keys in order, so the later one decides - the same
+    # last-wins rule the earlier `match=` line used, in the shape every reader
+    # in this repository now reads.
+    lines = ['{ "match": "%s" }' % in_name]
+    if len(names) == 2:
+        lines = ['{ "match": "%s", "match": "%s" }' % (names[0], names[1])]
     with open(CONFIG, "w") as handle:
-        handle.write("\n".join(text) + "\n")
+        handle.write("\n".join(lines) + "\n")
 
 
 def run(nvgt, script, in_name, out_name, echo):

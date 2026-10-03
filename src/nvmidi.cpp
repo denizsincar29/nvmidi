@@ -499,6 +499,214 @@ std::string trim(const std::string& text) {
 }
 
 
+// ---------------------------------------------------------------------------
+// The configuration file's JSON reader
+// ---------------------------------------------------------------------------
+//
+// A JSON object, and only enough of one to read a flat map of scalars. The
+// spec is wide - nested objects, arrays, escapes, a number grammar with an
+// exponent - and none of it is in a config file whose whole content is
+// `{"match": "nord", "in_port": 2}`. Writing the whole spec here would be a
+// second parser to keep correct for keys nobody writes; writing the flat case
+// is a page of code with no state to get wrong.
+//
+// What is deliberately refused rather than half-supported: a value that is an
+// object or an array. A nested block is not read as if it were absent - the
+// caller gets a named error, which is the behaviour that does not leave a
+// setting silently at its default.
+
+struct json_reader {
+	// Held by value, not by reference, and that is not a style choice: a
+	// reference member makes `json_reader("{\"a\": 1}")` compile and dangle,
+	// because the temporary std::string built from the literal dies at the end
+	// of the full expression while the reader is still reading it. That is a
+	// segfault with no compiler warning, so the copy is what makes the wrong
+	// call impossible to write rather than merely discouraged.
+	const std::string text;
+	size_t at;
+	std::string error;
+
+	json_reader(const std::string& in) : text(in), at(0), error() {}
+	bool failed() const { return !error.empty(); }
+
+	// One failure is enough; the first one wins because it sits nearest the
+	// mistake. Later calls do nothing but return false.
+	bool fail(const std::string& what) {
+		if (error.empty()) error = what;
+		return false;
+	}
+
+	bool at_end() const { return at >= text.size(); }
+	char peek() const { return at < text.size() ? text[at] : '\0'; }
+
+	// Which of the two shapes this file is, decided by the first character
+	// that is not whitespace or a comment: `{` is a JSON object. Deciding on
+	// the content rather than the extension means a .txt holding an object is
+	// read as one, and the file's name never has to be right for it to work.
+	bool looks_like_json() {
+		skip_ws();
+		return peek() == '{';
+	}
+
+	void skip_ws() {
+		while (!at_end()) {
+			const char c = text[at];
+			if (c == ' ' || c == '\t' || c == '\r' || c == '\n') { at += 1; continue; }
+			// Comments, because the file this project ships uses them to
+			// document itself. Not JSON, but this is our file and the
+			// alternative was a file of nothing but data.
+			if (c == '/' && at + 1 < text.size() && text[at + 1] == '/') {
+				while (!at_end() && text[at] != '\n') at += 1;
+				continue;
+			}
+			if (c == '/' && at + 1 < text.size() && text[at + 1] == '*') {
+				at += 2;
+				while (at + 1 < text.size() && !(text[at] == '*' && text[at + 1] == '/')) at += 1;
+				at = (at + 1 < text.size()) ? at + 2 : text.size();
+				continue;
+			}
+			if (c == '#') {
+				// The old text format's comment, kept because the two shapes
+				// share this reader and a `#` line costs nothing.
+				while (!at_end() && text[at] != '\n') at += 1;
+				continue;
+			}
+			break;
+		}
+	}
+
+	bool read_string(std::string& out) {
+		if (peek() != '"') return fail("expected a string");
+		at += 1;
+		out.clear();
+		while (!at_end()) {
+			const char c = text[at++];
+			if (c == '"') return true;
+			if (c == '\\') {
+				if (at_end()) break;
+				const char escape = text[at++];
+				switch (escape) {
+					case '"': out += '"'; break;
+					case '\\': out += '\\'; break;
+					case '/': out += '/'; break;
+					case 'b': out += '\b'; break;
+					case 'f': out += '\f'; break;
+					case 'n': out += '\n'; break;
+					case 'r': out += '\r'; break;
+					case 't': out += '\t'; break;
+					// A \uXXXX stays as the four characters it names. A config
+					// key or a substring of a port name is ascii, and turning
+					// it into utf-8 would be a code path that never runs.
+					case 'u': {
+						if (at + 4 > text.size()) return fail("a truncated \\u escape");
+						out += "\\u";
+						for (int i = 0; i < 4; ++i) out += text[at++];
+						break;
+					}
+					default: return fail("an unknown escape in a string");
+				}
+				continue;
+			}
+			out += c;
+		}
+		return fail("a string that is never closed");
+	}
+
+	// A scalar as text, without deciding what type it is. present is the empty
+	// marker the caller has to answer for, so it is an argument rather than a
+	// flag someone forgets to read.
+	bool read_scalar(std::string& out, bool& present) {
+		present = false;
+		out.clear();
+		skip_ws();
+		if (peek() == '"') {
+			if (!read_string(out)) return false;
+			present = true;
+			return true;
+		}
+		if (at_end()) return fail("a value that is missing");
+		std::string token;
+		while (!at_end()) {
+			const char c = text[at];
+			if (c == ',' || c == '}' || c == ']' || c == ' ' || c == '\t' || c == '\r' || c == '\n') break;
+			// A value that opens a block is neither true nor a number - it is
+			// the case this reader refuses to flatten.
+			if (c == '{' || c == '[') return fail("a nested object or array");
+			token += c;
+			at += 1;
+		}
+		if (token.empty()) return fail("a value that is missing");
+		if (token == "true" || token == "false") {
+			// Said, but not a number: the key is known, the value is not
+			// something this reader can use, and the caller reports it as such.
+			out = token;
+			present = false;
+			return true;
+		}
+		if (token == "null") return true; // said and empty: the default stands
+		out = token;
+		present = true;
+		return true;
+	}
+
+	// Skips a block whose opening bracket read_scalar refused on. Needs a
+	// correct depth count or the keys after it would be read as its members.
+	void skip_block() {
+		int depth = 0;
+		while (!at_end()) {
+			const char c = text[at++];
+			if (c == '{' || c == '[') depth += 1;
+			else if (c == '}' || c == ']') { depth -= 1; if (depth <= 0) return; }
+			else if (c == '"') { at -= 1; std::string junk; read_string(junk); }
+		}
+	}
+
+	bool read_members(std::vector<std::pair<std::string, std::string> >& keys,
+	                  std::vector<bool>& present) {
+		skip_ws();
+		if (peek() != '{') return fail("a JSON file has to start with {");
+		at += 1;
+		skip_ws();
+		if (peek() == '}') { at += 1; return true; }
+		for (;;) {
+			skip_ws();
+			std::string key;
+			if (!read_string(key)) return false;
+			skip_ws();
+			if (peek() != ':') return fail("expected : after the key \"" + key + "\"");
+			at += 1;
+			std::string value;
+			bool has_value = false;
+			if (!read_scalar(value, has_value)) {
+				// The one refused shape. Recorded against the key's own name so
+				// the file's owner is told which key was nested, then the block
+				// is stepped over and the rest of the file still reads.
+				error = "the key \"" + key + "\" holds an object or an array; this config file is a flat map";
+				skip_block();
+			}
+			keys.push_back(std::make_pair(key, value));
+			present.push_back(has_value);
+			skip_ws();
+			if (peek() == ',') { at += 1; continue; }
+			if (peek() == '}') { at += 1; return true; }
+			return fail("expected , or } after the value of \"" + key + "\"");
+		}
+	}
+};
+
+// One JSON number, and the whole token has to be it: "2x" and "1.0.0" are
+// mistakes, not a 2 and a 1, so they are reported rather than truncated.
+bool config_number(const std::string& text, double& out) {
+	if (text.empty()) return false;
+	std::istringstream stream(text);
+	double value = 0.0;
+	stream >> value;
+	if (stream.fail() || !stream.eof()) return false;
+	out = value;
+	return true;
+}
+
+
 // The whole time schedule of a chord: every gap ends up as an absolute moment,
 // so playback does not drift when a step takes a little longer than planned.
 struct note_step {
@@ -1758,7 +1966,68 @@ int midi_find_output_port(const std::string& substring) {
 	return -1;
 }
 
-midi_config::midi_config() : match("nord"), input_port(0), output_port(0), port(0), last_port(-1), last_name() {}
+midi_config::midi_config() : match("nord"), input_port(0), output_port(0), port(0), velocity_scale(-1.0), channel(-1), last_port(-1), last_name() {}
+
+// Both file shapes end in the same map of key to text, so the two readers are
+// two ways to fill it and one loop to apply it. A key whose value cannot be
+// used is reported through midi_last_error() and the rest of the file still
+// applies - the same contract the text reader always had.
+void midi_config::apply(const std::string& path, const std::vector<std::pair<std::string, std::string> >& keys, const std::vector<bool>& present) {
+	for (size_t i = 0; i < keys.size(); ++i) {
+		const std::string key = to_lower(trim(keys[i].first));
+		const std::string value = trim(keys[i].second);
+		const bool has_value = i < present.size() && present[i];
+		if (key.empty()) continue;
+		// A key whose only job is to document the file. The shipped JSON uses
+		// "#", "#1", "#2" ... for this, and JSON has no comments to put it in.
+		if (key[0] == '#') continue;
+		if (key == "match" || key == "name" || key == "port_name") {
+			if (has_value) match = value;
+		} else if (key == "in_port" || key == "input_port" || key == "in_index") {
+			apply_number(path, key, value, has_value, input_port);
+		} else if (key == "out_port" || key == "output_port" || key == "out_index") {
+			apply_number(path, key, value, has_value, output_port);
+		} else if (key == "port" || key == "index") {
+			// The single-key form written by older scripts. It named one index
+			// for both sides, which is exactly the crossing this file no longer
+			// does; reading it into both keeps an old config usable.
+			if (has_value && apply_number(path, key, value, has_value, port)) {
+				input_port = port;
+				output_port = port;
+			}
+		} else if (key == "velocity_scale") {
+			double scale = 0.0;
+			if (has_value && config_number(value, scale)) velocity_scale = scale;
+			else if (has_value) set_error("the configuration file " + path + " has a velocity_scale that is not a number: \"" + value + "\"");
+		} else if (key == "channel") {
+			apply_number(path, key, value, has_value, channel);
+		}
+		// Anything else is a key from a newer version; ignoring it keeps an
+		// old plugin usable with a new file.
+	}
+}
+
+// The one number-shaped key body, so in_port, out_port and the rest cannot
+// disagree about what "not a number" means. Returns false when nothing was
+// stored, which the caller needs for the `port` alias.
+bool midi_config::apply_number(const std::string& path, const std::string& key, const std::string& value, bool has_value, int& field) {
+	if (!has_value) {
+		// The JSON file wrote the key with a value this reader cannot use.
+		if (!value.empty()) set_error("the configuration file " + path + " has a " + key + " that is not a number: \"" + value + "\"");
+		return false;
+	}
+	double number = 0.0;
+	if (!config_number(value, number)) {
+		set_error("the configuration file " + path + " has a " + key + " that is not a number: \"" + value + "\"");
+		return false;
+	}
+	if (number != static_cast<double>(static_cast<int>(number))) {
+		set_error("the configuration file " + path + " has a " + key + " that is not a whole number: \"" + value + "\"");
+		return false;
+	}
+	field = static_cast<int>(number);
+	return true;
+}
 
 bool midi_config::load(const std::string& path) {
 	clear_error();
@@ -1768,39 +2037,33 @@ bool midi_config::load(const std::string& path) {
 		set_error("cannot read the configuration file " + path);
 		return false;
 	}
-	std::string line;
-	while (std::getline(file, line)) {
-		const size_t comment = line.find('#');
-		if (comment != std::string::npos) line = line.substr(0, comment);
-		const size_t equals = line.find('=');
-		if (equals == std::string::npos) continue;
-		const std::string key = to_lower(trim(line.substr(0, equals)));
-		const std::string value = trim(line.substr(equals + 1));
-		if (key.empty()) continue;
-		if (key == "match" || key == "name" || key == "port_name") {
-			match = value;
-		} else if (key == "in_port" || key == "input_port" || key == "in_index") {
-			std::istringstream number(value);
-			int index = 0;
-			if (number >> index) input_port = index;
-			else set_error("the configuration file " + path + " has an in_port that is not a number: \"" + value + "\"");
-		} else if (key == "out_port" || key == "output_port" || key == "out_index") {
-			std::istringstream number(value);
-			int index = 0;
-			if (number >> index) output_port = index;
-			else set_error("the configuration file " + path + " has an out_port that is not a number: \"" + value + "\"");
-		} else if (key == "port" || key == "index") {
-			// The single-key form written by older scripts. It named one index
-			// for both sides, which is exactly the crossing this file no longer
-			// does; reading it into both keeps an old config usable.
-			std::istringstream number(value);
-			int index = 0;
-			if (number >> index) { input_port = index; output_port = index; port = index; }
-			else set_error("the configuration file " + path + " has a port that is not a number: \"" + value + "\"");
+	const std::string body((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+
+	std::vector<std::pair<std::string, std::string> > keys;
+	std::vector<bool> present;
+
+	if (json_reader(body).looks_like_json()) {
+		json_reader reader(body);
+		if (!reader.read_members(keys, present)) {
+			set_error("the configuration file " + path + " is not valid JSON: " + reader.error);
+			return false;
 		}
-		// Anything else is a key from a newer version; ignoring it keeps an
-		// old plugin usable with a new file.
+	} else {
+		// The old `key = value` text with `#` comments, kept so a config
+		// written before this file could be JSON is still read.
+		std::istringstream lines(body);
+		std::string line;
+		while (std::getline(lines, line)) {
+			const size_t comment = line.find('#');
+			if (comment != std::string::npos) line = line.substr(0, comment);
+			const size_t equals = line.find('=');
+			if (equals == std::string::npos) continue;
+			keys.push_back(std::make_pair(line.substr(0, equals), line.substr(equals + 1)));
+			present.push_back(true);
+		}
 	}
+
+	apply(path, keys, present);
 	return true;
 }
 
@@ -1839,10 +2102,21 @@ int midi_config::find_input_port() const { return const_cast<midi_config*>(this)
 int midi_config::find_output_port() const { return const_cast<midi_config*>(this)->pick(false); }
 
 std::string midi_config::describe() const {
-	if (last_port < 0) return "nothing matched \"" + match + "\"";
-	const std::string& name = last_name; // the list that was searched - this used to read the input list even after an output search
-	if (contains_ci(name, match)) return name;
-	return name + " (fallback port " + std::to_string(last_port) + ")";
+	std::string result;
+	if (last_port < 0) result = "nothing matched \"" + match + "\"";
+	else {
+		const std::string& name = last_name; // the list that was searched - this used to read the input list even after an output search
+		result = contains_ci(name, match) ? name : name + " (fallback port " + std::to_string(last_port) + ")";
+	}
+	// The two keys the JSON file carries that nothing in this class acts on
+	// yet. Said out loud rather than left in the file: a setting that is read
+	// and then silently ignored is worse than one that is not read at all,
+	// because the file's owner has no way to tell the two apart.
+	if (velocity_scale >= 0.0 && velocity_scale != 1.0)
+		result += "; velocity_scale " + std::to_string(velocity_scale) + " is read but not applied yet";
+	if (channel >= 0)
+		result += "; channel " + std::to_string(channel) + " is read but not applied yet";
+	return result;
 }
 
 // ---------------------------------------------------------------------------

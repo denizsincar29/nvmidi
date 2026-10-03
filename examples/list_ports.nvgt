@@ -118,10 +118,10 @@ void main() {
 
 	// The engine has no argument list to give a script (get_argc and
 	// application are refused), so the port also has to survive as a file.
-	// "midi_config.txt" is relative, and the engine resolves it against its
+	// "midi_config.json" is relative, and the engine resolves it against its
 	// own working directory rather than this script's folder. That is where
 	// load() looks, so it is where this writes.
-	const string config_path = "midi_config.txt";
+	const string config_path = "midi_config.json";
 
 	ui_speak("MIDI backend: " + midi_api_name_text());
 

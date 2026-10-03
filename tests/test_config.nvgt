@@ -5,8 +5,8 @@
 // get_last_port, describe and get_path, and that a missing file is reported
 // rather than fatal. One line per check, printed and appended to apitest.log.
 //
-// Run it from a directory that holds midi_config.txt (match=zzzznope, port=1)
-// and midi_config_named.txt (match=nord, port=0). Ports on the test machine:
+// Run it from a directory that holds midi_config.json (match=zzzznope, in_port=1, out_port=1)
+// and midi_config_named.json (match=nord, in_port=0, out_port=0). Ports on the test machine:
 // inputs 0 MOTU M Series MIDI In 0, 1 Nord Piano 6 MIDI 1; outputs 0 Microsoft
 // GS Wavetable Synth 0, 1 MOTU M Series MIDI Out 1, 2 Nord Piano 6 MIDI 2.
 //
@@ -47,7 +47,7 @@ void main() {
 	check("config_port_settable", cfg.port == 1, "port=" + cfg.port);
 
 	// -- load a real file (fallback path: nothing matches, port=1) ---------
-	bool load_fb = cfg.load("midi_config.txt");
+	bool load_fb = cfg.load("midi_config.json");
 	check("config_load_file_returns_true", load_fb, "returned=" + bstr(load_fb) + " error=" + midi_last_error_text());
 	int fb_in = cfg.find_input_port();
 	check("config_fallback_find_input_port_1", fb_in == 1, "found=" + fb_in);
@@ -60,7 +60,7 @@ void main() {
 	bool ifp_missing = cfg.load_if_present("no_such_file_zzz.txt");
 	check("config_load_if_present_missing_returns_false", !ifp_missing, "returned=" + bstr(ifp_missing));
 	check("config_load_if_present_missing_no_error", midi_last_error_byte_count() == 0, "last_error=" + midi_last_error_text());
-	bool ifp_present = cfg.load_if_present("midi_config.txt");
+	bool ifp_present = cfg.load_if_present("midi_config.json");
 	check("config_load_if_present_present_returns_true", ifp_present, "returned=" + bstr(ifp_present) + " error=" + midi_last_error_text());
 
 	// -- load: a missing file is an error ----------------------------------
@@ -70,7 +70,7 @@ void main() {
 
 	// -- a config that matches by name -------------------------------------
 	midi_config@ cfg2 = midi_config_create();
-	bool load_named = cfg2.load("midi_config_named.txt");
+	bool load_named = cfg2.load("midi_config_named.json");
 	check("config_named_load_returns_true", load_named, "returned=" + bstr(load_named) + " error=" + midi_last_error_text());
 	int named_in = cfg2.find_input_port();
 	check("config_named_find_input_port_1", named_in == 1, "found=" + named_in + " text=" + midi_config_text(cfg2));
@@ -80,7 +80,7 @@ void main() {
 	check("config_named_output_describe_doc", midi_config_text(cfg2) == "Nord Piano 6 MIDI 2", "text=" + midi_config_text(cfg2) + " last_port=" + cfg2.get_last_port());
 
 	// -- get_path ----------------------------------------------------------
-	check("config_get_path_bytes", cfg2.get_path_byte_count() == 21 && midi_config_path_text(cfg2) == "midi_config_named.txt", "count=" + cfg2.get_path_byte_count() + " path=" + midi_config_path_text(cfg2));
+	check("config_get_path_bytes", cfg2.get_path_byte_count() == 22 && midi_config_path_text(cfg2) == "midi_config_named.json", "count=" + cfg2.get_path_byte_count() + " path=" + midi_config_path_text(cfg2));
 
 	// -- the members set from the script -----------------------------------
 	cfg2.match = "motu";

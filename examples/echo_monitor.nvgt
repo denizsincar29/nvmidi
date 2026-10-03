@@ -19,7 +19,7 @@
 // octave-doubler.nvgt is the example that sends - run this one beside it if
 // you want to hear the same note arriving and leaving.
 //
-// The port comes from midi_config.txt next to this script, so pointing it at
+// The port comes from midi_config.json next to this script, so pointing it at
 // another keyboard is a matter of editing that file.
 //
 // Press escape to stop.
@@ -37,7 +37,7 @@ void main() {
 	}
 
 	midi_config@ config = midi_config_create();
-	config.load_if_present("midi_config.txt");
+	config.load_if_present("midi_config.json");
 
 	midi_input@ keyboard = midi_input_create();
 	if (!keyboard.open_config(config, "nvmidi echo")) {

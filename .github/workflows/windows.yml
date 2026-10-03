@@ -2735,16 +2735,13 @@ jobs:
             # reached through the examples that #include them, and each of
             # those brings its own main() - which is why neither file has one.
             #
-            # The JSON pair joined them the same way, and for the same reason:
-            # json_value_test.nvgt has no main() at all, json_config_test.nvgt
-            # carries json_config_main(), and both are reached through
-            # examples/octave-doubler-json-config.nvgt - which is compiled here
-            # as well, so the reader does not go unchecked in this job.
-            # Measured, run 37146850670: without these two names the step
-            # failed on exactly them, "exited 65 - it did not compile".
+            # The JSON pair that used to sit in this list is gone with the
+            # script-side reader: json support now lives in the plugin's
+            # midi_config::load(), in C++, so json_value_test.nvgt,
+            # json_config_test.nvgt and the example that reached them were
+            # deleted, and no example is a header any more.
             if ($s.Name -in @('midi.nvgt', 'nvmidi_constants.nvgt', 'nvmidi_string.nvgt',
-                               'nvmidi_ui.nvgt', 'nvmidi_ui_keys.nvgt',
-                               'json_value_test.nvgt', 'json_config_test.nvgt')) {
+                               'nvmidi_ui.nvgt', 'nvmidi_ui_keys.nvgt')) {
               Write-Host ("::group::{0} {1}" -f $s.FullName, '(not compiled alone - no main() of its own)')
               Write-Host "skipped: it is included by other scripts, which carry the main() for it"
               Write-Host "::endgroup::"

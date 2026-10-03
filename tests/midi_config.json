@@ -1,0 +1,6 @@
+{
+    "#": "Fixture for test_config.nvgt. This file must sit beside the test when it runs: the test asserts on the fallback path, so nothing here matches and the number below is what the search settles on. A different machine edits these two lines, not the code.",
+    "match": "zzzznope",
+    "in_port": 1,
+    "out_port": 1
+}

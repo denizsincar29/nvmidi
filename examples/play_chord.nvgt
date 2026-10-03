@@ -61,11 +61,11 @@ void main() {
 	wait(50); // let the reader speak the window title first
 
 	midi_config@ config = midi_config_create();
-	config.load_if_present("midi_config.txt");
+	config.load_if_present("midi_config.json");
 
 	int port = config.find_output_port();
 	if (port < 0) {
-		ui_speak("No port matches " + config.match + " and the fallback is empty. Check midi_config.txt.");
+		ui_speak("No port matches " + config.match + " and the fallback is empty. Check midi_config.json.");
 		return;
 	}
 

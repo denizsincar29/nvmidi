@@ -229,10 +229,10 @@ Design, and the reasons that are not obvious:
   must be dismissed before the next one is heard turns an arpeggio into a queue
   of dialogs. `e2e_midi.nvgt` avoids the reader for the opposite reason: on a
   build machine with no reader attached the call never returns.
-- The port is chosen through `midi_config.txt`, which is how the plugin's own
+- The port is chosen through `midi_config.json`, which is how the plugin's own
   parser works - `match` is a substring matched case-insensitively against the
   port names (`midi_config::load`/`pick`, src/nvmidi.cpp:1525 and :1561), and
-  `port`/`index` are an index. The earlier draft of this script called
+  `in_port`/`out_port` (or `port`/`index`) are an index. The earlier draft of this script called
   `config.set_input_port()`, which does not exist; there is no such method.
 - Phase two reopens both ports through configs of their own, because a port is
   chosen by the config its object was opened with, and because playing into the

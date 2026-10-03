@@ -1,8 +1,0 @@
-# Fixture for test_config.nvgt. This file must sit beside the test when it
-# runs: the test asserts on the fallback path, so nothing matches here and the
-# index below is what the search settles on.
-#
-# A different machine edits these two lines, not the code.
-
-match = zzzznope
-port = 1

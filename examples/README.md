@@ -16,11 +16,16 @@ of these files names the plugin or builds a string out of bytes by hand. The
 window helpers are a separate include on purpose — they are about a window on a
 screen, not about MIDI, and a script that only sends notes does not want them.
 
-All of them read `midi_config.txt` from this folder, so a different keyboard
+All of them read `midi_config.json` from this folder, so a different keyboard
 only needs that file edited.
 
-    match = nord      # part of the port name, case insensitive
-    port = 0          # index to fall back on when the name finds nothing
+    { "match": "nord", "in_port": 0, "out_port": 0 }
+
+`match` is part of the port name, matched case-insensitively; `in_port` and
+`out_port` are the indexes to fall back on when the name finds nothing. The
+plugin's own reader takes either shape - a file whose first character is `{`
+is read as JSON, anything else as the old `key = value` text - so a config
+written by hand in the old form still works.
 
 - **list_ports.nvgt** — prints every port and says which one the config picks.
   Run this first when something is not working.

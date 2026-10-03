@@ -17,7 +17,7 @@
 // (Renamed from keyboard_to_synth.nvgt: the name should say what it does.)
 //
 // Press escape to stop. On the way out every note is released, so nothing is
-// left sounding. Both ports come from midi_config.txt next to this script.
+// left sounding. Both ports come from midi_config.json next to this script.
 
 // Declared here rather than at file scope: a script global is initialised
 // before the plugin has registered its types, so a handle kept outside a
@@ -45,7 +45,7 @@ void main() {
 	}
 
 	midi_config@ config = midi_config_create();
-	config.load_if_present("midi_config.txt");
+	config.load_if_present("midi_config.json");
 
 	// The config is read here, by this script, from a file - not by the plugin
 	// and not over a network. This block says which file answered, in case it

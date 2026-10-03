@@ -311,15 +311,19 @@ kind, set to zero".
 
 Port numbers move around when a device is replugged or a virtual port is
 installed, so a test program is better off looking for its keyboard by name.
-The match ignores case, and a small text file next to the script says what to
-look for — so someone testing another keyboard edits the file, not the code:
+The match ignores case, and a small file next to the script says what to look
+for — so someone testing another keyboard edits the file, not the code:
 
-    match = nord          # part of the port name, case insensitive
-    port = 0              # index to fall back on
+    { "match": "nord", "in_port": 0, "out_port": 0 }
+
+`in_port` and `out_port` are the indexes to fall back on when the name finds
+nothing. Both this JSON form and the older `key = value` text are read, chosen
+by the file's own first character rather than by its extension, so an old
+`.txt` config keeps working.
 
 ```angelscript
 midi_config@ config = midi_config_create();
-config.load_if_present("midi_config.txt");
+config.load_if_present("midi_config.json");
 
 int port = config.find_input_port();
 if (port < 0) {
@@ -615,7 +619,7 @@ dropped rather than memory growing without bound.
 ## Examples
 
 `examples/` holds the five demonstration scripts, all of which read
-`midi_config.txt` from that folder: `list_ports` (what is plugged in, and what
+`midi_config.json` from that folder: `list_ports` (what is plugged in, and what
 the config picks), `echo_monitor` (speaks every incoming message),
 `octave-doubler` (forwards one port to another, transposed), `play_chord`
 (chords and patterns on the keyboard's own sound engine) and `music_quickstart`
@@ -640,8 +644,9 @@ only sound they make is the sound they assert on.
   with every pattern name;
 - `test_config` - `midi_config`: load, the two searches, `get_last_port`,
   `describe` and `get_path`. Its two fixtures sit beside it now:
-  `midi_config.txt` (`match=zzzznope`, `port=1`) and `midi_config_named.txt`
-  (`match=nord`, `port=0`), so it is run from `tests/`.
+  `midi_config.json` (`match=zzzznope`, `in_port=1`, `out_port=1`) and
+  `midi_config_named.json` (`match=nord`, `in_port=0`, `out_port=0`), so it is
+  run from `tests/`.
 - `test_input_live` - the one that does need a person. It opens the keyboard,
   ripples C-E-G-E *an octave below middle C* to say "play the instrument now",
   listens for 30 seconds, prints and counts every message that comes out of it,

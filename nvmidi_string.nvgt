@@ -76,7 +76,8 @@ string midi_string_char(uint b) {
 // reads back as length 0, both measured locally against the pinned engine
 // (nvgt 0.90.0-dev). The NUL truncates, so a table of bytes that starts
 // anywhere below 0x20 simply does not survive being written down - which is
-// what broke the byte table in examples/json_value_test.nvgt: it read as 0 bytes,
+// what broke the byte table in the script-side JSON reader this repository
+// used to carry: it read as 0 bytes,
 // byte 0x7b read as 0xff, and every parse stopped at "expected a value at
 // offset 0". Hex has no such byte, so a byte is named the way it is named in
 // a C string literal, and the number is recovered by arithmetic rather than by

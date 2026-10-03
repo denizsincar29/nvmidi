@@ -702,6 +702,12 @@ public:
 	// cannot be read, with the reason in midi_last_error(); the defaults
 	// stay in place. A key that is not understood is reported and skipped,
 	// so one typo does not throw the whole config away.
+	//
+	// Both file shapes are read, chosen by the file's own first character and
+	// not by its extension: `{` is a JSON object (the shape this project
+	// writes, one shared midi_config.json), anything else is the old
+	// `key = value` text with `#` comments. Old files keep working, and a
+	// `.txt` holding a JSON object is read as JSON because that is what it is.
 	bool load(const std::string& path);
 	// Same, but a missing file is not an error: the defaults simply stand.
 	bool load_if_present(const std::string& path);
@@ -739,7 +745,28 @@ public:
 	int output_port;
 	int port; // deprecated alias: reading an old "port = N" sets both of the above
 
+	// Multiplies every note's velocity on the way out; 1.0 leaves it alone.
+	// The JSON file has carried this key since it was written and nothing read
+	// it, so the honest state is: stored and reported, not yet applied by the
+	// playing methods. Kept in the file's own numbering (-1 means the file did
+	// not say), so a config that never mentions velocity is not distinguishable
+	// from one that mentions it only by what midi_config_describe() prints.
+	double velocity_scale;
+	// The MIDI channel every message is forced onto, or -1 to keep each
+	// message's own channel. Same story as velocity_scale: parsed and
+	// reported, and 0 is a real channel, which is exactly why "unset" cannot
+	// be spelled 0.
+	int channel;
+
 private:
+	// The shared tail of load(): both readers produce this map, and the keys
+	// are applied here once so the two shapes cannot drift apart.
+	void apply(const std::string& path,
+	           const std::vector<std::pair<std::string, std::string> >& keys,
+	           const std::vector<bool>& present);
+	// One number-shaped key, with one meaning of "not a number" for all of them.
+	bool apply_number(const std::string& path, const std::string& key,
+	                  const std::string& value, bool has_value, int& field);
 	int pick(bool input);
 	std::string path;
 	int last_port;

@@ -90,16 +90,40 @@ string bytes_of_message(const midi_message&in m) {
 
 // --- picking the instrument ------------------------------------------------
 
-// The port is chosen the way a user chooses one: a line in midi_config.txt
+// The port is chosen the way a user chooses one: a line in midi_config.json
 // that the plugin matches, case-insensitively, against the port names it can
 // see. That is read out of midi_config::load and pick() in src/nvmidi.cpp - it
 // is not guessed. The file knows three keys: match (a substring of the port
 // name), port (an index) and index (the same). Anything else is ignored, so a
 // file written here stays readable by other scripts in this repository.
 //
-// The line is written rather than the whole file replaced, because the two
-// halves of this test want different ports and the second half must not
-// overwrite the first.
+// The name already in the config file, or "" when there is none. A tiny
+// reader rather than a call into the plugin's parser: this runs before any
+// midi_config object exists here, and the file it reads is one this script
+// wrote, so the only thing it has to survive is the shape written above.
+string read_existing_match() {
+	// file_get_contents is the engine's own reader and the one already used
+	// elsewhere in this repository (scripts/get_nvmidi.nvgt uses it to read a
+	// downloaded file back). The file-object form is only ever used here to
+	// write, and a reader invented for one call is a reader nobody measured.
+	string text = file_get_contents("midi_config.json");
+	// A search from an index and a substring by position and length, which is
+	// the shape scripts/get_nvmidi.nvgt already reads a json value with - the
+	// same engine calls, in the order that file proved them in.
+	const int at = text.find("\"match\"");
+	if (at < 0) return "";
+	const int open = text.find("\"", at + 8);
+	if (open < 0) return "";
+	const int close = text.find("\"", open + 1);
+	if (close <= open) return "";
+	return text.substr(open + 1, close - open - 1);
+}
+
+// The file is read back and rewritten rather than appended to, because the two
+// halves of this test want different ports and the second write must add a key
+// without erasing the first. There is no JSON append: two objects in one file
+// are not a config, they are a parse error, so this keeps the keys already in
+// the file and replaces only the one it owns.
 void write_config(const string&in port_name, bool append) {
 	// file_put_contents is the engine's own function and the one its docs
 	// point at (signature read out of the engine binary, not guessed:
@@ -113,13 +137,26 @@ void write_config(const string&in port_name, bool append) {
 	// instead of a file" (readme.md:397). Writing the file is the file-shaped
 	// version of that same statement, and it is the one that works when the
 	// script has to hand a port to an object it has already created.
-	string text = "";
-	if (!append) {
-		text += "# written by scripts/hear_test.nvgt\n";
-		text += "# match is a substring of the port name, case-insensitive\n";
+	// The key is "match" first and, on the second write of a run, "match" again:
+	// both directions of this test are chosen by a port *name*, and the plugin's
+	// reader applies keys in the order it meets them, so a later "match" is the
+	// one that decides. That is how the original text file did it too (`match=`
+	// written twice, last one wins), and it is why the key to keep across the
+	// rewrite is "match" and not an in_port/out_port pair.
+	//
+	// JSON, because a truncated object fails to parse instead of silently
+	// keeping the previous port, and because it is the one shape every config
+	// reader in this repository now reads.
+	string previous = "";
+	if (append) previous = read_existing_match();
+	string text = "{\n\t\"match\": \"" + port_name + "\"\n}\n";
+	if (previous != "" && previous != port_name) {
+		// Keep the first pass's name as a second key so it is still there if a
+		// later write is the one that fails. Two keys of the same name are
+		// legal JSON and the reader takes the last, which is this one.
+		text = "{\n\t\"match\": \"" + previous + "\",\n\t\"match\": \"" + port_name + "\"\n}\n";
 	}
-	text += "match=" + port_name + "\n";
-	file_put_contents("midi_config.txt", text, append);
+	file_put_contents("midi_config.json", text, false);
 }
 
 // --- the test --------------------------------------------------------------
@@ -167,7 +204,7 @@ void main() {
 	// the engine keeps that string for its own use, and the compiler said so.
 	// So nothing here reads a command line.
 	//
-	// Instead the port is whatever the launcher wrote into midi_config.txt
+	// Instead the port is whatever the launcher wrote into midi_config.json
 	// before this run started, and by default the first port in the list above
 	// - which is what the plugin's own `match` logic would pick anyway when the
 	// file says nothing about a port it can see.
@@ -175,7 +212,7 @@ void main() {
 	// The file is read here, not written here: on Windows the launcher is a
 	// Python process and this script cannot see its temporary file, so the
 	// launcher owns the file and this script only reports what it contains.
-	// Which ports to use. The launcher writes midi_config.txt before this
+	// Which ports to use. The launcher writes midi_config.json before this
 	// runs; when it did not, the plugin's own default applies and `match` is
 	// "nord", so the instrument is found by name rather than by the order the
 	// operating system happens to enumerate devices in.
@@ -187,11 +224,11 @@ void main() {
 	// reported zero messages - a green run of the wrong test. The launcher's
 	// config was also being overwritten here with that same port 0 name.
 	midi_config@ ports = midi_config_create();
-	ports.load_if_present("midi_config.txt");
+	ports.load_if_present("midi_config.json");
 	int in_port = ports.find_input_port();
 	if (in_port < 0) {
 		in_port = midi_find_input_port("nord");
-		if (in_port >= 0) say("midi_config.txt matched nothing; fell back to the port named nord");
+		if (in_port >= 0) say("midi_config.json matched nothing; fell back to the port named nord");
 	}
 	if (in_port < 0 && ins > 0) in_port = 0;
 	int out_port = ports.find_output_port();
@@ -220,7 +257,7 @@ void main() {
 	// Phase one picks the instrument, by name, through the config file.
 	write_config(in_name, false);
 	midi_config@ for_input = midi_config_create();
-	for_input.load_if_present("midi_config.txt");
+	for_input.load_if_present("midi_config.json");
 
 	midi_input@ keyboard = midi_input_create();
 	if (!keyboard.open_config(for_input, "nvmidi hear in")) {
@@ -279,9 +316,9 @@ void main() {
 		// output's name was also the one searched for in the input list.
 		write_config(in_name, false);
 		midi_config@ for_input2 = midi_config_create();
-		for_input2.load_if_present("midi_config.txt");
+		for_input2.load_if_present("midi_config.json");
 		midi_config@ for_output = midi_config_create();
-		for_output.load_if_present("midi_config.txt");
+		for_output.load_if_present("midi_config.json");
 
 		midi_input@ again = midi_input_create();
 		midi_output@ speaker = midi_output_create();
