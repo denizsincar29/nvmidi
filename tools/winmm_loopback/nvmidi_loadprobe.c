@@ -63,8 +63,22 @@ static void report_status(const char *dll_path) {
 	printf("  status: %ld byte(s): %s\n", size, line);
 }
 
-int main(int argc, char **argv) {
-	const char *self = argv[0];
+// wmain, not main, because build.sh marks this exe -municode along with the
+// driver: the unicode entry point is the one mingw's startup then looks for,
+// and a file that defines only main links to the ANSI one and is left with an
+// undefined reference to wWinMain. The name is the fix; nothing inside
+// changes, since the arguments this probe reads are paths and printfs.
+//
+// The parameter is spelled the way _UNICODE makes it: wmain receives wide
+// argv, but everything this file does with argv[0] is base_name() and two
+// printfs, both narrow. The narrow form is used deliberately - the wide argv
+// is converted once, at the top, so the rest of the file is unchanged.
+int wmain(int argc, wchar_t **wargv) {
+	char narrow[4096] = { 0 };
+	(void)argc;
+	WideCharToMultiByte(CP_ACP, 0, wargv[0], -1, narrow, sizeof(narrow) - 1,
+		NULL, NULL);
+	const char *self = narrow;
 	printf("probe: %s\n", self);
 	printf("probe image name: %s\n", base_name(self));
 

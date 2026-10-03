@@ -63,10 +63,24 @@ grep -n 'PROCESS_ATTACH\|PROCESS_DETACH' "$driver" | sed 's/^/  /'
 # nobody has ever been able to ask the windows runner: does this function
 # come back on its own, and does the thread it starts do anything before the
 # process ends.
+# The -I is for the driver's own include, and it is not decoration. The driver
+# says #include "nvmidi_win_compat.h", and a quoted include is resolved first
+# against the directory of the file the directive sits in - which here is
+# tools/winmm_loopback/, and the header is there, so the form that looks
+# correct is correct. What it is *not* resolved against is the directory of
+# loopback_dlmain.c, so nothing about this loader's own -I scripts/linux
+# reaches it. That is the same mechanism as before this header existed: the
+# driver's quoted include of the shim was on the windows side of the sentinels
+# and only that side ever read it. The -I is here so the build does not depend
+# on the compiler agreeing about which directory a quoted include belongs to
+# when the source was reached through another file; the header lives in that
+# directory and the flag says so out loud.
+driver_inc="$root/tools/winmm_loopback"
+
 echo "--- attempt 1: DllMain, attach and return"
 status=$(status_for "$work/attach")
 rm -f "$status"
-LOOPBACK_MODE=attach "$CC" -O2 -Wall -o "$work/attach" "$loader" -lpthread
+LOOPBACK_MODE=attach "$CC" -O2 -Wall -I "$driver_inc" -o "$work/attach" "$loader" -lpthread
 timeout 60 "$work/attach" || { echo "attach run failed" >&2; exit 1; }
 
 # DllMain overwrites its own status file with every write (fopen "wb"), and
@@ -85,7 +99,7 @@ fi
 echo "--- attempt 2: the publish thread on a real thread, 3s"
 status=$(status_for "$work/pthread")
 rm -f "$status"
-LOOPBACK_MODE=pthread "$CC" -O2 -Wall -o "$work/pthread" "$loader" -lpthread
+LOOPBACK_MODE=pthread "$CC" -O2 -Wall -I "$driver_inc" -o "$work/pthread" "$loader" -lpthread
 LOOPBACK_MODE=pthread timeout 60 "$work/pthread"
 if [ -f "$status" ]; then
 	echo "--- status after the thread ran"
