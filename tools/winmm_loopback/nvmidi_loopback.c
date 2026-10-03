@@ -64,6 +64,7 @@
 #include <windows.h>
 #include <mmsystem.h>
 #include <mmddk.h>
+#include <mmiscapi.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -650,23 +651,17 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
 		// The one call that says whether the module is unloaded under a live
 		// stack. write_status reopens the file every time, so this mark lands
 		// whether the detach is an unload or a process exit; a detach line in
-		// the status file therefore means the loader took this image away,
-		// and the status file that still holds the ATTACH lines says the
-		// unload happened before DllMain returned rather than after the
-		// process was already going.
+		// the status file therefore means the loader took this image away. What
+		// it is read against is ATTACH=DllMain-entered, the single line DllMain
+		// holds in the file for the whole of its run - the file keeps only its
+		// last write, so a DETACH at the end means the loader took this image
+		// away while DllMain was inside it, and ATTACH=returning at the end
+		// means DllMain finished and the unload came after.
 		//
-		// What it separates, and why nothing else could: DllMain's last line
-		// is written after a 250ms sleep, so it is absent whenever the process
-		// died inside this function. Absent for two reasons that need
-		// opposite repairs - the loader unloaded the image under the running
-		// DllMain (a self-replacing copy letting the original go), or someone
-		// inside ran a second LoadLibrary of itself, whose ATTACH ran nested
-		// and whose DETACH on that inner unload wiped the lower-level lines.
-		//
-		// Measured on run 36726960949: the e2e's crash is an execute fault at
-		// nvmidi.dll+0x15e6 with a one frame stack, the address inside an
-		// unloaded image - so a jump through a pointer into a module the
-		// loader had already taken away. This mark names who took it.
+		// Measured on run 36726960949: an execute fault at nvmidi.dll+0x15e6
+		// with a one frame stack, the address inside an unloaded image. This
+		// mark names who took the image away, when the image that crashed is
+		// this one.
 		write_status("DETACH=DllMain-entered");
 	}
 	if (reason == DLL_PROCESS_ATTACH) {

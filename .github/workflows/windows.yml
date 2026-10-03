@@ -1267,6 +1267,68 @@ jobs:
           "LOOPBACK_DLL=$out" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "driver staged: $((Get-Item $out).Length) bytes at $out"
 
+          # The load probe comes along, and the slot list it needs is written
+          # here while the driver has not been loaded by anything yet. The read
+          # of the registry is the step's own, so the list is what this machine
+          # says now and not what an earlier step cached.
+          $probe = Join-Path $env:GITHUB_WORKSPACE 'tools\winmm_loopback\nvmidi-loadprobe.exe'
+          if (-not (Test-Path $probe)) {
+            Write-Host "::warning::the load probe was not built; the slot open below will be skipped"
+          } else {
+            Copy-Item $probe (Join-Path $dir 'nvmidi-loadprobe.exe') -Force
+            $slots = @()
+            foreach ($name in @('midi','midi0','midi1','midi2','midi3','midi4','midi5',
+                                'midi6','midi7','midi8','midi9')) {
+              $v = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Drivers32' `
+                -Name $name -ErrorAction SilentlyContinue).$name
+              if ($v) { $slots += "$name $v" }
+            }
+            if ($slots) {
+              $slots | Set-Content -Path (Join-Path $dir 'nvmidi_slots.txt') -Encoding ascii
+              Write-Host "Drivers32 midi slots on this runner:"
+              $slots | ForEach-Object { Write-Host "  $_" }
+            } else {
+              Write-Host "no Drivers32 midi slot on this runner"
+            }
+          }
+
+
+      # The plainest question the run can ask: does winmm load the driver when
+      # it is asked to, and what does the status file say afterwards. It comes
+      # before the listener on purpose. The listener loads the same file with
+      # LoadLibraryA, and on the last measured run that load answered a base
+      # and left an empty status file - so the load path that winmm itself
+      # uses has never been tried here at all, and a failure on this step
+      # separates "the dll cannot come up" from "the listener's own load is
+      # what it cannot survive". The step is allowed to fail: what it finds is
+      # in its stdout either way, and the verdict steps read that.
+      - name: open the loopback slot by name, the way winmm does
+        if: ${{ env.LOOPBACK_DLL != '' }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'loopback'
+          $probe = Join-Path $dir 'nvmidi-loadprobe.exe'
+          if (-not (Test-Path $probe)) {
+            Write-Host "the load probe was not built; nothing to measure"
+            exit 0
+          }
+          Push-Location $dir
+          & $probe
+          Write-Host "load probe exit code: $LASTEXITCODE"
+          "LOAD_PROBE_EXIT=$LASTEXITCODE" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Pop-Location
+          Write-Host "--- the status file after the probe ---"
+          $status = "$env:LOOPBACK_DLL.status"
+          if (Test-Path $status) {
+            Get-Content $status -Raw | Write-Host
+          } else {
+            Write-Host "<no status file>"
+          }
+          if (Test-Path "$dir\nvmidi_trace_open_failed.txt") {
+            Write-Host "--- the trace itself could not be opened ---"
+            Get-Content "$dir\nvmidi_trace_open_failed.txt" -Raw | Write-Host
+          }
 
       # What the listener is going to be measuring against, learned before it
       # measures. The listener opens a midi *input* and asserts the bytes it

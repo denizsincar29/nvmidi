@@ -179,6 +179,22 @@ jobs:
           echo "--- the api version this plugin was compiled against"
           grep -m1 'define NVGT_PLUGIN_API_VERSION' src/nvgt_plugin.h || true
 
+      # The loopback driver only ever exists on windows, and its DllMain -
+      # the only DllMain in this repository - has never been run by anything
+      # outside the cdb session that watched it die. The windows runner can
+      # afford one probe per run, so nothing here can iterate on that
+      # function; this job can run it thirty times in twenty seconds.
+      #
+      # What it does not test, and the step says so in its own output: winmm,
+      # the registry and the Drivers32 message protocol are windows-only. On
+      # linux the driver is a plain shared library whose DllMain is
+      # DLL_PROCESS_ATTACH and DLL_PROCESS_DETACH - so this covers the file
+      # handles, the thread start, the two rings and the module path, and not
+      # one line of the part that talks to winmm.
+      - name: run the loopback driver's DllMain as a plain library
+        shell: bash
+        run: bash scripts/linux/loopback_dlmain.sh
+
       # Everything above proves the plugin *built*. None of it proves the
       # engine can *load* it, and those are different failures with the same
       # symptom.

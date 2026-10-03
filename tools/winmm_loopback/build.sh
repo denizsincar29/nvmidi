@@ -58,3 +58,16 @@ mkdir -p "$(dirname "$OUT")"
 	-lwinmm -DUNICODE -D_UNICODE
 echo "built $(wc -c < "$OUT") bytes at $OUT"
 
+# The load probe, built whenever the driver is. It is an .exe and not a
+# shared object so that running it is the whole of the test: the shell that
+# starts it owns the process, its exit code says whether any slot opened, and
+# nothing has to hold it alive the way the listener holds a device.
+#
+# The path follows the driver's - next to whatever -o named, with the
+# extension swapped. Only the CI job runs it, but a build that quietly stayed
+# behind would make the next run probe a stale probe.
+PROBE="${OUT%.*}"
+PROBE="$PROBE-loadprobe.exe"
+"$CC" -O2 -municode -o "$PROBE" nvmidi_loadprobe.c -lwinmm -DUNICODE -D_UNICODE
+echo "built $(wc -c < "$PROBE") bytes at $PROBE"
+
