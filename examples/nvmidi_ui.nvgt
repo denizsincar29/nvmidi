@@ -46,10 +46,13 @@ void ui_speak(const string&in text) {
 //
 // The type name `game_window` is equally unusable - it is not in the engine's
 // scripting registration, so `game_window@ w = show_window(...)` answers
-// "Identifier 'game_window' is not a data type". Neither the bool nor the
-// spelled-out handle is portable, which leaves the one form that names no type
-// at all: `auto`. It adopts whatever the engine returns and lets the `is null`
-// test work on either registration.
+// "Identifier 'game_window' is not a data type". Recording that here cost two
+// wrong attempts on 2026-10-03: `auto w = show_window(title); if (w is null)`
+// was tried, on the theory that `auto` adopts a handle, and Дениз's build
+// answered "both operands must be handles when comparing identity" - `auto`
+// holds a *value*, and `is null` wants a handle on both sides. The form that
+// works is no intermediate variable at all: test the call's result directly
+// with `!is`, as the body below does.
 //
 // Caught twice, and the two failures are why this comment is long. Дениз hit
 // the game_window version first, 2026-10-03; then a "fix" that read the
@@ -59,19 +62,17 @@ void ui_speak(const string&in text) {
 // directions from assuming which one it was.
 //
 // The test is written the way the engine writes it for itself: bgt_compat.nvgt
-// line 89 is `return show_window(title) !is null;`, test applied to the call's
-// result. show_window answers a handle, and `unknown is null` on a value - or
-// `auto w = ...; w is null` - is a compile error, "both operands must be
-// handles when comparing identity". The call result is a handle; a variable
-// holding it is not, which is the whole of the trap. This file guessed the
-// signature twice and was wrong twice; the engine's own compat layer is the
-// one place the answer was already written down.
+// line 89 is `return show_window(title) !is null;` - the test applied to the
+// call's result, and the operator is `!is`, not `is`. Дениз's build rejected
+// `show_window(title) is null` at the line that carried it (2026-10-03), while
+// the same line compiled clean on the local Linux engine - so the two engines
+// disagree on the `is` spelling, and the local one is not the one to trust
+// here. The `!is` spelling is the one that ships inside the engine's own
+// compat layer, so that is the one written below.
 bool ui_open(const string&in title) {
-	if (show_window(title) is null) {
-		ui_speak("could not open a window");
-		return false;
-	}
-	return true;
+	if (show_window(title) !is null) return true;
+	ui_speak("could not open a window");
+	return false;
 }
 
 // Keep the window's event loop alive and report whether the user asked to
