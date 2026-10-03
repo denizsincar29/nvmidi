@@ -81,7 +81,15 @@ int main(int argc, char **argv) {
 			printf("slot %s -> %s\n", slot, dll);
 			int expected = strstr(base_name(dll), DEVICE_PREFIX) != NULL;
 			printf("  expected ours: %s\n", expected ? "yes" : "no");
-			HDRVR h = OpenDriver(slot, NULL, 0);
+			// The slots are registry names - ASCII by construction - but
+			// OpenDriver takes LPCWSTR in the unicode build, so the name is
+			// widened here rather than cast. A cast would have compiled and
+			// then asked winmm to open a slot named by whatever the two byte
+			// halves happened to spell.
+			WCHAR wslot[64] = { 0 };
+			for (size_t i = 0; slot[i] && i < 63; i++)
+				wslot[i] = (WCHAR)(unsigned char)slot[i];
+			HDRVR h = OpenDriver(wslot, NULL, 0);
 			printf("  OpenDriver: h=0x%p error=%lu\n", (void *)(DWORD_PTR)h,
 				(unsigned long)GetLastError());
 			report_status(dll);
