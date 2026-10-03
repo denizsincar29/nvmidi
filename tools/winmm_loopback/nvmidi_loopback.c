@@ -518,8 +518,6 @@ static BOOL write_driver_entry(WCHAR *slot, size_t slot_len) {
 // Started from DllMain. The loader lock is held there, so everything that
 // touches the registry or loads another module waits until this thread has it
 // free.
-
-// Says where the thread is when it stops. The last three runs printed a module
 // base and then nothing - not registry-failed, not open-failed, not the report
 // - which leaves two readings that need different fixes: the thread never runs,
 // or it runs and the fault is later in it. A one line mark before anything that
@@ -640,10 +638,11 @@ static DWORD WINAPI publish_thread(LPVOID unused) {
 		// The slot is printed as bytes, not as a wide string: an %ls in a
 		// printf that has no wide-string support on one of the two compilers
 		// is a portability trap, and the name is ASCII in both builds anyway.
-		// It is copied out of `slot` here, in this block, because the `got`
-		// buffer that names the slot a few statements above lives in a brace
-		// of its own and is long out of scope by now - naming it here was a
-		// compile error that said exactly that.
+		// One write, not two: the mark that used to sit above this line said
+		// open-failed and then this line said open-failed with the reason, and
+		// the file keeps only its last write - so the mark was read by nobody
+		// and the second line was the only one that ever reached anyone. The
+		// detail line is the whole message.
 		char open_slot[64] = { 0 };
 		shim_w2mb(slot, open_slot, sizeof(open_slot) - 1);
 		snprintf(detail, sizeof(detail),
@@ -712,7 +711,13 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
 		// The filter goes on before the thread starts, because the thread is
 		// where a fault is now expected to show up and a handler installed
 		// afterwards would miss it.
-		SetUnhandledExceptionFilter(crash_filter);
+		//
+	// This is the one thing in the offline run that cannot be faked, and the
+	// shim does not try: SetUnhandledExceptionFilter is a no-op there because
+	// there is no SEH to install a filter into. So the offline run says
+	// nothing about this line, and a fault it could not catch is not evidence
+	// that the handler is wrong - it is evidence the handler was never on.
+	SetUnhandledExceptionFilter(crash_filter);
 		// Published here, on the loading thread, and not from the thread
 		// below. Every failure this file has had was read as "winmm cannot
 		// start the driver", and the registry dump says the write itself was
