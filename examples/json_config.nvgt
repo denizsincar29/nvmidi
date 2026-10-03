@@ -32,8 +32,13 @@
 // JSON path buys, and it is the reason this file is worth having.
 
 #pragma plugin nvmidi
-#include "json_value.nvgt"
+// nvmidi_string.nvgt first: json_value.nvgt builds characters with
+// midi_string_char(uint), and a named function has to be declared before the
+// line that calls it. Included the other way round the engine answered "No
+// matching symbol 'midi_string_char'" at json_value.nvgt:311 and :318 (run
+// 37143327781) even though the function is in the tree.
 #include "nvmidi_string.nvgt"
+#include "json_value.nvgt"
 
 // ---- the config in memory -------------------------------------------------
 
