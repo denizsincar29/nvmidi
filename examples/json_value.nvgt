@@ -25,6 +25,12 @@
 //     here; the reader is iterative over the token stream instead.
 
 #pragma plugin nvmidi
+// This file is compiled on its own by the CI's script job, so it has to stand
+// alone: the constants first, then the byte-to-character helper. Both are what
+// midi.nvgt includes, in the same order - a named function is one pass, and
+// midi_string_char has to be declared before read_string calls it.
+#include "../nvmidi_constants.nvgt"
+#include "../nvmidi_string.nvgt"
 
 // The bytes this parser has to tell apart, in order, so that a byte's number
 // is its position in this string. Byte n is NVM_BYTES[n], and byte_at() below

@@ -10,7 +10,6 @@
 // Copy midi_config.json next to this script, or run it with none - the
 // defaults below are usable on their own.
 
-#include "../nvmidi_string.nvgt"
 #include "../midi.nvgt"
 #include "nvmidi_ui.nvgt"
 #include "nvmidi_ui_keys.nvgt"
