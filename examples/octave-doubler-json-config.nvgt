@@ -13,7 +13,7 @@
 #include "../midi.nvgt"
 #include "nvmidi_ui.nvgt"
 #include "nvmidi_ui_keys.nvgt"
-#include "json_config.nvgt"
+#include "json_config_test.nvgt"
 
 midi_input@ input;
 midi_output@ output;

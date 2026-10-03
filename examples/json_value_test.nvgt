@@ -1,4 +1,4 @@
-// json_value.nvgt - a small JSON reader, enough for a config file.
+// json_value_test.nvgt - a small JSON reader, enough for a config file.
 //
 // Written because a script that wants its settings in JSON should not need the
 // plugin rebuilt, and because pulling a JSON library into NVGT is a worse trade
@@ -481,14 +481,14 @@ double json_number(const string&in text) {
 //
 // Parsed and read back, field by field, through the typed accessors a script
 // actually uses. Fixed text rather than a file: this is a check of the reader
-// in json_value.nvgt, and a file would put the parse of it in json_config.nvgt
+// in json_value_test.nvgt, and a file would put the parse of it in json_config.nvgt
 // instead. Nothing here opens a device.
 //
 // This file carries no main(), and that is the measured outcome rather than a
-// style choice: json_config.nvgt #includes it and has an entry point of its
+// style choice: json_config_test.nvgt #includes it and has an entry point of its
 // own, and an included main() is a second definition, not a declaration -
 // "A function with the same name and parameters already exists" (runs
-// 37144664029 and 37145003153, json_config.nvgt:168 and json_value.nvgt:474).
+// 37144664029 and 37145003153, json_config_test.nvgt:168 and json_value_test.nvgt:474).
 // A file that is only ever #included must not carry a main(); the check the
 // scripts job runs on this file standing alone stops one line earlier with
 // "No entry point found", which the workflow's own note calls the compile

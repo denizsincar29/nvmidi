@@ -1,4 +1,4 @@
-// json_config.nvgt - read the examples' MIDI port config from JSON,
+// json_config_test.nvgt - read the examples' MIDI port config from JSON,
 // without the plugin's midi_config class.
 //
 // This file exists because the class is C++ and the format is a fact of the
@@ -33,11 +33,11 @@
 
 #pragma plugin nvmidi
 // Constants before the string helpers: nvmidi_string.nvgt reads PITCH_NAMES,
-// which is what midi.nvgt does too. json_value.nvgt then carries its own copy
+// which is what midi.nvgt does too. json_value_test.nvgt then carries its own copy
 // of the same two includes, so this file compiles standing alone.
 #include "../nvmidi_constants.nvgt"
 #include "../nvmidi_string.nvgt"
-#include "json_value.nvgt"
+#include "json_value_test.nvgt"
 
 // ---- the config in memory -------------------------------------------------
 
@@ -166,7 +166,7 @@ json_config@ json_config_default() {
 // of the reader, and the message is what a user would see.
 //
 // The body is json_config_main(), not main(), for the same measured reason
-// json_value.nvgt's is json_value_main(): an #included main() is a second
+// json_value_test.nvgt's is json_value_main(): an #included main() is a second
 // definition to this engine, not a declaration, so any file that includes this
 // one and has an entry point of its own fails to compile with "A function with
 // the same name and parameters already exists". That is exactly what happened
@@ -185,7 +185,7 @@ void json_config_main() {
 		+ ", out_port " + c.out_port + ", velocity_scale " + c.velocity_scale
 		+ ", channel " + c.channel);
 	// The reader's own check, called from here rather than carried as a second
-	// main(): json_value.nvgt is only ever #included, and the scripts job runs
+	// main(): json_value_test.nvgt is only ever #included, and the scripts job runs
 	// a file for its body, so this is the place its parse gets exercised.
 	json_value_main();
 }
