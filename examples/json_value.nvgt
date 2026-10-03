@@ -26,8 +26,35 @@
 
 #pragma plugin nvmidi
 
-const int JSON_NULL = 0;
-const int JSON_BOOL = 1;
+// The bytes this parser has to tell apart, in order, so that a byte's number
+// is its position in this string. Byte n is NVM_BYTES[n], and byte_at() below
+// reads a character of the text back into a number by finding it here.
+//
+// Only the 63 bytes a JSON config is made of: the C0 controls a JSON string
+// escapes (8 backspace, 9 tab, 10 line feed, 12 form feed, 13 carriage
+// return), space, the punctuation, the digits, the two letter cases. A byte
+// outside this set reads as 0xff and matches nothing, which is the honest
+// answer for a byte this parser has no meaning for.
+//
+//   index  0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15
+//   byte   8   9  10  12  13  32  33  34  35  37  38  39  40  41  42  43
+//          bs  ht  lf  ff  cr  sp   !   "   #   %   &   '   (   )   *   +
+//
+//   index 16  17  18  19  20  21  22  23  24 ...  25-34 the ten digits
+//   byte  44  45  46  47  58  63  91  92  93  ...  48-57
+//          ,   -   .   /   :   ?   [   \   ]       0-9
+//
+//   index 35-60 the upper case letters A-Z (65-90), 61-86 the lower case
+//   letters a-z (97-122). 26 + 26 = 52, and 35 + 52 = 87, which is where the
+//   last index of the string ends.
+const string NVM_BYTES =
+	"\x08\x09\x0a\x0c\x0d\x20\x21\x22\x23\x25\x26\x27\x28\x29\x2a\x2b"
+	"\x2c\x2d\x2e\x2f\x3a\x3f\x5b\x5c\x5d"
+	"0123456789"
+	"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	"abcdefghijklmnopqrstuvwxyz";
+
+const int JSON_NULL = 0;const int JSON_BOOL = 1;
 const int JSON_NUMBER = 2;
 const int JSON_STRING = 3;
 const int JSON_ARRAY = 4;
@@ -281,14 +308,14 @@ class json_reader {
 					// One byte when it fits, '?' otherwise. A config's strings
 					// are port names and paths, so this is stated rather than
 					// grown into a UTF-8 encoder.
-					if (code < 0x80) s += char(code);
+					if (code >= 0x20 && code < 0x7f) s += midi_string_char(code);
 					else s += "?";
 				} else {
 					error = "unknown escape at offset " + pos;
 					return false;
 				}
 			} else {
-				s += char(c);
+				s += midi_string_char(c);
 				pos++;
 			}
 		}
@@ -339,14 +366,27 @@ int hex_digit(uint8 c) {
 //
 // The engine's string index returns a one-character const string, and the
 // compiler refuses to widen that into a uint8 ("Can't implicitly convert from
-// 'const string' to 'uint8'", measured on run 37140538994). at() keeps the
-// type and takes the low byte out; everything in this file reads text through
-// here so the indexer appears in exactly one place.
+// 'const string' to 'uint8'", measured on run 37140538994). So the byte is
+// named rather than extracted: the character at the index is compared against
+// the names in NVM_BYTES below, and its position in that string is the byte.
+//
+// The first version of this took source.at(index) instead, which the engine
+// refused - "No matching symbol 'at'" (run 37142984889, line 349) - because
+// string has no at() in this build. find_first_of is the accessor that does
+// exist, and it needs no cast at all, because a byte of a JSON config is
+// either one of the 63 bytes in NVM_BYTES or it is not: a byte that is not
+// there is not a byte this parser has to tell apart from another.
+//
+// ASCII only, deliberately. A config's bytes are braces, quotes, digits and
+// the letters of a port name; a byte outside the range returns 0xff, which
+// matches no character the parser compares against, so it is skipped rather
+// than misread.
 uint8 byte_at(const string&in source, int index) {
-	if (index < 0 || index >= int(source.length())) return 0;
-	// at(index) is the engine's own accessor and returns uint8 - the
-	// arithmetic below is what turns it into AngelScript's uint8.
-	return uint8(source.at(uint(index)) & 0xff);
+	if (index < 0 || index >= int(source.length())) return 0xff;
+	// substr, not the indexer: text[pos] is a const string and cannot be
+	// handed to find_first_of as a byte.
+	const int found = NVM_BYTES.find_first_of(source.substr(index, 1));
+	return found < 0 ? 0xff : uint8(found);
 }
 
 // A number from its text. The engine has no parseFloat (measured on the same
