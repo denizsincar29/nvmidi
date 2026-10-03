@@ -70,9 +70,14 @@ status byte apart by hand. `m.is_note_on` is false for a note-on that arrived
 with velocity 0 — that spelling means the note was released — and
 `m.is_note_off` is true for both spellings of a release.
 
-Drain the queue in a loop until `next_message` returns false, rather than
-reading one message per frame — a fast player generates messages quicker than
-60 a second.
+**Attention — always drain the queue in a loop.** Read messages until
+`next_message` returns false, every frame, rather than reading one message
+per frame: a fast player generates messages quicker than 60 a second. The
+queue holds 4096, and once it is full the **oldest messages are dropped**, so
+a script that reads too slowly loses the beginning of what was played. The
+plugin tells you when that has happened — `in.dropped_messages` turns true and
+`next_message` throws an overflow exception you can catch — but the messages
+themselves are gone. Keep the loop tight and it never happens.
 
 ## Playing notes and chords
 

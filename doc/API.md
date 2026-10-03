@@ -375,3 +375,10 @@ The queue holds 4096 messages. When it overflows the oldest message is
 discarded, so a script that stops draining loses history rather than
 memory. Call `clear()` after a pause to drop a backlog you no longer care
 about.
+
+An overflow is not silent. `dropped_messages` is true from the first message
+lost until `reset_dropped_messages()` is called, and `dropped_count` says how
+many were lost. Reading a message once the queue has overflowed also raises
+an AngelScript exception - `next_message` throws "MIDI input queue
+overflowed: N message(s) dropped" - so a script with a `try`/`catch` around
+its read hears about it without polling anything.

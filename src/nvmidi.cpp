@@ -1058,6 +1058,29 @@ unsigned int midi_input::get_pending() const {
 	return static_cast<unsigned int>(queue.size());
 }
 
+// The one place a message is thrown away. Both the count and the argument out
+// use q, so the reason a script hears "the queue overflowed" always names a
+// real, round number and the trace can say which one it was.
+void midi_input::drop_oldest() {
+	queue.pop_front();
+	if (dropped_count < queue_limit) dropped_count++;
+}
+
+bool midi_input::get_dropped_messages() const {
+	std::lock_guard<std::mutex> lock(queue_mutex);
+	return dropped_count > 0;
+}
+
+unsigned int midi_input::get_dropped_count() const {
+	std::lock_guard<std::mutex> lock(queue_mutex);
+	return dropped_count;
+}
+
+void midi_input::reset_dropped_messages() {
+	std::lock_guard<std::mutex> lock(queue_mutex);
+	dropped_count = 0;
+}
+
 midi_message& midi_message::opAssign(const midi_message& other) {
 	// Members, not `*this = other`, and the same for buffer: the point of
 	// naming the members here is that this is the one assignment the engine
@@ -1097,8 +1120,29 @@ bool midi_message_read_out(const midi_message& src, midi_message& out) {
 	return true;
 }
 
+// The reader asks the engine to abort the calling script with a message the
+// script can catch, once the queue has overflowed. It is written as a plain
+// check on the flag rather than as a callback from push_message because the
+// plugin may not touch Angelscript from RtMidi's thread - which is the rule
+// this whole queue exists to honour - and because the event is only meaningful
+// where the script reads: throw it here and the script that stopped draining
+// finds out at its next attempt to drain.
+//
+// AllowCatch is true, so a script with a try/catch around its read gets the
+// message as a catchable exception and one without a handler has the call
+// abort - SetException's own contract in the SDK. It is still only a strong
+// candidate, not a measured fact: the counters registered beside it report
+// the same event without touching the VM, so a script can poll them instead
+// if this ever turns out to upset the caller.
+static void raise_queue_overflow(asIScriptContext* ctx, unsigned int dropped) {
+	if (!ctx) return; // no active context means no script to tell; the counters still have it
+	ctx->SetException(("MIDI input queue overflowed: " + std::to_string(dropped) + " message(s) dropped. Drain the queue with next_message in a loop; call clear() to drop a backlog you do not want.").c_str(), true);
+}
+
 bool midi_input::next_message(midi_message& out) {
 	std::lock_guard<std::mutex> lock(queue_mutex);
+	if (dropped_count)
+		raise_queue_overflow(asGetActiveContext(), dropped_count);
 	if (queue.empty()) return false;
 	// Written by a function of midi_message's own, which owns the private
 	// buffer; the reason this is not `out = queue.front()` is on that function.
@@ -1111,6 +1155,7 @@ void midi_input::clear() {
 	std::lock_guard<std::mutex> lock(queue_mutex);
 	queue.clear();
 }
+
 
 void midi_input::set_ignore_sysex(bool value) {
 	ignore_sysex = value;
@@ -1142,7 +1187,7 @@ void midi_input::push_message(const unsigned char* bytes, size_t count, double d
 	message.channel = is_realtime(message.status) ? 0 : channel_of(message.status);
 	message.timestamp = delta;
 	std::lock_guard<std::mutex> lock(queue_mutex);
-	if (queue.size() >= queue_limit) queue.pop_front(); // drop the oldest rather than grow without bound
+	if (queue.size() >= queue_limit) drop_oldest(); // drop the oldest rather than grow without bound
 	queue.push_back(message);
 	// Pedal state, updated here because this is the one place an incoming
 	// message is seen. A control change is status 0xB0, controller in data1
@@ -3201,6 +3246,9 @@ void register_midi_input(asIScriptEngine* engine, registration* reg) {
 	reg->check( engine->RegisterObjectMethod("midi_input", "uint get_pending() const", asMETHOD(midi_input, get_pending), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool next_message(midi_message&out) const", asMETHOD(midi_input, next_message), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "void clear()", asMETHOD(midi_input, clear), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "bool get_dropped_messages() const", asMETHOD(midi_input, get_dropped_messages), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "uint get_dropped_count() const", asMETHOD(midi_input, get_dropped_count), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
+	reg->check( engine->RegisterObjectMethod("midi_input", "void reset_dropped_messages()", asMETHOD(midi_input, reset_dropped_messages), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "void set_ignore_sysex(bool)", asMETHOD(midi_input, set_ignore_sysex), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "bool get_ignore_sysex() const", asMETHOD(midi_input, get_ignore_sysex), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);
 	reg->check( engine->RegisterObjectMethod("midi_input", "void set_ignore_timing(bool)", asMETHOD(midi_input, set_ignore_timing), asCALL_THISCALL), "RegisterObjectMethod", __LINE__);

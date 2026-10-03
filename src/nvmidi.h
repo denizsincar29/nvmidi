@@ -396,6 +396,17 @@ public:
 	bool has_message() const;
 	// Number of messages waiting to be read.
 	unsigned int get_pending() const;
+	// True when the queue has overflowed at least once since the port was
+	// opened. The oldest message is dropped to make room, so a script that
+	// stopped draining has lost the beginning of the playing, not the end -
+	// this flag is how it finds that out.
+	bool get_dropped_messages() const;
+	// The number of messages dropped for want of room. Never reset by a read;
+	// a script that wants to notice the event should use dropped_messages
+	// first and this second.
+	unsigned int get_dropped_count() const;
+	// Forgets both the flag and the count.
+	void reset_dropped_messages();
 	// Takes the oldest message off the queue. Returns false when empty, and
 	// writes every member of out through midi_message_read_out.
 	//
@@ -429,6 +440,8 @@ public:
 	void push_message(const unsigned char* bytes, size_t count, double delta);
 
 private:
+	// Throws the oldest message away and counts it. Caller holds queue_mutex.
+	void drop_oldest();
 	void* midi_in; // RtMidiIn*, kept as void* so RtMidi headers stay out of here
 	int port_index;
 	bool ignore_sysex;
@@ -436,6 +449,10 @@ private:
 	mutable std::mutex queue_mutex;
 	std::deque<midi_message> queue;
 	unsigned int queue_limit;
+	// How many messages the bound above has cost. Written under queue_mutex
+	// from the callback's thread; read through get_dropped_count, which takes
+	// the same lock, so the pair never disagrees with itself.
+	unsigned int dropped_count = 0;
 	double opened_at;
 	// Set while the high level layer is playing, so a callback that arrives
 	// meanwhile is tolerated rather than treated as a surprise.
