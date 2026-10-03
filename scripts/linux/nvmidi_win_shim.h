@@ -23,8 +23,14 @@
 // because those headers are exactly what the windows job is measuring and
 // duplicating them here would let a pass on linux mean nothing on windows.
 
-#ifndef NVGT_LINUX_WIN_SHIM_H
-#define NVGT_LINUX_WIN_SHIM_H
+// The guard is deliberately the one windows.h uses. The driver includes
+// windows.h with angle brackets, so nothing on the include path can shadow
+// it - but it checks this macro first, and setting it here is the only way
+// this file ever gets to be the driver's windows.h. Everything above this
+// line is comments for that reason; anything the driver must see has to be
+// below it.
+#ifndef _WINDOWS_
+#define _WINDOWS_
 
 #include <stddef.h>
 #include <stdint.h>
