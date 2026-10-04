@@ -13,11 +13,13 @@ name: bisect
 #
 # WHAT IS IN A FOLDER.
 #
-#   N/nvgt.exe                 the engine, built from upstream at this repo's
-#                              pinned tag, with the commit's script compiled in
-#   N/nvmidi.dll               the plugin, built from the commit's own source
-#   N/lib/*.dll                the engine's own runtime libraries, as its build
-#                              produced them
+#   N/nvgt.exe                 the engine the plugin is proven against, with
+#                              this commit's script compiled in
+#   N/lib/nvmidi.dll           the plugin, built from the commit's own source,
+#                              in the engine's lib folder where it is looked
+#                              for
+#   N/lib/*.dll                the engine's own runtime libraries, as its
+#                              distribution ships them
 #   N/midi_config.json         the port selection, beside the exe
 #   N/hash.txt                 commit, date, subject, and the sha256 of both
 #                              binaries; this is how a folder is identified
@@ -34,22 +36,17 @@ name: bisect
 # commit. Building both halves from each commit is what makes a folder's
 # verdict mean the commit rather than the mismatch.
 #
-# WHY THE ENGINE IS BUILT HERE AND BUILT ONCE.
+# WHY THE ENGINE IS DOWNLOADED AND NOT BUILT HERE.
 #
-# nvgt ships as an installer for the current version only; an older release is
-# not published in a form this job can open, and the current installer would
-# pair today's engine with an old plugin, which is the mismatch just ruled
-# out. So the engine is compiled from upstream. It is compiled once, not thirty
-# times, because the engine source is upstream at one fixed tag - it is
-# identical for every folder. What differs per folder is not the engine but the
-# script compiled into it, and that is the engine's own `--compile`, which
-# copies its stub and appends the bytecode. Thirty engine builds would be
-# thirty times four minutes of runner and would learn nothing extra.
-#
-# The tag comes from scripts/nvgt_pin.sh, the same pin the rest of the repo
-# verifies its vendored header against, so the engine here and the plugin here
-# are compiled against one API number. Its verify action is what keeps the
-# header and this tag from drifting apart silently.
+# The engine is upstream's, not this repository's, and it is already published:
+# scripts/nvgt_pin.sh fetches the rolling prerelease the vendored header is
+# pinned to. Building it here instead was tried and it is the wrong engine - a
+# local scons build reports "failed to load plugin" for a plugin this
+# repository's own CI loads without complaint, so the local build is not the
+# build the plugin is proven against. The pin script is that proof and it is
+# reused rather than approximated. One engine, not thirty: it is the same
+# binary for every folder. What differs per folder is the script compiled into
+# it, and that is the engine's own `--compile`.
 #
 # WHY THE WORKFLOW FORKS ITSELF.
 #
@@ -62,17 +59,17 @@ name: bisect
 #
 # WHY THERE IS NO `on: push`.
 #
-# It costs a full engine build plus thirty plugin builds, which is minutes of
+# It costs an engine download plus thirty plugin builds, which is minutes of
 # runner time, and a bundle nobody is waiting for is runner time spent on
 # nothing. It is dispatched by hand, once, by whoever wants the answer.
 #
 # The window is NOT anchored on HEAD, and that is deliberate. Adding this file
 # moved HEAD, so a window measured from HEAD would measure from the commit that
-# introduced the measuring - slide five commits with every edit of this job and
-# name folders that have nothing to do with the report. It is anchored instead
-# on a commit hash, a fixed point that this workflow cannot move. It defaults to
-# the commit the reporter named as the far end of the window; moving the window
-# is editing that one line, or passing `anchor` at dispatch.
+# introduced the measuring - slide with every edit of this job and name folders
+# that have nothing to do with the report. It is anchored on a commit hash, a
+# fixed point this workflow cannot move. It defaults to the commit the reporter
+# named as the far end of the window; moving the window is editing that one
+# line, or passing `anchor` at dispatch. Folder 1 is the oldest.
 
 on:
   workflow_dispatch:
@@ -96,75 +93,30 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      # nvgt is cloned to a directory that no checkout of this repository ever
-      # touches, so the engine survives the loop below without being carried
-      # around inside the working tree.
-      - name: fetch the engine source at this repository's pinned tag
-        id: engine
+      # The engine lands outside the tree, in a directory no checkout of this
+      # repository ever touches, so it survives the loop below without being
+      # carried around inside the working tree.
+      - name: fetch the pinned nvgt engine
         shell: bash
-        run: |
-          set -euo pipefail
-          # The tag is read from the pin script rather than written here twice:
-          # a bump of the pin must move this job with it, and a second copy of
-          # the number is a second thing to forget.
-          tag=$(sed -n 's/^TAG=\(.*\)$/\1/p' scripts/nvgt_pin.sh | head -1)
-          [ -n "$tag" ] || { echo "no TAG= in scripts/nvgt_pin.sh"; exit 2; }
-          echo "upstream tag: $tag"
-          git clone --depth 1 --branch "$tag" https://github.com/samtupy/nvgt.git "$RUNNER_TEMP/nvgt"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+        run: ./scripts/nvgt_pin.sh fetch "$RUNNER_TEMP/engine"
 
-      - name: build the engine, and the support files the folders share
-        shell: cmd
-        run: |
-          rem scons drives the build; upx is what the upstream release job installs
-          rem and what no_upx=0 expects. Both are named in nvgt's own
-          rem .github/workflows/release.yml for windows, so this is that recipe
-          rem and not a guess.
-          pip install scons || exit /b 2
-          choco install -y upx || exit /b 2
-
-          cd /d "%RUNNER_TEMP%\nvgt" || exit /b 2
-
-          rem The engine build wants a config header that the repository does not
-          rem carry: user/ is gitignored, and the copy upstream's release job
-          rem passes between its own jobs is encrypted with a repository secret.
-          rem That secret is not needed here, and this is the part worth being
-          rem explicit about - the generator fills the template with fresh random
-          rem values locally, so a fork with no secrets builds the same way. The
-          rem upstream job encrypts only to move one generated header across its
-          rem own job boundary.
-          python build\nvgt_config_gen.py || exit /b 2
-          if not exist user\nvgt_config.h echo NO-CONFIG-HEADER & exit /b 2
-
-          rem no_upx=0 asks for the compressed stub, which is what the shipped
-          rem engine uses; copylibs defaults to 1 and is what puts the runtime
-          rem libraries in release\lib.
-          scons -s no_upx=0 || exit /b 2
-
-          if not exist release\stub\nvgt_windows.bin echo NO-STUB & dir release\stub & exit /b 2
-          if not exist release\nvgt.exe echo NO-ENGINE & dir release & exit /b 2
-          echo ENGINE-OK
-
-      # The support set is taken from the engine's own release\lib, not written
-      # out by hand here: the engine build decides which runtime libraries it
-      # needs, and a hand-written list would silently go stale the first time
-      # upstream adds one.
+      # Where the plugin goes is not a guess: this repository's own CI loads it
+      # from lib/ beside the engine, and gets "failed to load plugin" when it is
+      # anywhere else. That staging is copied rather than re-derived.
       - name: stage the engine and its runtime libraries
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/share"
-          cp -r "$RUNNER_TEMP/nvgt/release/." "$RUNNER_TEMP/share/"
-          rm -rf "$RUNNER_TEMP/share/stub"   # the stub is inside the built exe, not needed beside it
+          cp -r "$RUNNER_TEMP/engine/." "$RUNNER_TEMP/share/"
           ls -l "$RUNNER_TEMP/share"
-          ls -l "$RUNNER_TEMP/share/lib" || echo "no release/lib: the exe may need none"
+          ls -l "$RUNNER_TEMP/share/lib" || echo "no lib/ in the distribution"
 
       - name: build one folder per commit
         shell: bash
         env:
           COUNT: ${{ inputs.count }}
           ANCHOR: ${{ inputs.anchor }}
-          TAG: ${{ steps.engine.outputs.tag }}
         run: |
           set -euo pipefail
           count="${COUNT:-30}"
@@ -198,19 +150,21 @@ jobs:
             scripts/build_win_msvc.bat || { echo "MSVC BUILD FAILED at $n"; exit 1; }
             [ -f nvmidi.dll ] || { echo "folder $n: no nvmidi.dll after its own build"; ls -l; exit 1; }
 
-            # The folder is assembled first and the compile happens inside it,
-            # so the compile runs against the layout the folder will have when
-            # it is run: engine, plugin, config and runtime libraries all in
-            # one directory. A compile that succeeds here under a different
-            # layout than the run would be rehearsing the wrong thing - nvgt
-            # resolves the plugin by bare name and the config against the
-            # working directory, so where the files sit is part of what is
-            # being tested.
+            # The folder is assembled first and the compile happens against it,
+            # so what the folder will hold at run time is decided before the
+            # compile rather than by it. The exe is copied in afterwards and the
+            # folder is exactly the set of files it would have been had the
+            # compile run from inside it.
+            #
+            # The plugin goes in lib/ and not beside the exe. That is where the
+            # engine looks - this repository's CI stages it there and reports
+            # "failed to load plugin" from anywhere else - and it is the
+            # difference between a folder that can be run and one that cannot.
             dir="bundle/$n"
             mkdir -p "$dir/lib"
             cp "$RUNNER_TEMP/share/nvgt.exe" "$dir/nvgt.exe"
             cp -r "$RUNNER_TEMP/share/lib/." "$dir/lib/" 2>/dev/null || true
-            cp nvmidi.dll "$dir/nvmidi.dll"
+            cp nvmidi.dll "$dir/lib/nvmidi.dll"
 
             # The script, from the commit. midi.nvgt is the entry point every
             # example #includes, and it in turn #includes the constants and the
@@ -235,19 +189,20 @@ jobs:
 
             # The compile runs from the repository tree and not from inside the
             # folder, because the example reaches the entry point by a relative
-            # path that only resolves from there. The compiler is the staged
-            # engine, called by its own path - it is run from the tree, so a
-            # bare ./nvgt.exe would look for it here and not find it.
+            # path that only resolves from there - "../midi.nvgt" is a path in
+            # the tree. The compiler is the staged engine, called by its own
+            # path because it is run from the tree.
             #
             # The engine loads the plugin while compiling - the pragma in
             # midi.nvgt registers its types into the script engine, so the
             # compile cannot succeed unless this commit's dll loads into this
-            # engine. A commit whose plugin fails to load fails here, in the
-            # log, with a reason, instead of silently producing an exe that
-            # breaks on real hardware and gets blamed on the wrong commit. The
-            # dll was just built into the tree root, which is where the engine
-            # looks for it.
-            "$RUNNER_TEMP/share/nvgt.exe" --compile --platform windows \
+            # engine. The dll was just built into the tree root, and a copy of
+            # it sits in lib/ beside the compiler, which is where the engine
+            # looks; a commit whose plugin fails to load therefore fails here,
+            # in the log, with a reason, instead of silently producing an exe
+            # that breaks on real hardware and gets blamed on the wrong commit.
+            cp nvmidi.dll "$RUNNER_TEMP/share/lib/nvmidi.dll"
+            "$RUNNER_TEMP/share/nvgt.exe" --compile \
               examples/music_quickstart.nvgt music_quickstart.exe \
               || { echo "COMPILE FAILED at folder $n ($ref)"; exit 1; }
             [ -f music_quickstart.exe ] || { echo "folder $n: no exe"; ls -l; exit 1; }
@@ -256,9 +211,9 @@ jobs:
             {
               echo "commit  $ref"
               git log -1 --format='date    %ad%nsubject %s' --date=short "$ref"
-              echo "sha256  nvmidi.dll         $(sha256sum "$dir/nvmidi.dll" | cut -d' ' -f1)"
+              echo "sha256  nvmidi.dll         $(sha256sum "$dir/lib/nvmidi.dll" | cut -d' ' -f1)"
               echo "sha256  music_quickstart.exe $(sha256sum "$dir/music_quickstart.exe" | cut -d' ' -f1)"
-              echo "engine  built from samtupy/nvgt@$TAG, the tag scripts/nvgt_pin.sh pins"
+              echo "engine  samtupy/nvgt@latest, the rolling prerelease scripts/nvgt_pin.sh pins"
             } > "$dir/hash.txt"
 
             {
@@ -292,7 +247,7 @@ jobs:
 
           echo "folders: $(find bundle -maxdepth 1 -mindepth 1 -type d | wc -l)"
           echo "exes:    $(find bundle -maxdepth 2 -name 'music_quickstart.exe' | wc -l)"
-          echo "dlls:    $(find bundle -maxdepth 2 -name 'nvmidi.dll' | wc -l)"
+          echo "dlls:    $(find bundle -mindepth 2 -maxdepth 3 -name 'nvmidi.dll' | wc -l)"
           find bundle -name nvmidi.dll -printf '%s %p\n' | sort -k2
 
       - name: name the bundle after the window it holds
