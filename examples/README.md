@@ -22,6 +22,18 @@ pointing them at another keyboard means editing that file:
 whose first character is `{` is read as JSON, anything else as the old
 `key = value` text, so an old config still works.
 
+For the file to be found at all it has to sit where the script was started
+from, not where the script lives. That is the one thing that decides whether
+your `in_port` and `out_port` are honoured or quietly skipped, and the plugin
+cannot check it: it is handed a name, and a missing name is not an error. Run
+`list_ports.nvgt` when the ports come up wrong on every example at once.
+
+`sound_probe.nvgt` answers the other half, the one with no file in it: nine
+seconds, four tones, a second of silence between each, a number spoken before
+every one. When some examples sound and others do not, and the config is
+already known good, this is what separates the plugin's own clock from the
+port.
+
 - **list_ports.nvgt** — pick the input and the output port with the arrow keys
   and write them to `midi_config.json`. Run this first.
 - **echo_monitor.nvgt** — speak every message the device on the input port
@@ -35,6 +47,9 @@ whose first character is `{` is read as JSON, anything else as the old
   arpeggio, quick, fast, strum, repeat.
 - **music_quickstart.nvgt** — the high level half: durations, patterns, a
   sequence, all through `midi.nvgt` and nothing else.
+- **sound_probe.nvgt** — is it the plugin's clock or the port? Four tones with
+  a spoken count, a second of silence between each. A script can count on it
+  from `sound_probe_count()`, so it asserts instead of just being listened to.
 
 ## Two ways to ask what a message is
 

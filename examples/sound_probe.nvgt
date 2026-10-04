@@ -1,0 +1,60 @@
+// sound_probe.nvgt - four tones, a second of silence between each, a number
+// spoken before every one.
+//
+// This exists to answer one question with a yes or a no: is time passing while
+// the plugin plays, or is every wait returning at once? The tones are far
+// enough apart that a person hears the difference instantly, and the counter
+// below says the same thing as a number, so a script or a test can assert it
+// rather than trust an ear.
+//
+// Escape stops. Nothing needs a device on the input: the output alone is
+// enough, which is the point - the examples that fail are the ones that only
+// open an output.
+
+#include "../midi.nvgt"
+
+midi_output@ synth;
+midi_output@ probe = synth; // so the same object answers from either name
+
+int g_spoken = 0;
+
+// How many numbers have been spoken. A caller can ask this after main() and
+// compare it with what it heard: four is every tone, one means the waits
+// returned at once and only the first number got out.
+int sound_probe_count() {
+	return g_spoken;
+}
+
+void tone(int note, double length_ms) {
+	g_spoken += 1;
+	say("" + g_spoken);
+
+	midi_note@ n = nvmidi_note_create(note, 100);
+	n.length = midi_duration_create(length_ms, MIDI_MS);
+	synth.play_note_wait(n);
+}
+
+void main() {
+	show_window("nvmidi - sound probe");
+
+	midi_config@ config = midi_config_create();
+	config.load_if_present("midi_config.json");
+	@synth = midi_output_create();
+	if (!synth.open_config(config, "nvmidi probe")) {
+		print("Cannot open the output: " + midi_last_error_text() + "\n");
+		return;
+	}
+	print("Tone, silence, tone. Four of them.\n");
+
+	tone(60, 700.0);  // middle C
+	tone(64, 700.0);
+	tone(67, 700.0);
+	tone(72, 900.0);  // the octave, held a little longer so the end is clear
+
+	if (g_spoken == 4) say("Done.");
+	else say("Something went wrong: only " + g_spoken + " tones played.");
+	print("sound_probe_count() = " + g_spoken + ", expected 4\n");
+
+	synth.stop_all_notes();
+	synth.close();
+}
