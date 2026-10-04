@@ -7,17 +7,11 @@
 // pass it: play_note_wait adds group_length_at(sounding, tempo), and so does
 // play_chord_wait.
 //
-// The script cannot read a clock, so it counts the engine's wait. A spin of
-// 5 ms passes, repeated, is a stopwatch the script owns:
-//
-//   note_wait_count   - slices counted around play_note_wait on a 400 ms note.
-//   chord_wait_count  - the same around play_chord_wait on a one-note chord of
-//                       the same length.
-//
-// If note_wait_count is large and chord_wait_count near zero, the chord's
-// length works out shorter than the note's, and the difference is in the note
-// and not in the wait. The script prints what it knows of each length so the
-// two numbers can be compared with the source.
+// Every wait is measured with ticks(), the engine's millisecond clock, around
+// the call. A call that returns at once (the bug this file exists for) reads
+// as a few milliseconds and fails; a call that holds its length passes. The
+// tolerance is 30 ms early and 150 ms late: ticks() on Windows moves in steps
+// and the wait runs in 5 ms slices.
 //
 // The 400 ms comparison is built by hand rather than through music.nvgt: a bare
 // note with its length in milliseconds, the same way the note above is written,
@@ -53,24 +47,15 @@ void say(const string&in text) {
 
 midi_output@ mo;
 
-// The overhead of the stopwatch itself: two calls and no work between them.
-// Counts slices of 5 ms of the engine's wait, plus the one between it and the
-// call: the caller brackets the call with two of these and subtracts.
-double spin_count(double ms) {
-	double asked = 0.0;
-	double left = ms;
-	while (left > 0.0) {
-		double slice = left > 5.0 ? 5.0 : left;
-		wait(int(slice) + 1);
-		asked += slice;
-		left -= slice;
-	}
-	return asked;
+// Runs nothing itself: the caller reads ticks() before and after the call and
+// hands the elapsed time here.
+bool held(uint64 elapsed, double wanted) {
+	return double(elapsed) >= wanted - 30.0 && double(elapsed) <= wanted + 150.0;
 }
 
 void main() {
 	file_put_contents("apitest.log", "", false);
-	say("Async wait test. One note, then one chord, both four hundred milliseconds.");
+	say("Async wait test. Timing: note, chords, arpeggios and a scale, each against the clock.");
 
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.json");
@@ -88,46 +73,75 @@ void main() {
 	check("note_length_reads_400", n.length.to_ms() > 399.0 && n.length.to_ms() < 401.0,
 		"to_ms=" + n.length.to_ms());
 
-	double note_wait_count = spin_count(400.0 * 4.0);
-	mo.play_note_wait(n);
-	check("note_wait_counted", note_wait_count > 0.0, "counted=" + note_wait_count);
-	check("note_wait_held",
-		true, "listened: a 400 ms note is expected here, and was heard");
+	uint64 t = ticks();
+	bool ok = mo.play_note_wait(n);
+	uint64 note_took = ticks() - t;
+	check("note_wait_held", ok && held(note_took, 400.0), "returned=" + bstr(ok) + " took " + note_took + " ms, wanted 400");
 
 	// -- the same one note through play_chord_wait ------------------------
-	// The failing scripts write 700 ms and 220 ms chords, but the port resolves
-	// a chord's lengths at the port tempo, and the scripts that reported the
-	// bug set a tempo of 96 against a duration carrying the default 120. A
-	// length in milliseconds survives that; the examples that write beats do
-	// not. Both are here, so whichever half is wrong says so in the log.
+	// A length in milliseconds survives any port tempo; the chords written in
+	// beats below do not, so both are here and whichever half is wrong says so.
 	mo.tempo = 96.0;
 
 	array<midi_note@>@ chord = array<midi_note@>();
 	chord.insert_last(n);
 
-	double chord_wait_count = spin_count(400.0 * 4.0);
-	mo.play_chord_wait(chord);
-	check("chord_wait_counted", chord_wait_count > 0.0, "counted=" + chord_wait_count);
-	check("chord_wait_held",
-		true, "listened: this is the reported bug, expected to be a flash before the fix");
+	t = ticks();
+	ok = mo.play_chord_wait(chord);
+	uint64 chord_took = ticks() - t;
+	check("chord_wait_held", ok && held(chord_took, 400.0), "returned=" + bstr(ok) + " took " + chord_took + " ms, wanted 400");
 
 	// -- a chord written in beats, the shape music_quickstart uses ---------
-	// One beat at 96 is 625 ms, and the plugin should hold it for that long
-	// whether the duration was built at 96 or at the default 120.
+	// A duration built with midi_duration_create carries the default tempo of
+	// 120, so one beat reads 500 ms until a port at 96 resolves it to 625.
+	// mo.duration() builds it at the port's tempo and reads 625 straight away.
 	midi_note@ b = nvmidi_note_create(64, 100);
 	b.length = midi_duration_create(1.0, MIDI_BEATS);
-	check("beat_length_at_96", b.length.to_ms() > 624.0 && b.length.to_ms() < 626.0,
-		"built at the default tempo, to_ms=" + b.length.to_ms());
+	check("beat_length_default_tempo", b.length.to_ms() > 499.0 && b.length.to_ms() < 501.0,
+		"built at the default tempo of 120, to_ms=" + b.length.to_ms());
+	midi_duration port_beat = mo.duration(1.0, MIDI_BEATS);
+	check("beat_length_at_96", port_beat.to_ms() > 624.0 && port_beat.to_ms() < 626.0,
+		"built by the port at 96, to_ms=" + port_beat.to_ms());
+
 	array<midi_note@>@ beats = array<midi_note@>();
 	beats.insert_last(b);
-	mo.play_chord_wait(beats);
-	check("beat_chord_held",
-		true, "listened: one beat at 96 is 625 ms, not 500");
+	t = ticks();
+	ok = mo.play_chord_wait(beats);
+	uint64 beat_took = ticks() - t;
+	check("beat_chord_held", ok && held(beat_took, 625.0), "returned=" + bstr(ok) + " took " + beat_took + " ms, wanted 625 (not 500)");
 
 	// -- the pattern player, which the reported scripts call ---------------
-	mo.play_midi_chord_wait(beats, "arpeggio");
-	check("arpeggio_held",
-		true, "listened: a held beat note here, then a short one - the reported click");
+	t = ticks();
+	ok = mo.play_midi_chord_wait(beats, "arpeggio");
+	uint64 arp1_took = ticks() - t;
+	check("arpeggio_held", ok && held(arp1_took, 625.0), "returned=" + bstr(ok) + " took " + arp1_took + " ms, wanted 625");
+
+	// -- the music_quickstart shapes: a triad arpeggio and a scale ---------
+	// The triad arpeggio steps every half length (312.5 ms) and the last note
+	// is held a full beat: 2 * 312.5 + 625 = 1250 ms. The scale is eight
+	// half-beat notes one after another: 8 * 312.5 = 2500 ms.
+	array<midi_note@>@ triad = array<midi_note@>();
+	int[] pitches = {60, 64, 67};
+	for (uint i = 0; i < pitches.length(); i++) {
+		midi_note@ tn = nvmidi_note_create(pitches[i], 100);
+		tn.length = mo.duration(1.0, MIDI_BEATS);
+		triad.insert_last(tn);
+	}
+	t = ticks();
+	ok = mo.play_midi_chord_wait(triad, "arpeggio");
+	uint64 arp3_took = ticks() - t;
+	check("triad_arpeggio_held", ok && held(arp3_took, 1250.0), "returned=" + bstr(ok) + " took " + arp3_took + " ms, wanted 1250");
+
+	array<midi_note@>@ scale = array<midi_note@>();
+	for (int i = 0; i < 8; i++) {
+		midi_note@ sn = nvmidi_note_create(60 + i * 2, 90);
+		sn.length = mo.duration(0.5, MIDI_BEATS);
+		scale.insert_last(sn);
+	}
+	t = ticks();
+	ok = mo.play_sequence(scale);
+	uint64 scale_took = ticks() - t;
+	check("scale_sequence_held", ok && held(scale_took, 2500.0), "returned=" + bstr(ok) + " took " + scale_took + " ms, wanted 2500");
 
 	mo.stop_all_notes();
 	mo.close();
