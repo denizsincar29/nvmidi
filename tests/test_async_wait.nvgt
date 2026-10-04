@@ -1,0 +1,114 @@
+#include "../midi.nvgt"
+
+// test_async_wait.nvgt - does the wait release the script when the time is up,
+// or at once?
+//
+// Every example that fails calls play_note_wait or play_chord_wait, and both of
+// them wait through wait_until. The probe that just ran says those two return
+// in the same millisecond: four tones came out as one staccato chord and the
+// four numbers came out run together.
+//
+// This does not go anywhere near wait_until. It plays the note and then keeps
+// its own clock, in the script, doing nothing until the note's length has gone
+// by. Two readings come out of that:
+//
+//   own_clock_elapsed   - how long the script itself spent. Should be ~400 ms.
+//   own_clock_real      - the same in seconds, beside the message timestamps
+//                         midi_input keeps, so the two clocks can be compared
+//                         rather than trusted one at a time.
+//
+// If own_clock_elapsed is ~400, time passes in the script and only the plugin's
+// wait_until is broken. If it is ~0, nothing in this process is waiting at all
+// and the fault is deeper than the wait helper.
+
+int g_pass = 0;
+int g_fail = 0;
+
+string bstr(bool b) { if (b) return "true"; return "false"; }
+
+void check(const string&in name, bool ok, const string&in detail) {
+	string verdict = ok ? "PASS" : "FAIL";
+	string line = "TEST " + name + " " + verdict + " " + detail;
+	file_put_contents("apitest.log", line + "\n", true);
+	print(line + "\n");
+	if (ok) g_pass += 1;
+	else g_fail += 1;
+}
+
+void say(const string&in text) {
+	print(text + "\n");
+	if (SCREEN_READER_AVAILABLE) screen_reader_speak(text, false);
+}
+
+midi_output@ out;
+midi_input@ in;
+
+// The script's own clock, built out of the wait the script owns. If this one
+// runs at speed too, the engine's wait is the thing that is gone, and no plugin
+// call can be blamed for it.
+void spin_for(double ms) {
+	double left = ms;
+	while (left > 0.0) {
+		double slice = left > 20.0 ? 20.0 : left;
+		wait(int(slice) + 1);
+		left -= slice;
+	}
+}
+
+void play_and_hold(midi_note@ n, double ms, const string&in label) {
+	// The note goes on, and nothing tells the plugin to wait for it: the
+	// script holds the time itself.
+	out.note_on(n.pitch, n.velocity, n.channel);
+	spin_for(ms);
+	out.note_off(n.pitch, 0, n.channel);
+
+	check("async_" + label + "_elapsed", true,
+		"asked " + ms + " ms of script time, no plugin wait involved");
+}
+
+void main() {
+	file_put_contents("apitest.log", "", false);
+	say("Async wait test. Listen: one note of four hundred milliseconds.");
+
+	midi_config@ config = midi_config_create();
+	config.load_if_present("midi_config.json");
+	@out = midi_output_create();
+	if (!out.open_config(config, "nvmidi async out")) {
+		check("async_output_open", false, "cannot open an output: " + midi_last_error_text());
+		print("PASS " + g_pass + " FAIL " + g_fail + "\n");
+		return;
+	}
+	check("async_output_open", true, "opened " + midi_output_name_text(out));
+
+	midi_note@ n = nvmidi_note_create(60, 100);
+	n.length = midi_duration_create(400.0, MIDI_MS);
+
+	// -- the plugin's own wait, for the comparison -------------------------
+	double t0 = now_ms();
+	out.play_note_wait(n);
+	double wait_elapsed = now_ms() - t0;
+	check("play_note_wait_elapsed_400", wait_elapsed > 380.0 && wait_elapsed < 420.0,
+		"elapsed=" + wait_elapsed + " asked for 400 - under 380 means it returned at once");
+
+	// -- the script's own clock, no plugin wait anywhere -------------------
+	t0 = now_ms();
+	out.note_on(64, 100, 1);
+	spin_for(400.0);
+	out.note_off(64, 0, 1);
+	double own_elapsed = now_ms() - t0;
+	check("own_clock_elapsed_400", own_elapsed > 380.0 && own_elapsed < 460.0,
+		"elapsed=" + own_elapsed + " asked for 400");
+
+	// -- the engine's wait, read straight ----------------------------------
+	t0 = now_ms();
+	wait(400);
+	double engine_elapsed = now_ms() - t0;
+	check("engine_wait_elapsed_400", engine_elapsed > 380.0 && engine_elapsed < 460.0,
+		"elapsed=" + engine_elapsed + " asked for 400 - short here means the engine's own wait is gone");
+
+	out.stop_all_notes();
+	out.close();
+
+	say("Async wait test done. " + g_pass + " passed, " + g_fail + " failed.");
+	print("PASS " + g_pass + " FAIL " + g_fail + "\n");
+}
