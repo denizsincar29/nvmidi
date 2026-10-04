@@ -13,18 +13,28 @@ name: bisect
 #
 # WHAT IS IN A FOLDER.
 #
-#   N/nvgt.exe                 the engine the plugin is proven against, with
-#                              this commit's script compiled in
+#   N/nvgt.exe                 the engine itself, unpacked from
+#                              engine/stub/nvgt_windows_upx.bin
+#   N/music_quickstart.exe     this commit's script, compiled by this commit's
+#                              engine; run THIS one
 #   N/lib/nvmidi.dll           the plugin, built from the commit's own source,
 #                              in the engine's lib folder where it is looked
 #                              for
 #   N/lib/*.dll                the engine's own runtime libraries, as its
 #                              distribution ships them
-#   N/midi_config.json         the port selection, beside the exe
+#   N/midi_config.json         the port selection (in 1, out 2), beside the exe
+#   N/midi_config.txt          the same pair in the older text form
 #   N/hash.txt                 commit, date, subject, and the sha256 of both
 #                              binaries; this is how a folder is identified
 #                              after the fact without trusting a folder name
 #   N/README.txt               one paragraph, the same facts in prose
+#
+# The two config files are both written even though the engine needs only one.
+# The repository moved from a text config to a JSON one at aac83ed (2026-10-03)
+# and folders older than that commit have no JSON in them at all; the engine
+# picks the form by content and not by extension, so writing both means every
+# folder carries the reporter's requested ports whatever half of the window it
+# falls in.
 #
 # WHY BOTH HALVES COME FROM THE SAME COMMIT.
 #
@@ -36,17 +46,33 @@ name: bisect
 # commit. Building both halves from each commit is what makes a folder's
 # verdict mean the commit rather than the mismatch.
 #
-# WHY THE ENGINE IS DOWNLOADED AND NOT BUILT HERE.
+# WHY THE ENGINE COMES OUT OF THIS REPOSITORY AND NOT OUT OF A RELEASE.
 #
-# The engine is upstream's, not this repository's, and it is already published:
-# scripts/nvgt_pin.sh fetches the rolling prerelease the vendored header is
-# pinned to. Building it here instead was tried and it is the wrong engine - a
-# local scons build reports "failed to load plugin" for a plugin this
-# repository's own CI loads without complaint, so the local build is not the
-# build the plugin is proven against. The pin script is that proof and it is
-# reused rather than approximated. One engine, not thirty: it is the same
-# binary for every folder. What differs per folder is the script compiled into
-# it, and that is the engine's own `--compile`.
+# The engine is upstream's, but this tree already carries the distribution it
+# was built against, under engine/: engine/lib_windows/ is the Windows runtime
+# library set and engine/stub/nvgt_windows_upx.bin is the Windows engine,
+# packed. Both were fetched together with the vendored header, so they are the
+# same build the pinned header describes.
+#
+# Two earlier attempts were wrong and are recorded so they are not retried.
+# Building the engine from source here is wrong: a local scons build reports
+# "failed to load plugin" for a plugin this repository's own CI loads without
+# complaint. Asking scripts/nvgt_pin.sh for it is also wrong: that script
+# fetches the rolling prerelease's tar.gz, which is the Linux-only
+# distribution - it has no nvgt.exe in it at all, and a job that assumed one
+# died on "cannot stat share/nvgt.exe".
+#
+# What the stub is: a container, not an executable. Its 184-byte header is
+# followed by the real PE image; the byte at offset 184 begins a DOS stub
+# template whose e_lfanew has already been rewritten in place, which is why a
+# naive "PE right after the header" search lands on a decoy. The packed
+# variant, nvgt_windows_upx.bin, is a UPX 5.21-compressed build of that same
+# engine and is unpacked with upx itself rather than by hand - a hand-wound
+# inflate over a UPX stream is guesswork, and the tool is what produced it.
+#
+# One engine, not thirty: it is the same binary for every folder. What differs
+# per folder is the script compiled into it, and that is the engine's own
+# `--compile`.
 #
 # WHY THE WORKFLOW FORKS ITSELF.
 #
@@ -96,21 +122,23 @@ jobs:
       # The engine lands outside the tree, in a directory no checkout of this
       # repository ever touches, so it survives the loop below without being
       # carried around inside the working tree.
-      - name: fetch the pinned nvgt engine
-        shell: bash
-        run: ./scripts/nvgt_pin.sh fetch "$RUNNER_TEMP/engine"
-
-      # Where the plugin goes is not a guess: this repository's own CI loads it
-      # from lib/ beside the engine, and gets "failed to load plugin" when it is
-      # anywhere else. That staging is copied rather than re-derived.
+      #
+      # upx unpacks the packed engine; the runtime libraries are copied out of
+      # the tree beside it. The .dll set is taken whole rather than filtered -
+      # it ships as one distribution and a missing dependency surfaces as a
+      # folder that silently does nothing on the reporter's machine.
       - name: stage the engine and its runtime libraries
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/share"
-          cp -r "$RUNNER_TEMP/engine/." "$RUNNER_TEMP/share/"
-          ls -l "$RUNNER_TEMP/share"
-          ls -l "$RUNNER_TEMP/share/lib" || echo "no lib/ in the distribution"
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP/share" | Out-Null
+          Copy-Item -Force engine/stub/nvgt_windows_upx.bin "$env:RUNNER_TEMP/nvgt_packed.exe"
+          upx --version
+          upx -d -o "$env:RUNNER_TEMP/share/nvgt.exe" "$env:RUNNER_TEMP/nvgt_packed.exe"
+          if (-not (Test-Path "$env:RUNNER_TEMP/share/nvgt.exe")) { throw "upx produced no nvgt.exe" }
+          (Get-Item "$env:RUNNER_TEMP/share/nvgt.exe").Length
+          Copy-Item -Recurse -Force engine/lib_windows "$env:RUNNER_TEMP/share/lib"
+          Get-ChildItem "$env:RUNNER_TEMP/share/lib" | Select-Object Name, Length | Format-Table
 
       - name: build one folder per commit
         shell: bash
@@ -178,14 +206,16 @@ jobs:
             cp examples/music_quickstart.nvgt "$dir/music_quickstart.nvgt"
 
             # The port selection travels with the exe, not with the script:
-            # nvgt resolves a relative path against the folder it runs in. A
-            # commit too old to have examples/midi_config.json gets the legacy
-            # text form, which the engine reads by content, not by extension.
-            if [ -f examples/midi_config.json ]; then
-              cp examples/midi_config.json "$dir/midi_config.json"
-            else
-              printf 'in_port = 0\nout_port = 0\n' > "$dir/midi_config.json"
-            fi
+            # nvgt resolves a relative path against the folder it runs in.
+            #
+            # Both forms are written, in every folder, with the same pair,
+            # because the repository moved from one to the other inside this
+            # window and a folder from either half has to carry a config the
+            # engine it is paired with will read. The engine picks the form by
+            # content, not by extension, so a folder holding both is not
+            # ambiguous - it is two copies of one setting.
+            printf 'in_port = 1\nout_port = 2\n' > "$dir/midi_config.txt"
+            printf '{\n  "in_port": 1,\n  "out_port": 2\n}\n' > "$dir/midi_config.json"
 
             # The compile runs from the repository tree and not from inside the
             # folder, because the example reaches the entry point by a relative
@@ -193,14 +223,13 @@ jobs:
             # the tree. The compiler is the staged engine, called by its own
             # path because it is run from the tree.
             #
-            # The engine loads the plugin while compiling - the pragma in
-            # midi.nvgt registers its types into the script engine, so the
-            # compile cannot succeed unless this commit's dll loads into this
-            # engine. The dll was just built into the tree root, and a copy of
-            # it sits in lib/ beside the compiler, which is where the engine
-            # looks; a commit whose plugin fails to load therefore fails here,
-            # in the log, with a reason, instead of silently producing an exe
-            # that breaks on real hardware and gets blamed on the wrong commit.
+            # The compile is a real load test, done without hardware: the
+            # engine that just started is a Windows process, it dlopens the
+            # plugin out of its lib/ the same way the reporter's copy will,
+            # and the pragma in midi.nvgt asks it for this commit's types. A
+            # plugin that cannot load into this engine therefore fails here,
+            # in the log, named by commit, instead of producing an exe that
+            # breaks on hardware and gets blamed on the wrong commit.
             cp nvmidi.dll "$RUNNER_TEMP/share/lib/nvmidi.dll"
             "$RUNNER_TEMP/share/nvgt.exe" --compile \
               examples/music_quickstart.nvgt music_quickstart.exe \
@@ -213,7 +242,8 @@ jobs:
               git log -1 --format='date    %ad%nsubject %s' --date=short "$ref"
               echo "sha256  nvmidi.dll         $(sha256sum "$dir/lib/nvmidi.dll" | cut -d' ' -f1)"
               echo "sha256  music_quickstart.exe $(sha256sum "$dir/music_quickstart.exe" | cut -d' ' -f1)"
-              echo "engine  samtupy/nvgt@latest, the rolling prerelease scripts/nvgt_pin.sh pins"
+              echo "engine  engine/stub/nvgt_windows_upx.bin (UPX 5.21), unpacked"
+              echo "sha256  nvgt.exe             $(sha256sum "$dir/nvgt.exe" | cut -d' ' -f1)"
             } > "$dir/hash.txt"
 
             {
@@ -222,8 +252,9 @@ jobs:
               echo "Commit $ref ($(git log -1 --format='%h, %ad' --date=short "$ref"))."
               echo
               echo "Run music_quickstart.exe from THIS folder, not from anywhere"
-              echo "else: it looks for nvmidi.dll and midi_config.json beside"
-              echo "itself. Play a held chord and listen to the release."
+              echo "else: it looks for nvmidi.dll in lib/ beside it and for the"
+              echo "port config beside itself. MIDI in is port 1, out is port 2."
+              echo "Play a held chord and listen to the release."
               echo
               echo "If it misbehaves, the commit that broke it is this one or the"
               echo "one after it - check hash.txt above it."
