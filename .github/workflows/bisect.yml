@@ -66,11 +66,13 @@ name: bisect
 # runner time, and a bundle nobody is waiting for is runner time spent on
 # nothing. It is dispatched by hand, once, by whoever wants the answer.
 #
-# The window defaults to the thirty commits ending five short of HEAD, oldest
-# first, so folder 1 is the oldest. The five nearest HEAD are left out because
-# their behaviour is already known on the machine that reported the problem and
-# reproducing it would spend a round trip to learn nothing. Both ends are
-# parameters: a finer bisection is a second dispatch of this same job.
+# The window is NOT anchored on HEAD, and that is deliberate. Adding this file
+# moved HEAD, so a window measured from HEAD would measure from the commit that
+# introduced the measuring - slide five commits with every edit of this job and
+# name folders that have nothing to do with the report. It is anchored instead
+# on a commit hash, a fixed point that this workflow cannot move. It defaults to
+# the commit the reporter named as the far end of the window; moving the window
+# is editing that one line, or passing `anchor` at dispatch.
 
 on:
   workflow_dispatch:
@@ -79,10 +81,10 @@ on:
         description: 'commits, one folder each'
         type: number
         default: 30
-      skip:
-        description: 'nearest HEAD: how many to leave out'
-        type: number
-        default: 5
+      anchor:
+        description: 'newest commit of the window (hash; the window ends here)'
+        type: string
+        default: 'e876520'
 
 jobs:
   bundle:
@@ -161,19 +163,19 @@ jobs:
         shell: bash
         env:
           COUNT: ${{ inputs.count }}
-          SKIP: ${{ inputs.skip }}
+          ANCHOR: ${{ inputs.anchor }}
           TAG: ${{ steps.engine.outputs.tag }}
         run: |
           set -euo pipefail
           count="${COUNT:-30}"
-          skip="${SKIP:-5}"
+          anchor="${ANCHOR:-e876520}"
 
           # The one thing carried across every checkout. See the note at the top
           # of this file: an old commit has no bisect.yml in it, so without this
           # copy the running workflow would be deleting itself.
           rm -rf "$RUNNER_TEMP/wf"; cp -r .github "$RUNNER_TEMP/wf"
 
-          mapfile -t refs < <(git log --format='%H' -n "$count" "HEAD~$skip" | tac)
+          mapfile -t refs < <(git log --format='%H' -n "$count" "$anchor" | tac)
           echo "window: ${#refs[@]} commits"
           echo "  folder 1    ${refs[0]}"
           echo "  folder $count ${refs[-1]}"
@@ -210,11 +212,15 @@ jobs:
             cp -r "$RUNNER_TEMP/share/lib/." "$dir/lib/" 2>/dev/null || true
             cp nvmidi.dll "$dir/nvmidi.dll"
 
-            # The script, from the commit. midi.nvgt is what every example
-            # includes, so the commit's own copy has to be beside it for the
-            # include to resolve; it is copied rather than referenced so the
-            # compile never reaches outside the folder.
+            # The script, from the commit. midi.nvgt is the entry point every
+            # example #includes, and it in turn #includes the constants and the
+            # string helpers - the closure is three files at the root, not one.
+            # A folder holding only midi.nvgt compiles until it reaches the
+            # first of the other two and then dies with "unable to locate this
+            # include", which is a fault in the harness and not in the commit.
             cp midi.nvgt "$dir/midi.nvgt"
+            cp nvmidi_constants.nvgt "$dir/nvmidi_constants.nvgt"
+            cp nvmidi_string.nvgt "$dir/nvmidi_string.nvgt"
             cp examples/music_quickstart.nvgt "$dir/music_quickstart.nvgt"
 
             # The port selection travels with the exe, not with the script:
@@ -227,17 +233,24 @@ jobs:
               printf 'in_port = 0\nout_port = 0\n' > "$dir/midi_config.json"
             fi
 
+            # The compile runs from the repository tree and not from inside the
+            # folder, because the example reaches the entry point by a relative
+            # path that only resolves from there. The folder was still assembled
+            # first, so what it holds is decided before the compile rather than
+            # by it: the exe is then copied in, and the folder is exactly the
+            # set of files it would have been had the compile run inside it.
+            #
             # The engine loads the plugin while compiling - the pragma in
             # midi.nvgt registers its types into the script engine, so the
             # compile cannot succeed unless this commit's dll loads into this
             # engine. A commit whose plugin fails to load fails here, in the
             # log, with a reason, instead of silently producing an exe that
-            # breaks on real hardware and gets blamed on the wrong commit.
-            (
-              cd "$dir"
-              ./nvgt.exe --compile --platform windows music_quickstart.nvgt music_quickstart.exe
-            ) || { echo "COMPILE FAILED at folder $n ($ref)"; exit 1; }
-            [ -f "$dir/music_quickstart.exe" ] || { echo "folder $n: no exe"; ls -l "$dir"; exit 1; }
+            # breaks on real hardware and gets blamed on the wrong commit. The
+            # dll sits in the tree root, where the engine looks for it.
+            ./nvgt.exe --compile --platform windows examples/music_quickstart.nvgt music_quickstart.exe \
+              || { echo "COMPILE FAILED at folder $n ($ref)"; exit 1; }
+            [ -f music_quickstart.exe ] || { echo "folder $n: no exe"; ls -l; exit 1; }
+            mv music_quickstart.exe "$dir/music_quickstart.exe"
 
             {
               echo "commit  $ref"
