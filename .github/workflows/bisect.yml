@@ -146,32 +146,32 @@ jobs:
           $exe = "$env:RUNNER_TEMP/nvgt_setup.exe"
           Invoke-WebRequest -Uri "https://github.com/samtupy/nvgt/releases/download/latest/nvgt_0.90.0_dev.exe" -OutFile $exe
           (Get-Item $exe).Length
-          # Run the launcher with its output captured instead of swallowed. The
-          # first attempt at this wrapped the call in try/catch and printed only
-          # the exception, so a silent no-op and a clean exit were
-          # indistinguishable in the log - which is exactly the state this was
-          # left in. Both streams go to a file and are printed afterwards.
+          # The asset is an Inno Setup 6.7.0 installer, not a self-extracting
+          # archive - the marker "Inno Setup Setup Data (6.7.0)" sits in its
+          # tail. That is the answer to why two runs got nothing: an Inno
+          # installer does not unpack into the directory it is run from, it
+          # installs to %LOCALAPPDATA%\Programs\... through a wizard, and
+          # "--quiet" is not one of its switches, so it was ignored and the
+          # silent exit left the directory empty with no exit code. The
+          # switches are Inno's own, and /DIR pins the destination so the
+          # unpacked tree lands where this job expects to find it.
           Push-Location $share
-          try {
-            & $exe --quiet *> "$env:RUNNER_TEMP/launcher.log"
-            Write-Host "launcher exit code: $LASTEXITCODE"
-          } catch {
-            Write-Host "launcher threw: $($_.Exception.Message)"
-          }
+          & $exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR="$share" *> "$env:RUNNER_TEMP/launcher.log"
+          Write-Host "installer exit code: $LASTEXITCODE"
           Pop-Location
-          Write-Host "--- launcher output ---"
+          Write-Host "--- installer output ---"
           if (Test-Path "$env:RUNNER_TEMP/launcher.log") {
             Get-Content "$env:RUNNER_TEMP/launcher.log" | Select-Object -First 200
           } else {
-            Write-Host "(launcher wrote no output)"
+            Write-Host "(installer wrote no output)"
           }
           Start-Sleep -Seconds 3
           Write-Host "--- what the launcher left ---"
           Get-ChildItem -Recurse -Depth 2 $share | Select-Object FullName, Length | Format-Table -AutoSize
           $nvgt = Get-ChildItem -Recurse -Filter 'nvgt.exe' $share -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $nvgt) { throw "no nvgt.exe under $share after running the launcher" }
+          if (-not $nvgt) { throw "no nvgt.exe under $share after the install" }
           $lib = Get-ChildItem -Recurse -Directory -Filter 'lib_windows' $share | Select-Object -First 1
-          if (-not $lib) { throw "no lib_windows/ under $share after running the launcher" }
+          if (-not $lib) { throw "no lib_windows/ under $share after the install" }
 
           # Flatten the launcher's own layout into the fixed one the loop
           # expects: the engine under lib/ with its runtime libraries beside
