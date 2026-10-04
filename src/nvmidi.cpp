@@ -1130,10 +1130,11 @@ bool midi_message_read_out(const midi_message& src, midi_message& out) {
 //
 // AllowCatch is true, so a script with a try/catch around its read gets the
 // message as a catchable exception and one without a handler has the call
-// abort - SetException's own contract in the SDK. It is still only a strong
-// candidate, not a measured fact: the counters registered beside it report
-// the same event without touching the VM, so a script can poll them instead
-// if this ever turns out to upset the caller.
+// abort - SetException's own contract in the SDK. Measured on the owner's
+// Windows build on 4 October 2026: the catch fires, so the raise is a fact
+// now, not a candidate. The counters beside it stay: they report the same
+// event without touching the VM, which is what a script wants when it would
+// rather poll than wrap every read in a try/catch.
 static void raise_queue_overflow(asIScriptContext* ctx, unsigned int dropped) {
 	if (!ctx) return; // no active context means no script to tell; the counters still have it
 	ctx->SetException(("MIDI input queue overflowed: " + std::to_string(dropped) + " message(s) dropped. Drain the queue with next_message in a loop; call clear() to drop a backlog you do not want.").c_str(), true);

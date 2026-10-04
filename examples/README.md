@@ -33,6 +33,43 @@ whose first character is `{` is read as JSON, anything else as the old
 - **music_quickstart.nvgt** — the high level half: durations, patterns, a
   sequence, all through `midi.nvgt` and nothing else.
 
+## Two ways to ask what a message is
+
+`m.kind` is the command nibble - `0x80`, `0x90`, `0xb0`, the one number that
+says what kind of message arrived. It carries no channel, so a note from
+channel 1 and a note from channel 5 land in the same case; `m.channel` says
+which. The `MIDI_*` constants are in `nvmidi_constants.nvgt`, so a switch reads
+as words:
+
+```angelscript
+switch (m.kind) {
+case MIDI_NOTE_ON:
+	if (m.data2 > 0) output.send_note_on(m.channel, m.data1 + 12, m.data2);
+	else output.send_note_off(m.channel, m.data1 + 12, 0); // velocity 0 is a release
+	break;
+case MIDI_NOTE_OFF:
+	output.send_note_off(m.channel, m.data1 + 12, m.data2);
+	break;
+}
+```
+
+The other spelling is one plain question per message - `m.is_note_on`,
+`m.is_pedal`, `m.is_control_change`, and the rest, all listed in `doc/API.md`.
+Inside a case both work, because a case body is ordinary code.
+
+Which to reach for: a switch when one message goes to one place and the branches
+are disjoint - a router, a logger, anything that enumerates the message types.
+The `is_*` form when the question is about one message and the answer decides a
+single thing, or when the same test is asked outside a dispatch table. When a
+case needs a property the `is_*` set already spells out (the release-under-
+running-status test above is the standing example), the two mix without fuss.
+
+`echo_monitor.nvgt` is written both ways in one file: a `switch` describes the
+message, an `is_pedal` test decides whether to say it as words instead.
+`octave-doubler.nvgt` is the pure switch - a router, which is what a switch is
+for. The other three have no per-message branching to dispatch on, so rewriting
+them would put a switch where nothing is being decided.
+
 ## Known bug: the chord waits play at machine speed
 
 Status 1 October, unresolved. Reported by the owner, reproduced on his Windows

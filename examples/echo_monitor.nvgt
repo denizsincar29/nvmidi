@@ -1,6 +1,14 @@
-// echo_monitor.nvgt - speak every message the device on the input port sends.
+// echo_monitor.nvgt - speak what the device on the input port sends.
 // Run this first: it is the quickest way to see that input works.
 // Escape stops.
+//
+// The switch reads the command nibble: the one number that says what kind of
+// message arrived. The alternative is the m.is_* properties, which answer a
+// single yes/no question; the pedal test below is written that way, so both
+// spellings are in the file and you can pick whichever reads better.
+//
+// m.kind carries no channel, so a note from channel 1 and one from channel 5
+// land in the same case. m.channel says which.
 
 #include "../midi.nvgt"
 
@@ -10,6 +18,31 @@ midi_message m;
 void say(const string&in text) {
 	print(text + "\n");
 	if (SCREEN_READER_AVAILABLE) screen_reader_speak(text, false);
+}
+
+string describe(const midi_message&in message) {
+	switch (message.kind) {
+	case MIDI_NOTE_ON:
+		// A note on with velocity 0 is a release: hardware sends it that way
+		// under running status. Without this test every lifted key would be
+		// announced as a press.
+		if (message.data2 > 0)
+			return "note on " + midi_message_note_name_text(message) + ", velocity " + message.data2;
+		return "note off " + midi_message_note_name_text(message);
+	case MIDI_NOTE_OFF:
+		return "note off " + midi_message_note_name_text(message);
+	case MIDI_CONTROL_CHANGE:
+		return "controller " + message.data1 + " value " + message.data2;
+	case MIDI_PROGRAM_CHANGE:
+		return "program " + message.data1;
+	case MIDI_CHANNEL_PRESSURE:
+		return "channel pressure " + message.data1;
+	case MIDI_PITCH_BEND:
+		return "pitch bend " + message.pitch_bend;
+	case MIDI_POLY_AFTERTOUCH:
+		return "aftertouch " + message.data2 + " on " + midi_message_note_name_text(message);
+	}
+	return midi_message_text(message); // system messages and anything missed above
 }
 
 void main() {
@@ -30,7 +63,15 @@ void main() {
 	say("Listening on " + midi_input_name_text(keyboard) + ". Play. Escape stops.");
 
 	while (!key_pressed(KEY_ESCAPE)) {
-		while (keyboard.next_message(m)) say(midi_message_text(m));
+		while (keyboard.next_message(m)) {
+			// The other spelling: one plain question about one message. A pedal
+			// is the control change a player reaches for most, so it gets said
+			// in words rather than as a controller number.
+			if (m.is_pedal)
+				say("pedal, controller " + m.controller + " value " + m.data2);
+			else
+				say(describe(m));
+		}
 		wait(5);
 	}
 	keyboard.close();

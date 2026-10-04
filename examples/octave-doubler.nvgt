@@ -12,6 +12,14 @@ midi_input@ input;
 midi_output@ output;
 midi_message m;
 
+// The one note the whole example is about: an octave up, wrapped back rather
+// than pushed past 127, so the top octave doubles down instead of going silent.
+int pitched(int note) {
+	int up = note + 12;
+	if (up > 127) up -= 12;
+	return up;
+}
+
 void main() {
 	show_window("nvmidi - keyboard to synth");
 
@@ -31,18 +39,28 @@ void main() {
 
 	while (!key_pressed(KEY_ESCAPE)) {
 		while (input.next_message(m)) {
-			uint command = m.status & 0xf0;
-			if (command == 0xe0) {
-				output.send(m.status, m.data1, m.data2); // pitch bend passes through
-				continue;
+			// A router switches on what the message is and decides where it
+			// goes, which is the shape a switch is for. Everything not named
+			// below is dropped: a keyboard's clock and its aftertouch have no
+			// business in the synth.
+			switch (m.kind) {
+			case MIDI_PITCH_BEND:
+				output.send(m.status, m.data1, m.data2); // wheels pass through untouched
+				break;
+			case MIDI_NOTE_ON:
+				// Velocity 0 is a release under running status, not a press.
+				if (m.data2 == 0)
+					output.send_note_off(m.channel, pitched(m.data1), 0);
+				else
+					output.send_note_on(m.channel, pitched(m.data1), m.data2);
+				break;
+			case MIDI_NOTE_OFF:
+				output.send_note_off(m.channel, pitched(m.data1), m.data2);
+				break;
+			case MIDI_CONTROL_CHANGE:
+				output.send(m.status, m.data1, m.data2); // sustain and the rest go through
+				break;
 			}
-			const bool on = (command == 0x90 && m.data2 > 0);
-			const bool off = (command == 0x80 || (command == 0x90 && m.data2 == 0));
-			if (!on && !off) continue;
-			int note = m.data1 + 12; // an octave up, kept inside 0..127
-			if (note > 127) note -= 12;
-			if (on) output.send_note_on(m.channel, note, m.data2);
-			else output.send_note_off(m.channel, note, m.data2);
 		}
 		wait(5);
 	}
