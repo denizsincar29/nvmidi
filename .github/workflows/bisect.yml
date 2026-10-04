@@ -13,8 +13,8 @@ name: bisect
 #
 # WHAT IS IN A FOLDER.
 #
-#   N/nvgt.exe                 the engine itself, unpacked from
-#                              engine/stub/nvgt_windows_upx.bin
+#   N/nvgt.exe                 the engine itself, unpacked from the pinned
+#                              release's Windows build
 #   N/music_quickstart.exe     this commit's script, compiled by this commit's
 #                              engine; run THIS one
 #   N/lib/nvmidi.dll           the plugin, built from the commit's own source,
@@ -46,32 +46,31 @@ name: bisect
 # commit. Building both halves from each commit is what makes a folder's
 # verdict mean the commit rather than the mismatch.
 #
-# WHY THE ENGINE COMES OUT OF THIS REPOSITORY AND NOT OUT OF A RELEASE.
+# WHY THE ENGINE IS DOWNLOADED, AND WHICH ASSET.
 #
-# The engine is upstream's, but this tree already carries the distribution it
-# was built against, under engine/: engine/lib_windows/ is the Windows runtime
-# library set and engine/stub/nvgt_windows_upx.bin is the Windows engine,
-# packed. Both were fetched together with the vendored header, so they are the
-# same build the pinned header describes.
+# The engine is upstream's and it is not in this tree for a runner to pick up:
+# .gitignore excludes engine/ outright, because engine/ is where the local pin
+# scratch download lands. So a checkout on a runner has no engine at all.
 #
-# Two earlier attempts were wrong and are recorded so they are not retried.
-# Building the engine from source here is wrong: a local scons build reports
-# "failed to load plugin" for a plugin this repository's own CI loads without
-# complaint. Asking scripts/nvgt_pin.sh for it is also wrong: that script
-# fetches the rolling prerelease's tar.gz, which is the Linux-only
-# distribution - it has no nvgt.exe in it at all, and a job that assumed one
-# died on "cannot stat share/nvgt.exe".
+# Two ways of getting one were tried and both were wrong; they are recorded so
+# they are not retried.
 #
-# What the stub is: a container, not an executable. Its 184-byte header is
-# followed by the real PE image; the byte at offset 184 begins a DOS stub
-# template whose e_lfanew has already been rewritten in place, which is why a
-# naive "PE right after the header" search lands on a decoy. The packed
-# variant, nvgt_windows_upx.bin, is a UPX 5.21-compressed build of that same
-# engine and is unpacked with upx itself rather than by hand - a hand-wound
-# inflate over a UPX stream is guesswork, and the tool is what produced it.
+# Building it from source here is wrong: a local scons build reports "failed
+# to load plugin" for a plugin this repository's own CI loads without
+# complaint, so the local build is not the build the plugin is proven against.
 #
-# One engine, not thirty: it is the same binary for every folder. What differs
-# per folder is the script compiled into it, and that is the engine's own
+# Asking scripts/nvgt_pin.sh is also wrong, and this is the subtle one: the
+# script is correct for its own job but its job is the Linux host. It pulls
+# the rolling release's .tar.gz, which is the Linux distribution - it has no
+# nvgt.exe in it anywhere, and a job that assumed one died on "cannot stat
+# share/nvgt.exe" after the plugin had built successfully.
+#
+# The asset that carries a Windows engine is the .exe build of the pinned
+# release, which is published for exactly the platform this job needs. It is
+# not itself the engine - "nvgt.exe" here is the launcher the release ships -
+# so it is run to unpack its runtime tree and the tree is what gets used. One
+# engine, not thirty: it is the same binary for every folder. What differs per
+# folder is the script compiled into it, and that is the engine's own
 # `--compile`.
 #
 # WHY THE WORKFLOW FORKS ITSELF.
@@ -123,22 +122,53 @@ jobs:
       # repository ever touches, so it survives the loop below without being
       # carried around inside the working tree.
       #
-      # upx unpacks the packed engine; the runtime libraries are copied out of
-      # the tree beside it. The .dll set is taken whole rather than filtered -
-      # it ships as one distribution and a missing dependency surfaces as a
-      # folder that silently does nothing on the reporter's machine.
+      # It is downloaded, not taken from engine/ in this tree: .gitignore
+      # excludes engine/ (it is the local pin scratch), so the checkout on a
+      # runner has no engine/ at all. Any step that reads it dies on "cannot
+      # find path ...engine\stub\..." the moment it runs anywhere but the
+      # developer's own machine.
+      #
+      # The asset is the .exe and not the .tar.gz the pin script fetches: the
+      # tar.gz is the Linux-only distribution and contains no nvgt.exe, which
+      # is the failure this job already paid for once.
+      #
+      # The .exe is a packaging launcher, so it is run with the two switches
+      # that keep it a launcher - no script, no console - and it unpacks its
+      # engine tree into the directory it is run from. If it needs no script
+      # it will simply exit; what is wanted from it is the unpacked tree, not
+      # the program it would have started.
       - name: stage the engine and its runtime libraries
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP/share" | Out-Null
-          Copy-Item -Force engine/stub/nvgt_windows_upx.bin "$env:RUNNER_TEMP/nvgt_packed.exe"
-          upx --version
-          upx -d -o "$env:RUNNER_TEMP/share/nvgt.exe" "$env:RUNNER_TEMP/nvgt_packed.exe"
-          if (-not (Test-Path "$env:RUNNER_TEMP/share/nvgt.exe")) { throw "upx produced no nvgt.exe" }
-          (Get-Item "$env:RUNNER_TEMP/share/nvgt.exe").Length
-          Copy-Item -Recurse -Force engine/lib_windows "$env:RUNNER_TEMP/share/lib"
-          Get-ChildItem "$env:RUNNER_TEMP/share/lib" | Select-Object Name, Length | Format-Table
+          $share = "$env:RUNNER_TEMP/share"
+          New-Item -ItemType Directory -Force -Path $share | Out-Null
+          $exe = "$env:RUNNER_TEMP/nvgt_setup.exe"
+          Invoke-WebRequest -Uri "https://github.com/samtupy/nvgt/releases/download/latest/nvgt_0.90.0_dev.exe" -OutFile $exe
+          (Get-Item $exe).Length
+          Push-Location $share
+          try { & $exe --quiet } catch { Write-Host "launcher exited: $($_.Exception.Message)" }
+          Pop-Location
+          Start-Sleep -Seconds 3
+          Write-Host "--- what the launcher left ---"
+          Get-ChildItem -Recurse -Depth 2 $share | Select-Object FullName, Length | Format-Table -AutoSize
+          $nvgt = Get-ChildItem -Recurse -Filter 'nvgt.exe' $share -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $nvgt) { throw "no nvgt.exe under $share after running the launcher" }
+          $lib = Get-ChildItem -Recurse -Directory -Filter 'lib_windows' $share | Select-Object -First 1
+          if (-not $lib) { throw "no lib_windows/ under $share after running the launcher" }
+
+          # Flatten the launcher's own layout into the fixed one the loop
+          # expects: the engine under lib/ with its runtime libraries beside
+          # it, and nothing else at the root. The launcher nests things its
+          # own way and the depth is not worth guessing at from here.
+          $flat = "$env:RUNNER_TEMP/flat"
+          New-Item -ItemType Directory -Force -Path "$flat/lib" | Out-Null
+          Copy-Item -Force $nvgt.FullName "$flat/nvgt.exe"
+          Copy-Item -Force "$($lib.FullName)/*.dll" "$flat/lib/"
+          Copy-Item -Force "$($lib.FullName)/*" "$flat/lib/" -ErrorAction SilentlyContinue
+          Write-Host "engine: $($nvgt.FullName) $($nvgt.Length)"
+          Write-Host "libs:   $($lib.FullName)"
+          Get-ChildItem $flat, "$flat/lib" | Select-Object Name, Length | Format-Table -AutoSize
 
       - name: build one folder per commit
         shell: bash
@@ -190,8 +220,8 @@ jobs:
             # difference between a folder that can be run and one that cannot.
             dir="bundle/$n"
             mkdir -p "$dir/lib"
-            cp "$RUNNER_TEMP/share/nvgt.exe" "$dir/nvgt.exe"
-            cp -r "$RUNNER_TEMP/share/lib/." "$dir/lib/" 2>/dev/null || true
+            cp "$RUNNER_TEMP/flat/nvgt.exe" "$dir/nvgt.exe"
+            cp -r "$RUNNER_TEMP/flat/lib/." "$dir/lib/" 2>/dev/null || true
             cp nvmidi.dll "$dir/lib/nvmidi.dll"
 
             # The script, from the commit. midi.nvgt is the entry point every
@@ -230,8 +260,8 @@ jobs:
             # plugin that cannot load into this engine therefore fails here,
             # in the log, named by commit, instead of producing an exe that
             # breaks on hardware and gets blamed on the wrong commit.
-            cp nvmidi.dll "$RUNNER_TEMP/share/lib/nvmidi.dll"
-            "$RUNNER_TEMP/share/nvgt.exe" --compile \
+            cp nvmidi.dll "$RUNNER_TEMP/flat/lib/nvmidi.dll"
+            "$RUNNER_TEMP/flat/nvgt.exe" --compile \
               examples/music_quickstart.nvgt music_quickstart.exe \
               || { echo "COMPILE FAILED at folder $n ($ref)"; exit 1; }
             [ -f music_quickstart.exe ] || { echo "folder $n: no exe"; ls -l; exit 1; }
