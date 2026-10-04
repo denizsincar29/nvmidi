@@ -1,5 +1,6 @@
-// octave-doubler.nvgt - keyboard in, synth out, every note an octave higher.
-// Escape stops. The switch is a router: one message in, one place out.
+// forwarder.nvgt - keyboard in, synth out, every note an octave higher.
+// Escape stops. No switch here: one question per branch, which reads as
+// plainly as a switch and keeps it one line per case.
 
 #include "../midi.nvgt"
 
@@ -7,7 +8,7 @@ midi_input@ input;
 midi_output@ output;
 midi_message m;
 
-int pitched(int note) {
+int octave_up(int note) {
 	int up = note + 12;
 	if (up > 127) up -= 12; // wrap rather than go silent at the top
 	return up;
@@ -32,19 +33,17 @@ void main() {
 
 	while (!key_pressed(KEY_ESCAPE)) {
 		while (input.next_message(m)) {
-			switch (m.kind) {
-			case MIDI_NOTE_ON:
-				if (m.is_note_off) output.send_note_off(m.channel, pitched(m.data1), 0);
-				else output.send_note_on(m.channel, pitched(m.data1), m.data2);
-				break;
-			case MIDI_NOTE_OFF:
-				output.send_note_off(m.channel, pitched(m.data1), m.data2);
-				break;
-			case MIDI_CONTROL_CHANGE:
-			case MIDI_PITCH_BEND:
-				output.send(m.status, m.data1, m.data2); // unchanged, so forward as-is
-				break;
+			// A note, either spelling of it. The velocity travels unchanged;
+			// the plugin turns a note on at velocity 0 into a note off itself,
+			// so a release still leaves as a release.
+			if (m.is_note) {
+				output.send_note_on(m.channel, octave_up(m.data1), m.data2);
+			} else if (m.is_control_change) {
+				output.send_control_change(m.channel, m.controller, m.data2);
+			} else if (m.kind == MIDI_PITCH_BEND) {
+				output.send_pitch_bend(m.channel, m.pitch_bend); // shifted notes need it in tune
 			}
+			// Anything else is deliberately not forwarded.
 		}
 		wait(5);
 	}

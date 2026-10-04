@@ -1,0 +1,43 @@
+// player.nvgt - the background player plays a note while the script
+// loop runs, so the wait below is what holds it. Escape stops.
+// The second half sends messages by hand instead; mixed, both would double.
+
+#include "../midi.nvgt"
+
+midi_input@ input;
+midi_output@ output;
+
+void say(const string&in text) {
+	print(text + "\n");
+	if (SCREEN_READER_AVAILABLE) screen_reader_speak(text, false);
+}
+
+void main() {
+	show_window("nvmidi - player and raw sending");
+	midi_config@ config = midi_config_create();
+	config.load_if_present("midi_config.json");
+	@output = midi_output_create();
+	if (!output.open_config(config, "nvmidi player")) {
+		print("Cannot open the output: " + midi_last_error_text() + "\n");
+		return;
+	}
+
+	output.tempo = 96.0;
+
+	// Through the player: the note is handed over and the player's clock runs.
+	midi_note@ n = midi_note_named("C4", 100);
+	n.length = output.duration(1.0, MIDI_BEATS);
+	output.play_note(n);
+	say("Player note out. It holds for a beat.");
+	wait(1000);
+
+	// By hand: the same note, one message at a time, the length written out.
+	output.send_note_on(0, 60, 100);
+	for (int i = 0; i < 20; i++) wait(50);
+	output.send_note_off(0, 60, 100);
+	say("Hand sent note off.");
+
+	output.all_notes_off();
+	output.close();
+}
+

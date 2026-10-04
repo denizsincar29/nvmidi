@@ -25,9 +25,11 @@ whose first character is `{` is read as JSON, anything else as the old
 - **list_ports.nvgt** — pick the input and the output port with the arrow keys
   and write them to `midi_config.json`. Run this first.
 - **echo_monitor.nvgt** — speak every message the device on the input port
-  sends. It only listens; octave-doubler.nvgt is the one that sends.
-- **octave-doubler.nvgt** — forward the keyboard to another port, an octave up.
-  Input and output at once.
+  sends. It only listens; forwarder.nvgt is the one that sends.
+- **forwarder.nvgt** — forward the keyboard to another port, an octave up.
+  Input and output at once. The is_* form, no switch.
+- **player.nvgt** — the two ways to sound a note: the background player, and
+  sending the messages by hand.
 - **play_chord.nvgt** — one chord, then every pattern the player knows: spread,
   arpeggio, quick, fast, strum, repeat.
 - **music_quickstart.nvgt** — the high level half: durations, patterns, a
@@ -63,9 +65,16 @@ The other spelling is one question per message — `m.is_note_on`, `m.is_pedal`,
 goes to one place (a router, a logger); reach for `is_*` when one question
 decides one thing. `TECHNICAL.md` tells the whole story of the status byte.
 
-`echo_monitor.nvgt` shows both in one file. `octave-doubler.nvgt` is the pure
-switch. The other three have no per-message branching, so a switch there would
-sit where nothing is being decided.
+No example has to pick one and stay there. `echo_monitor.nvgt` does both in one
+file — the switch says the message in words, the `is_*` test decides whether it
+is a pedal. `forwarder.nvgt` is the other extreme: a switch would sit where
+nothing is being decided, so it asks questions instead.
+
+## Where the details live
+
+These files stay small on purpose. The long version of the format — what the
+status byte is, why a note on at velocity 0 is a release, how the waiting
+works — is in `TECHNICAL.md`; every property and method is in `doc/API.md`.
 
 ## Known bug: the chord waits play at machine speed
 

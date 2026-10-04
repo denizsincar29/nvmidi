@@ -1,15 +1,7 @@
-// queue_overflow_test.nvgt - prove that the queue overflow is reported.
-// Reads one message a second on purpose, so a fast playing fills the
-// 1024-message queue while you play. Escape stops.
-//
-// Nothing is spoken per message - the queue filling up is the whole test.
-// Press space at any time to hear where the queue stands.
-//
-// What you should hear after a few seconds of fast playing: "caught
-// overflow: N dropped", then, on every space, a growing count.
-//
-// If the caught line never comes, the polling form below is the fallback:
-// it says the same thing without any try/catch.
+// queue_limits.nvgt - the queue holds 1024 messages, then drops the oldest.
+// This reads one a second on purpose, so fast playing fills it and you hear
+// the count climb. Nothing is spoken per message - the fill is the whole
+// point. Space says where the queue stands; escape stops.
 
 #include "../midi.nvgt"
 
@@ -32,7 +24,7 @@ void speak_state() {
 }
 
 void main() {
-	show_window("nvmidi - queue overflow test");
+	show_window("nvmidi - queue limits");
 
 	if (midi_input_port_count() == 0) {
 		say("No MIDI input ports. Plug the keyboard in first.");
@@ -42,7 +34,7 @@ void main() {
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.json");
 	@keyboard = midi_input_create();
-	if (!keyboard.open_config(config, "nvmidi overflow test")) {
+	if (!keyboard.open_config(config, "nvmidi queue limits")) {
 		say("Cannot open " + midi_config_text(config) + ": " + midi_last_error_text());
 		return;
 	}
@@ -52,6 +44,11 @@ void main() {
 		if (key_pressed(KEY_SPACE)) {
 			speak_state();
 			wait(200); // so one press does not repeat
+		}
+		if (key_pressed(KEY_C)) { // throw away the backlog instead of reading it
+			keyboard.clear();
+			say("cleared.");
+			wait(200);
 		}
 
 		// Deliberately slow: exactly one message per second, so the queue fills.
