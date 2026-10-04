@@ -33,10 +33,13 @@ void main() {
 
 	while (!key_pressed(KEY_ESCAPE)) {
 		while (input.next_message(m)) {
-			// A note, either spelling of it. The velocity travels unchanged;
-			// the plugin turns a note on at velocity 0 into a note off itself,
-			// so a release still leaves as a release.
-			if (m.is_note) {
+			// A note, either spelling of it, and the two spellings go out as
+			// themselves. The plugin's send_note_on already turns a note-on
+			// at velocity 0 into a note off, so asking is_note_off here is
+			// only to keep the pitch shift on one path.
+			if (m.is_note_off) {
+				output.send_note_off(m.channel, octave_up(m.data1), m.data2);
+			} else if (m.is_note_on) {
 				output.send_note_on(m.channel, octave_up(m.data1), m.data2);
 			} else if (m.is_control_change) {
 				output.send_control_change(m.channel, m.controller, m.data2);

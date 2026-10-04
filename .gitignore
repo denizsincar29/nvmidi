@@ -38,3 +38,8 @@ loadcheck.nvgt
 # API probing. It is ~180 MB of prebuilt binaries, it is fetched on demand, and
 # nothing in the repository needs it committed.
 engine/
+
+# A real config with the owner's own port numbers and port-name match.
+# Examples read this file from the folder the engine runs in; the repository
+# ships none, so a fresh checkout falls back to the first free ports.
+examples/midi_config.json
