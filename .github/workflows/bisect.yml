@@ -277,11 +277,24 @@ jobs:
             # in the log, named by commit, instead of producing an exe that
             # breaks on hardware and gets blamed on the wrong commit.
             cp nvmidi.dll "$RUNNER_TEMP/share/lib/nvmidi.dll"
+
+            # This engine's --compile does not emit a bare executable: it
+            # packages the product into a .zip beside the script, whatever name
+            # it is given. The first run of this step proved it - it returned 0,
+            # printed "packaging product... / Success!: Release build succeeded",
+            # and left examples/music_quickstart.zip where music_quickstart.exe
+            # was expected, which is why the folder reported "no exe" after a
+            # build that had in fact succeeded.
+            rm -f examples/music_quickstart.zip
             "$RUNNER_TEMP/share/nvgt.exe" --compile \
               examples/music_quickstart.nvgt music_quickstart.exe \
               || { echo "COMPILE FAILED at folder $n ($ref)"; exit 1; }
-            [ -f music_quickstart.exe ] || { echo "folder $n: no exe"; ls -l; exit 1; }
-            mv music_quickstart.exe "$dir/music_quickstart.exe"
+            [ -f examples/music_quickstart.zip ] || { echo "folder $n: no packaged product"; ls -l examples/; exit 1; }
+
+            # Unpack that product into the folder so the reporter runs the same
+            # tree the engine just built, not a zip he has to open by hand.
+            python -c "import sys,zipfile; zipfile.ZipFile('examples/music_quickstart.zip').extractall('$dir')"
+            [ -f "$dir/music_quickstart.exe" ] || { echo "folder $n: product had no exe"; python -c "import zipfile; print(zipfile.ZipFile('examples/music_quickstart.zip').namelist())"; exit 1; }
 
             {
               echo "commit  $ref"
