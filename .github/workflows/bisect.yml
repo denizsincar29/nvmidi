@@ -173,21 +173,18 @@ jobs:
           Get-ChildItem -Recurse -Depth 2 $share | Select-Object FullName, Length | Format-Table -AutoSize
           $nvgt = Get-ChildItem -Recurse -Filter 'nvgt.exe' $share -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $nvgt) { throw "no nvgt.exe under $share after the install" }
-          $lib = Get-ChildItem -Recurse -Directory -Filter 'lib_windows' $share | Select-Object -First 1
-          if (-not $lib) { throw "no lib_windows/ under $share after the install" }
+          # The Windows runtime libraries are lib/, not lib_windows/. The
+          # install did lay out lib_windows/ in the tree it writes, but that is
+          # the source layout; the distribution proper puts the Windows DLLs in
+          # lib/ beside nvgt.exe and the other platforms in lib_linux/,
+          # lib_mac/, lib_android/. This is the layout the plugin is loaded in
+          # on the reporter's own machine, so it is the layout to reproduce.
+          $lib = Join-Path $share 'lib'
+          if (-not (Test-Path $lib)) { throw "no lib/ under $share after the install" }
 
-          # Flatten the launcher's own layout into the fixed one the loop
-          # expects: the engine under lib/ with its runtime libraries beside
-          # it, and nothing else at the root. The launcher nests things its
-          # own way and the depth is not worth guessing at from here.
-          $flat = "$env:RUNNER_TEMP/flat"
-          New-Item -ItemType Directory -Force -Path "$flat/lib" | Out-Null
-          Copy-Item -Force $nvgt.FullName "$flat/nvgt.exe"
-          Copy-Item -Force "$($lib.FullName)/*.dll" "$flat/lib/"
-          Copy-Item -Force "$($lib.FullName)/*" "$flat/lib/" -ErrorAction SilentlyContinue
           Write-Host "engine: $($nvgt.FullName) $($nvgt.Length)"
-          Write-Host "libs:   $($lib.FullName)"
-          Get-ChildItem $flat, "$flat/lib" | Select-Object Name, Length | Format-Table -AutoSize
+          Write-Host "libs:   $lib"
+          Get-ChildItem $share, $lib | Select-Object Name, Length | Format-Table -AutoSize
 
       - name: build one folder per commit
         shell: bash
@@ -239,8 +236,8 @@ jobs:
             # difference between a folder that can be run and one that cannot.
             dir="bundle/$n"
             mkdir -p "$dir/lib"
-            cp "$RUNNER_TEMP/flat/nvgt.exe" "$dir/nvgt.exe"
-            cp -r "$RUNNER_TEMP/flat/lib/." "$dir/lib/" 2>/dev/null || true
+            cp "$RUNNER_TEMP/share/nvgt.exe" "$dir/nvgt.exe"
+            cp -r "$RUNNER_TEMP/share/lib/." "$dir/lib/" 2>/dev/null || true
             cp nvmidi.dll "$dir/lib/nvmidi.dll"
 
             # The script, from the commit. midi.nvgt is the entry point every
@@ -279,8 +276,8 @@ jobs:
             # plugin that cannot load into this engine therefore fails here,
             # in the log, named by commit, instead of producing an exe that
             # breaks on hardware and gets blamed on the wrong commit.
-            cp nvmidi.dll "$RUNNER_TEMP/flat/lib/nvmidi.dll"
-            "$RUNNER_TEMP/flat/nvgt.exe" --compile \
+            cp nvmidi.dll "$RUNNER_TEMP/share/lib/nvmidi.dll"
+            "$RUNNER_TEMP/share/nvgt.exe" --compile \
               examples/music_quickstart.nvgt music_quickstart.exe \
               || { echo "COMPILE FAILED at folder $n ($ref)"; exit 1; }
             [ -f music_quickstart.exe ] || { echo "folder $n: no exe"; ls -l; exit 1; }
@@ -291,7 +288,7 @@ jobs:
               git log -1 --format='date    %ad%nsubject %s' --date=short "$ref"
               echo "sha256  nvmidi.dll         $(sha256sum "$dir/lib/nvmidi.dll" | cut -d' ' -f1)"
               echo "sha256  music_quickstart.exe $(sha256sum "$dir/music_quickstart.exe" | cut -d' ' -f1)"
-              echo "engine  engine/stub/nvgt_windows_upx.bin (UPX 5.21), unpacked"
+              echo "engine  nvgt 0.90.0_dev, installed from the pinned release"
               echo "sha256  nvgt.exe             $(sha256sum "$dir/nvgt.exe" | cut -d' ' -f1)"
             } > "$dir/hash.txt"
 
