@@ -146,9 +146,25 @@ jobs:
           $exe = "$env:RUNNER_TEMP/nvgt_setup.exe"
           Invoke-WebRequest -Uri "https://github.com/samtupy/nvgt/releases/download/latest/nvgt_0.90.0_dev.exe" -OutFile $exe
           (Get-Item $exe).Length
+          # Run the launcher with its output captured instead of swallowed. The
+          # first attempt at this wrapped the call in try/catch and printed only
+          # the exception, so a silent no-op and a clean exit were
+          # indistinguishable in the log - which is exactly the state this was
+          # left in. Both streams go to a file and are printed afterwards.
           Push-Location $share
-          try { & $exe --quiet } catch { Write-Host "launcher exited: $($_.Exception.Message)" }
+          try {
+            & $exe --quiet *> "$env:RUNNER_TEMP/launcher.log"
+            Write-Host "launcher exit code: $LASTEXITCODE"
+          } catch {
+            Write-Host "launcher threw: $($_.Exception.Message)"
+          }
           Pop-Location
+          Write-Host "--- launcher output ---"
+          if (Test-Path "$env:RUNNER_TEMP/launcher.log") {
+            Get-Content "$env:RUNNER_TEMP/launcher.log" | Select-Object -First 200
+          } else {
+            Write-Host "(launcher wrote no output)"
+          }
           Start-Sleep -Seconds 3
           Write-Host "--- what the launcher left ---"
           Get-ChildItem -Recurse -Depth 2 $share | Select-Object FullName, Length | Format-Table -AutoSize
