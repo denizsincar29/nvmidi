@@ -155,10 +155,13 @@ jobs:
           # silent exit left the directory empty with no exit code. The
           # switches are Inno's own, and /DIR pins the destination so the
           # unpacked tree lands where this job expects to find it.
-          Push-Location $share
-          & $exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR="$share" *> "$env:RUNNER_TEMP/launcher.log"
-          Write-Host "installer exit code: $LASTEXITCODE"
-          Pop-Location
+          # Start-Process, not the call operator: the call operator runs the
+          # installer inside this shell, and Inno's /VERYSILENT starts the real
+          # installer in a detached process and exits - so the shell, and the
+          # step, moved on before the install had begun. -Wait blocks until
+          # the installer is actually done.
+          $p = Start-Process -FilePath $exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$share" -Wait -PassThru
+          Write-Host "installer exit code: $($p.ExitCode)"
           Write-Host "--- installer output ---"
           if (Test-Path "$env:RUNNER_TEMP/launcher.log") {
             Get-Content "$env:RUNNER_TEMP/launcher.log" | Select-Object -First 200
