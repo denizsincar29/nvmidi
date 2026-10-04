@@ -40,8 +40,8 @@ void say(const string&in text) {
 	if (SCREEN_READER_AVAILABLE) screen_reader_speak(text, false);
 }
 
-midi_output@ out;
-midi_input@ in;
+midi_output@ mo;
+midi_input@ mi;
 
 // The script's own clock, built out of the wait the script owns. If this one
 // runs at speed too, the engine's wait is the thing that is gone, and no plugin
@@ -58,9 +58,9 @@ void spin_for(double ms) {
 void play_and_hold(midi_note@ n, double ms, const string&in label) {
 	// The note goes on, and nothing tells the plugin to wait for it: the
 	// script holds the time itself.
-	out.note_on(n.pitch, n.velocity, n.channel);
+	mo.note_on(n.pitch, n.velocity, n.channel);
 	spin_for(ms);
-	out.note_off(n.pitch, 0, n.channel);
+	mo.note_off(n.pitch, 0, n.channel);
 
 	check("async_" + label + "_elapsed", true,
 		"asked " + ms + " ms of script time, no plugin wait involved");
@@ -72,29 +72,29 @@ void main() {
 
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.json");
-	@out = midi_output_create();
-	if (!out.open_config(config, "nvmidi async out")) {
+	@mo = midi_output_create();
+	if (!mo.open_config(config, "nvmidi async out")) {
 		check("async_output_open", false, "cannot open an output: " + midi_last_error_text());
 		print("PASS " + g_pass + " FAIL " + g_fail + "\n");
 		return;
 	}
-	check("async_output_open", true, "opened " + midi_output_name_text(out));
+	check("async_output_open", true, "opened " + midi_output_name_text(mo));
 
 	midi_note@ n = nvmidi_note_create(60, 100);
 	n.length = midi_duration_create(400.0, MIDI_MS);
 
 	// -- the plugin's own wait, for the comparison -------------------------
 	double t0 = now_ms();
-	out.play_note_wait(n);
+	mo.play_note_wait(n);
 	double wait_elapsed = now_ms() - t0;
 	check("play_note_wait_elapsed_400", wait_elapsed > 380.0 && wait_elapsed < 420.0,
 		"elapsed=" + wait_elapsed + " asked for 400 - under 380 means it returned at once");
 
 	// -- the script's own clock, no plugin wait anywhere -------------------
 	t0 = now_ms();
-	out.note_on(64, 100, 1);
+	mo.note_on(64, 100, 1);
 	spin_for(400.0);
-	out.note_off(64, 0, 1);
+	mo.note_off(64, 0, 1);
 	double own_elapsed = now_ms() - t0;
 	check("own_clock_elapsed_400", own_elapsed > 380.0 && own_elapsed < 460.0,
 		"elapsed=" + own_elapsed + " asked for 400");
@@ -106,8 +106,8 @@ void main() {
 	check("engine_wait_elapsed_400", engine_elapsed > 380.0 && engine_elapsed < 460.0,
 		"elapsed=" + engine_elapsed + " asked for 400 - short here means the engine's own wait is gone");
 
-	out.stop_all_notes();
-	out.close();
+	mo.stop_all_notes();
+	mo.close();
 
 	say("Async wait test done. " + g_pass + " passed, " + g_fail + " failed.");
 	print("PASS " + g_pass + " FAIL " + g_fail + "\n");
