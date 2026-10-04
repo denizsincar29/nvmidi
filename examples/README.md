@@ -25,8 +25,9 @@ whose first character is `{` is read as JSON, anything else as the old
 - **list_ports.nvgt** — pick the input and the output port with the arrow keys
   and write them to `midi_config.json`. Run this first.
 - **echo_monitor.nvgt** — speak every message the device on the input port
-  sends. It only listens; forwarder.nvgt is the one that sends.
-- **forwarder.nvgt** — forward the keyboard to another port, an octave up.
+  sends. It only listens; octave_up_forwarder.nvgt is the one that sends.
+- **octave_up_forwarder.nvgt** — forward the keyboard to another port, an
+  octave up.
   Input and output at once. The is_* form, no switch.
 - **player.nvgt** — the two ways to sound a note: the background player, and
   sending the messages by hand.
@@ -67,7 +68,7 @@ decides one thing. `TECHNICAL.md` tells the whole story of the status byte.
 
 No example has to pick one and stay there. `echo_monitor.nvgt` does both in one
 file — the switch says the message in words, the `is_*` test decides whether it
-is a pedal. `forwarder.nvgt` is the other extreme: a switch would sit where
+is a pedal. `octave_up_forwarder.nvgt` is the other extreme: a switch would sit where
 nothing is being decided, so it asks questions instead.
 
 ## Where the details live

@@ -1,4 +1,4 @@
-// forwarder.nvgt - keyboard in, synth out, every note an octave higher.
+// octave_up_forwarder.nvgt - keyboard in, synth out, every note an octave higher.
 // Escape stops. No switch here: one question per branch, which reads as
 // plainly as a switch and keeps it one line per case.
 
@@ -33,10 +33,9 @@ void main() {
 
 	while (!key_pressed(KEY_ESCAPE)) {
 		while (input.next_message(m)) {
-			// A note, either spelling of it, and the two spellings go out as
-			// themselves. The plugin's send_note_on already turns a note-on
-			// at velocity 0 into a note off, so asking is_note_off here is
-			// only to keep the pitch shift on one path.
+			// A note, either spelling of it. The release carries its own
+			// velocity - the Nord sends 0..127, not always 0 - so it is
+			// read from data2 and passed on unchanged rather than rebuilt.
 			if (m.is_note_off) {
 				output.send_note_off(m.channel, octave_up(m.data1), m.data2);
 			} else if (m.is_note_on) {
