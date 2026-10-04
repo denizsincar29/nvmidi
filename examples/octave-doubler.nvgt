@@ -1,10 +1,5 @@
-// octave-doubler.nvgt - play a keyboard through a synth on the same computer:
-// every note arrives on the input port and leaves through the output port, an
-// octave higher. Escape stops.
-//
-// The handles are file scope globals and are assigned inside main(), not where
-// they are declared: a script global is initialised before the plugin has
-// registered its types, so a handle created there is not the one main() gets.
+// octave-doubler.nvgt - keyboard in, synth out, every note an octave higher.
+// Escape stops. The switch is a router: one message in, one place out.
 
 #include "../midi.nvgt"
 
@@ -12,11 +7,9 @@ midi_input@ input;
 midi_output@ output;
 midi_message m;
 
-// The one note the whole example is about: an octave up, wrapped back rather
-// than pushed past 127, so the top octave doubles down instead of going silent.
 int pitched(int note) {
 	int up = note + 12;
-	if (up > 127) up -= 12;
+	if (up > 127) up -= 12; // wrap rather than go silent at the top
 	return up;
 }
 
@@ -39,36 +32,17 @@ void main() {
 
 	while (!key_pressed(KEY_ESCAPE)) {
 		while (input.next_message(m)) {
-			// Read the message through midi_message_view and every number gets a
-			// name: v.is_note_on, v.velocity, v.channel. The switch is on v.kind,
-			// which is the message's type as one number - the MIDI_* names are
-			// just friendlier ways to write 0x90 and 0xb0, and that is the whole
-			// reason they exist.
-			//
-			// A router is what a switch is for: one message arrives, one place
-			// it goes. Anything not named below is dropped on purpose - a
-			// keyboard's clock and its aftertouch have no business in a synth.
-			midi_message_view v(m);
-			switch (v.kind) {
+			switch (m.kind) {
 			case MIDI_NOTE_ON:
-				// A note on at velocity 0 is a release, not a press: hardware
-				// sends it that way to save a byte under running status.
-				if (v.velocity > 0)
-					output.send_note_on(v.channel, pitched(v.note()), v.velocity);
-				else
-					output.send_note_off(v.channel, pitched(v.note()), 0);
+				if (m.data2 > 0) output.send_note_on(m.channel, pitched(m.data1), m.data2);
+				else output.send_note_off(m.channel, pitched(m.data1), 0); // velocity 0
 				break;
 			case MIDI_NOTE_OFF:
-				output.send_note_off(v.channel, pitched(v.note()), v.velocity);
+				output.send_note_off(m.channel, pitched(m.data1), m.data2);
 				break;
 			case MIDI_CONTROL_CHANGE:
-				// The sustain pedal and every other controller go through as they
-				// are. Sending by number is fine here: nothing about a controller
-				// changes on the way out.
-				output.send(m.status, m.data1, m.data2);
-				break;
 			case MIDI_PITCH_BEND:
-				output.send(m.status, m.data1, m.data2); // the wheel is not shifted
+				output.send(m.status, m.data1, m.data2); // unchanged, so forward as-is
 				break;
 			}
 		}

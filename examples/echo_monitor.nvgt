@@ -1,14 +1,5 @@
-// echo_monitor.nvgt - speak what the device on the input port sends.
-// Run this first: it is the quickest way to see that input works.
-// Escape stops.
-//
-// The switch reads the command nibble: the one number that says what kind of
-// message arrived. The alternative is the m.is_* properties, which answer a
-// single yes/no question; the pedal test below is written that way, so both
-// spellings are in the file and you can pick whichever reads better.
-//
-// m.kind carries no channel, so a note from channel 1 and one from channel 5
-// land in the same case. m.channel says which.
+// echo_monitor.nvgt - speak every message the input port sends. Escape stops.
+// Reads messages two ways: a switch on the type, and an is_* question.
 
 #include "../midi.nvgt"
 
@@ -21,34 +12,24 @@ void say(const string&in text) {
 }
 
 string describe(const midi_message&in message) {
-	// The view turns the message's numbers into words. v.data1 on a note is a
-	// pitch number, but v.note() is the pitch and v.note_name() is "C4"; v.data2
-	// is how hard, and v.velocity is the same idea named. Nothing here needs a
-	// hex number to be understood - the case labels below are named constants,
-	// and they exist only so the switch can say which type it means.
-	midi_message_view v(message);
-	switch (v.kind) {
+	switch (message.kind) {
 	case MIDI_NOTE_ON:
-		// A note on at velocity 0 is a release: hardware sends it that way under
-		// running status. Without this test every lifted key would be announced
-		// as a press.
-		if (v.velocity > 0)
-			return "note on " + v.note_name() + ", velocity " + v.velocity;
-		return "note off " + v.note_name();
+		if (message.is_note_off) return "note off " + midi_message_note_name_text(message); // velocity 0
+		return "note on " + midi_message_note_name_text(message) + ", velocity " + message.data2;
 	case MIDI_NOTE_OFF:
-		return "note off " + v.note_name();
+		return "note off " + midi_message_note_name_text(message);
 	case MIDI_CONTROL_CHANGE:
-		return "controller " + v.controller() + " value " + v.data2;
+		return "controller " + message.controller + " value " + message.data2;
 	case MIDI_PROGRAM_CHANGE:
-		return "program " + v.program();
+		return "program " + message.program;
 	case MIDI_CHANNEL_PRESSURE:
-		return "channel pressure " + v.channel_pressure();
+		return "channel pressure " + message.channel_pressure;
 	case MIDI_PITCH_BEND:
-		return "pitch bend " + v.pitch_bend();
+		return "pitch bend " + message.pitch_bend;
 	case MIDI_POLY_AFTERTOUCH:
-		return "aftertouch " + v.aftertouch() + " on " + v.note_name();
+		return "aftertouch " + message.aftertouch + " on " + midi_message_note_name_text(message);
 	}
-	return v.name(); // the plugin's own sentence, for anything missed above
+	return midi_message_text(message);
 }
 
 void main() {
@@ -70,10 +51,7 @@ void main() {
 
 	while (!key_pressed(KEY_ESCAPE)) {
 		while (keyboard.next_message(m)) {
-			// The other spelling: one plain question about one message, no switch
-			// at all. A pedal is the control change a player reaches for most, so
-			// it gets said in words rather than as a controller number.
-			if (m.is_pedal)
+			if (m.is_pedal) // the is_* way: one question, said in words
 				say("pedal, controller " + m.controller + " value " + m.data2);
 			else
 				say(describe(m));

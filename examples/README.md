@@ -35,53 +35,37 @@ whose first character is `{` is read as JSON, anything else as the old
 
 ## Two ways to ask what a message is
 
-A MIDI message is three numbers: a status byte and two data bytes. The status
-byte's top half says what kind of message it is and its bottom half says which
-of the sixteen channels it came on. The names `MIDI_NOTE_ON` and `0x90` are the
-same number written two ways - the name is for a reader who has not memorised
-the table, and that is the only reason the constants exist
-(`nvmidi_constants.nvgt`). Nothing in a script has to say `0x90`.
+The status byte's top half is the kind of message, its bottom half the channel.
+`MIDI_NOTE_ON` is the number `0x90` under a readable name - no script has to
+write the hex.
 
-The numbers inside a message are no better, which is what `midi_message_view`
-is for: `data1` on a note is a pitch, and the view calls it `note()` and prints
-it `note_name()` as "C4"; `data2` on a note is how hard the key was hit, and the
-view calls that `velocity()`. Once a message is read through the view, a case
-body reads as a sentence:
+A message's fields read as words too: `m.kind`, `m.note`, `m.velocity`,
+`m.controller`, `m.program` and the rest. `midi_message_view` in `midi.nvgt`
+adds the string ones (`v.note_name`, `v.name`) for a script that wants to print
+them.
 
 ```angelscript
-midi_message_view v(m);
-switch (v.kind) {
+switch (m.kind) {
 case MIDI_NOTE_ON:
-	// A note on at velocity 0 is a release: hardware sends it that way to
-	// save a byte under running status.
-	if (v.velocity > 0) output.send_note_on(v.channel, v.note() + 12, v.velocity);
-	else output.send_note_off(v.channel, v.note() + 12, 0);
+	if (m.data2 > 0) output.send_note_on(m.channel, m.data1 + 12, m.data2);
+	else output.send_note_off(m.channel, m.data1 + 12, 0); // velocity 0
 	break;
 case MIDI_NOTE_OFF:
-	output.send_note_off(v.channel, v.note() + 12, v.velocity);
+	output.send_note_off(m.channel, m.data1 + 12, m.data2);
 	break;
 }
 ```
 
-`v.kind` carries no channel, so a note from channel 1 and one from channel 5
-land in the same case; `v.channel` says which.
+`m.kind` carries no channel; `m.channel` says which.
 
-The other spelling is one plain question per message - `v.is_note_on`,
-`v.is_pedal`, `v.is_control_change`, and the rest, all listed in `doc/API.md`.
-Inside a case both work, because a case body is ordinary code.
+The other spelling is one question per message — `m.is_note_on`, `m.is_pedal`,
+`m.is_control_change`, all in `doc/API.md`. Reach for a switch when one message
+goes to one place (a router, a logger); reach for `is_*` when one question
+decides one thing.
 
-Which to reach for: a switch when one message goes to one place and the branches
-are disjoint - a router, a logger, anything that enumerates the message types.
-The `is_*` form when the question is about one message and the answer decides a
-single thing, or when the same test is asked outside a dispatch table. When a
-case needs a property the `is_*` set already spells out (the release-under-
-running-status test above is the standing example), the two mix without fuss.
-
-`echo_monitor.nvgt` is written both ways in one file: a `switch` describes the
-message, an `is_pedal` test decides whether to say it as words instead.
-`octave-doubler.nvgt` is the pure switch - a router, which is what a switch is
-for. The other three have no per-message branching to dispatch on, so rewriting
-them would put a switch where nothing is being decided.
+`echo_monitor.nvgt` shows both in one file. `octave-doubler.nvgt` is the pure
+switch. The other three have no per-message branching, so a switch there would
+sit where nothing is being decided.
 
 ## Known bug: the chord waits play at machine speed
 
