@@ -1954,7 +1954,14 @@ bool midi_output::play_midi_chord_wait(CScriptArray& notes, const std::string& p
 		wait_until(start + steps[i].at);
 		const double moment = steps[i].at;
 		while (i < steps.size() && steps[i].at <= moment + 0.0001) {
-			const midi_note& note = collected[steps[i].note];
+			// Stamped before it is sent and before it is stored, so the copy
+			// the note off is built from is the note the note on was built
+			// from. `sounding` is what the last stop_all_notes() releases, and
+			// an unstamped note there carries the default tempo while its note
+			// on went out resolved at the port's - different length, and at a
+			// port whose tempo is not 120 a different channel too, so the
+			// force release misses the note that is actually ringing.
+			const midi_note note = stamped(collected[steps[i].note]);
 			note_on(note);
 			sounding.push_back(note);
 			release_at.push_back(moment + note.duration_ms_at(tempo));
@@ -1976,7 +1983,7 @@ bool midi_output::play_midi_chord_wait(CScriptArray& notes, const std::string& p
 			// Released with the tempo the moment was measured at, so the note
 			// off lands on the note on's channel even when the length was
 			// written in beats and the port tempo differs.
-			release_one(stamped(collected[release_note[k]]));
+			release_one(collected[release_note[k]]);
 			release_at.erase(release_at.begin() + k);
 			release_note.erase(release_note.begin() + k);
 		}
@@ -1984,7 +1991,7 @@ bool midi_output::play_midi_chord_wait(CScriptArray& notes, const std::string& p
 	// Whatever is still ringing gets its full length.
 	for (size_t k = 0; k < release_at.size(); ++k) {
 		wait_until(start + release_at[k]);
-		release_one(stamped(collected[release_note[k]]));
+		release_one(collected[release_note[k]]);
 	}
 	stop_all_notes();
 	return true;
