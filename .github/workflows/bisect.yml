@@ -235,10 +235,9 @@ jobs:
 
             # The compile runs from the repository tree and not from inside the
             # folder, because the example reaches the entry point by a relative
-            # path that only resolves from there. The folder was still assembled
-            # first, so what it holds is decided before the compile rather than
-            # by it: the exe is then copied in, and the folder is exactly the
-            # set of files it would have been had the compile run inside it.
+            # path that only resolves from there. The compiler is the staged
+            # engine, called by its own path - it is run from the tree, so a
+            # bare ./nvgt.exe would look for it here and not find it.
             #
             # The engine loads the plugin while compiling - the pragma in
             # midi.nvgt registers its types into the script engine, so the
@@ -246,8 +245,10 @@ jobs:
             # engine. A commit whose plugin fails to load fails here, in the
             # log, with a reason, instead of silently producing an exe that
             # breaks on real hardware and gets blamed on the wrong commit. The
-            # dll sits in the tree root, where the engine looks for it.
-            ./nvgt.exe --compile --platform windows examples/music_quickstart.nvgt music_quickstart.exe \
+            # dll was just built into the tree root, which is where the engine
+            # looks for it.
+            "$RUNNER_TEMP/share/nvgt.exe" --compile --platform windows \
+              examples/music_quickstart.nvgt music_quickstart.exe \
               || { echo "COMPILE FAILED at folder $n ($ref)"; exit 1; }
             [ -f music_quickstart.exe ] || { echo "folder $n: no exe"; ls -l; exit 1; }
             mv music_quickstart.exe "$dir/music_quickstart.exe"
