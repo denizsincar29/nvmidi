@@ -77,23 +77,26 @@ These files stay small on purpose. The long version of the format — what the
 status byte is, why a note on at velocity 0 is a release, how the waiting
 works — is in `TECHNICAL.md`; every property and method is in `doc/API.md`.
 
-## Known bug: the chord waits play at machine speed
+## The chord waits that played at machine speed
 
-Status 1 October, unresolved. Reported by the owner, reproduced on his Windows
-build three times: `play_chord_wait` and `play_midi_chord_wait` return at once
-instead of holding the notes for their length.
+Reported 1 October, fixed 4 October. `play_chord_wait` and
+`play_midi_chord_wait` returned at once instead of holding the notes for their
+length: the phrase was spoken and every note went on and off inside the same
+millisecond.
 
-What was measured, not guessed:
+The cause was in `wait_until`, which resolves the script's own `void wait(int)`
+through `GetModule(0)`. The engine does not promise that the module being run is
+the first one it holds, and a few commits back — around the enumeration-object
+retraction in `dd73e1d` — it stopped being so. The lookup missed, the function
+handle stayed null, and the loop took its silent way out before waiting for
+anything: no error, no note of it, everything at once.
 
-- `src/nvmidi.cpp:1520` — `play_chord_wait` turns the notes on, calls
-  `wait_until(now_ms() + group_length_at(...))`, then releases them.
-- `src/nvmidi.cpp:1731` — `wait_until` loops the engine's `wait()` in hops of at
-  most 5 ms until `now_ms()` reaches the moment. It gives up silently, with no
-  error, if `GetModule(0)` does not hand it the calling script's module, and the
-  module lookup is the one part of the wait that has never been checked.
-- `src/nvmidi.cpp:717` — `now_ms()` is `GetTickCount64()` on Windows and a
-  monotonic clock elsewhere, so the clock itself is not at fault.
+`wait_until` now searches every module the engine knows, by declaration, with
+`GetModule(0)` kept as the fast path it usually is. When the function is not
+found at all, it says so on stderr rather than playing the phrase at speed:
+that silence is what made the failure invisible in the first place, and it is
+worth more than the few lines it costs.
 
-The fix has to stop leaning on the engine's `wait` for the wait: drive the
-clock from the script and let the caller's own loop be the time, which is what
-`tests/` and the background player already do.
+Worth knowing when writing your own waits: `play_until`, `play_pattern` and
+friends work the same way — they call the script's `wait`, so a script that
+overrides it keeps control of the clock.
