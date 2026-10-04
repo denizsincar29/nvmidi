@@ -1,117 +1,38 @@
 # nvmidi examples
 
-Short scripts to copy from. Each one opens a window, prints what it does, speaks
-it through the screen reader, and stops on escape.
+Short scripts to run, read and copy from. Each one opens a window, prints and speaks what it is doing, and stops when you press escape.
 
-Every one starts the same way:
+## Start here
 
-```angelscript
-#include "../midi.nvgt"
-```
+1. Plug in your keyboard or start your synthesiser.
+2. Run **list_ports.nvgt**. Choose your input and output with the arrow keys and press enter.
+3. Run any other example.
 
-`midi.nvgt` is the wrapper: it carries `#pragma plugin nvmidi` itself, so no
-example names the plugin or takes a string apart byte by byte.
+## The scripts
 
-All of them read `midi_config.json` from the folder the engine runs in, so
-pointing them at another keyboard means editing that file:
+- **list_ports.nvgt**: choose your MIDI devices. Saves your choice in `midi_config.json`.
+- **music_quickstart.nvgt**: plays a chord, an arpeggio and a scale. The best one to read first.
+- **play_chord.nvgt**: one chord played in every pattern. Space plays it again.
+- **player.nvgt**: two ways to play a note: let the plugin hold it, or start and stop it yourself.
+- **sound_probe.nvgt**: plays four notes and checks the timing. Use it when you are not sure sound works.
+- **echo_monitor.nvgt**: speaks everything your keyboard sends. Good for finding out what a knob or pedal does.
+- **octave_up_forwarder.nvgt**: plays what you play on the keyboard on the output, one octave higher.
+- **queue_limits.nvgt**: shows what happens when a script reads messages too slowly.
+
+## Choosing a different device
+
+The examples read `midi_config.json`, which `list_ports.nvgt` writes for you. You can also edit it by hand:
 
     { "match": "nord", "in_port": 0, "out_port": 0 }
 
-`match` is part of the port name, matched case-insensitively; `in_port` and
-`out_port` are the indexes to fall back on when the name finds nothing. A file
-whose first character is `{` is read as JSON, anything else as the old
-`key = value` text, so an old config still works.
+`match` is part of a device's name (capitals don't matter). If no device has that name, the port numbers are used instead.
 
-For the file to be found at all it has to sit where the script was started
-from, not where the script lives. That is the one thing that decides whether
-your `in_port` and `out_port` are honoured or quietly skipped, and the plugin
-cannot check it: it is handed a name, and a missing name is not an error. Run
-`list_ports.nvgt` when the ports come up wrong on every example at once.
+The file has to be in the folder you start the script from. If every example picks the wrong device, that is the first thing to check.
 
-`sound_probe.nvgt` answers the other half, the one with no file in it: nine
-seconds, four tones, a second of silence between each, a number spoken before
-every one. When some examples sound and others do not, and the config is
-already known good, this is what separates the plugin's own clock from the
-port.
+## Ideas to try
 
-- **list_ports.nvgt** — pick the input and the output port with the arrow keys
-  and write them to `midi_config.json`. Run this first.
-- **echo_monitor.nvgt** — speak every message the device on the input port
-  sends. It only listens; octave_up_forwarder.nvgt is the one that sends.
-- **octave_up_forwarder.nvgt** — forward the keyboard to another port, an
-  octave up.
-  Input and output at once. The is_* form, no switch.
-- **player.nvgt** — the two ways to sound a note: the background player, and
-  sending the messages by hand.
-- **play_chord.nvgt** — one chord, then every pattern the player knows: spread,
-  arpeggio, quick, fast, strum, repeat.
-- **music_quickstart.nvgt** — the high level half: durations, patterns, a
-  sequence, all through `midi.nvgt` and nothing else.
-- **sound_probe.nvgt** — is it the plugin's clock or the port? Four tones with
-  a spoken count, a second of silence between each. A script can count on it
-  from `sound_probe_count()`, so it asserts instead of just being listened to.
+- In `music_quickstart.nvgt`, change `synth.tempo` and listen.
+- In `play_chord.nvgt`, change `"C4", "E4", "G4"` to other note names.
+- In `octave_up_forwarder.nvgt`, change `12` to `7` to play a fifth higher.
 
-## Two ways to ask what a message is
-
-The status byte's top half is the kind of message, its bottom half the channel.
-`MIDI_NOTE_ON` is the number `0x90` under a readable name - no script has to
-write the hex.
-
-A message's fields read as words too: `m.kind`, `m.note`, `m.velocity`,
-`m.controller`, `m.program` and the rest. `midi_message_view` in `midi.nvgt`
-adds the string ones (`v.note_name`, `v.name`) for a script that wants to print
-them.
-
-```angelscript
-switch (m.kind) {
-case MIDI_NOTE_ON:
-	if (m.is_note_off) output.send_note_off(m.channel, m.data1 + 12, 0);
-	else output.send_note_on(m.channel, m.data1 + 12, m.data2);
-	break;
-case MIDI_NOTE_OFF:
-	output.send_note_off(m.channel, m.data1 + 12, m.data2);
-	break;
-}
-```
-
-`m.kind` carries no channel; `m.channel` says which.
-
-The other spelling is one question per message — `m.is_note_on`, `m.is_pedal`,
-`m.is_control_change`, all in `doc/API.md`. Reach for a switch when one message
-goes to one place (a router, a logger); reach for `is_*` when one question
-decides one thing. `TECHNICAL.md` tells the whole story of the status byte.
-
-No example has to pick one and stay there. `echo_monitor.nvgt` does both in one
-file — the switch says the message in words, the `is_*` test decides whether it
-is a pedal. `octave_up_forwarder.nvgt` is the other extreme: a switch would sit where
-nothing is being decided, so it asks questions instead.
-
-## Where the details live
-
-These files stay small on purpose. The long version of the format — what the
-status byte is, why a note on at velocity 0 is a release, how the waiting
-works — is in `TECHNICAL.md`; every property and method is in `doc/API.md`.
-
-## The chord waits that played at machine speed
-
-Reported 1 October, fixed 4 October. `play_chord_wait` and
-`play_midi_chord_wait` returned at once instead of holding the notes for their
-length: the phrase was spoken and every note went on and off inside the same
-millisecond.
-
-The cause was in `wait_until`, which resolves the script's own `void wait(int)`
-through `GetModule(0)`. The engine does not promise that the module being run is
-the first one it holds, and a few commits back — around the enumeration-object
-retraction in `dd73e1d` — it stopped being so. The lookup missed, the function
-handle stayed null, and the loop took its silent way out before waiting for
-anything: no error, no note of it, everything at once.
-
-`wait_until` now searches every module the engine knows, by declaration, with
-`GetModule(0)` kept as the fast path it usually is. When the function is not
-found at all, it says so on stderr rather than playing the phrase at speed:
-that silence is what made the failure invisible in the first place, and it is
-worth more than the few lines it costs.
-
-Worth knowing when writing your own waits: `play_until`, `play_pattern` and
-friends work the same way — they call the script's `wait`, so a script that
-overrides it keeps control of the clock.
+Every function is described in [../doc/API.md](../doc/API.md).

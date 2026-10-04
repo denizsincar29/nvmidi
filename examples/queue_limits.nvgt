@@ -1,25 +1,23 @@
-// queue_limits.nvgt - the queue holds 1024 messages, then drops the oldest.
-// This reads one a second on purpose, so fast playing fills it and you hear
-// the count climb. Nothing is spoken per message - the fill is the whole
-// point. Space says where the queue stands; escape stops.
+// queue_limits.nvgt - shows what happens when a script reads MIDI too slowly.
+// Messages wait in a queue that holds 1024. When it is full, the oldest are lost.
+// This script reads only one message per second, so play fast and watch it fill.
+//   Space  says how full the queue is.
+//   C      throws the waiting messages away.
+//   Escape quits.
 
 #include "../midi.nvgt"
 
 midi_input@ keyboard;
-midi_message m;
 
 void say(const string&in text) {
 	print(text + "\n");
 	screen_reader_speak(text, false);
 }
 
-// Say how full the queue is, in messages and in percent.
-void speak_state() {
-	uint pending = keyboard.get_pending();
-	uint percent = pending * 100 / 1024;
-	string line = pending + " of 1024 in the queue, " + percent + " percent full";
-	if (keyboard.dropped_messages)
-		line += ", " + keyboard.dropped_count + " dropped";
+void say_queue_state() {
+	uint waiting = keyboard.get_pending();
+	string line = waiting + " of 1024 waiting, " + (waiting * 100 / 1024) + " percent full";
+	if (keyboard.dropped_messages) line += ", " + keyboard.dropped_count + " lost";
 	say(line);
 }
 
@@ -27,48 +25,40 @@ void main() {
 	show_window("nvmidi - queue limits");
 
 	if (midi_input_port_count() == 0) {
-		say("No MIDI input ports. Plug the keyboard in first.");
+		say("No MIDI input found. Plug in your keyboard first.");
 		return;
 	}
 
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.json");
 	@keyboard = midi_input_create();
-	if (!keyboard.open_config(config, "nvmidi queue limits")) {
-		say("Cannot open " + midi_config_text(config) + ": " + midi_last_error_text());
+	if (!keyboard.open_config(config, "queue limits")) {
+		say("Cannot open the input: " + midi_last_error_text());
 		return;
 	}
-	say("Listening on " + midi_input_name_text(keyboard) + ". Play fast, press space to hear the queue, escape stops.");
+	say("Listening. Play fast, then press space to hear the queue. Escape quits.");
 
+	midi_message message;
+	uint next_read = ticks();
 	while (!key_pressed(KEY_ESCAPE)) {
-		if (key_pressed(KEY_SPACE)) {
-			speak_state();
-			wait(200); // so one press does not repeat
-		}
-		if (key_pressed(KEY_C)) { // throw away the backlog instead of reading it
+		if (key_pressed(KEY_SPACE)) say_queue_state();
+		if (key_pressed(KEY_C)) {
 			keyboard.clear();
-			say("cleared.");
-			wait(200);
+			say("Cleared.");
 		}
 
-		// Deliberately slow: exactly one message per second, so the queue fills.
-		// Nothing is said about the message itself - that is the point.
-		try {
-			keyboard.next_message(m);
-		} catch {
-			// Thrown by next_message while a drop is unacknowledged.
-			say("caught overflow: " + keyboard.dropped_count + " dropped");
-			keyboard.reset_dropped_messages();
+		// Read one message per second, on purpose.
+		if (ticks() >= next_read) {
+			next_read = ticks() + 1000;
+			try {
+				keyboard.next_message(message);
+			} catch {
+				// Messages were lost since the last read. Say so, then carry on.
+				say("Messages were lost: " + keyboard.dropped_count);
+				keyboard.reset_dropped_messages();
+			}
 		}
-
-		// The fallback, and the proof that the two agree: the counter is not
-		// cleared by the raise, only by reset_dropped_messages.
-		if (keyboard.dropped_messages) {
-			say("polled overflow: " + keyboard.dropped_count + " dropped");
-			keyboard.reset_dropped_messages();
-		}
-
-		wait(1000);
+		wait(5);
 	}
 	keyboard.close();
 }

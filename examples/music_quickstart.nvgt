@@ -1,11 +1,9 @@
-// music_quickstart.nvgt - the high level half: durations, patterns, chords.
-// The notes come out of the port's own sound engine, so what you hear is the
-// instrument. Escape stops and releases everything.
+// music_quickstart.nvgt - plays a chord, an arpeggio and a scale.
+// Uses the output port saved by list_ports.nvgt (see midi_config.json).
 
 #include "../midi.nvgt"
 
-midi_output@ synth;
-
+// Prints a line and speaks it with your screen reader.
 void say(const string&in text) {
 	print(text + "\n");
 	screen_reader_speak(text, false);
@@ -14,44 +12,44 @@ void say(const string&in text) {
 void main() {
 	show_window("nvmidi - music quickstart");
 
+	// Open the output port from midi_config.json.
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.json");
-	@synth = midi_output_create();
-	if (!synth.open_config(config, "nvmidi quickstart")) {
+	midi_output@ synth = midi_output_create();
+	if (!synth.open_config(config, "quickstart")) {
 		say("Cannot open an output port: " + midi_last_error_text());
 		return;
 	}
-	synth.tempo = 96.0;
 
-	// A note is a pitch and a velocity; its length is a duration, written in
-	// the unit you think in and resolved against the tempo above.
-	array<midi_note@>@ triad = array<midi_note@>();
+	synth.tempo = 96.0; // beats per minute
+
+	// A chord: three notes, each one beat long.
+	array<midi_note@> triad;
 	string[] names = {"C4", "E4", "G4"};
 	for (uint i = 0; i < names.length(); i++) {
-		midi_note@ n = midi_note_named(names[i], 100);
-		n.length = synth.duration(1.0, MIDI_BEATS);
-		triad.insert_last(n);
+		midi_note@ note = midi_note_named(names[i], 100); // name, velocity
+		note.length = synth.duration(1.0, MIDI_BEATS);
+		triad.insert_last(note);
 	}
 
-	say("Chord, held for a beat.");
-	synth.play_chord_wait(triad);
+	say("Chord.");
+	synth.play_chord_wait(triad); // all together, returns when they stop
 
-	// A pattern lays the same notes out in time: spread, arpeggio, quick,
-	// fast, strum, repeat.
 	say("Arpeggio.");
-	synth.play_midi_chord_wait(triad, "arpeggio");
+	synth.play_midi_chord_wait(triad, "arpeggio"); // one after another, overlapping
 
-	// A scale: one note after another.
-	array<midi_note@>@ scale = array<midi_note@>();
+	// A scale: eight notes, half a beat each.
+	array<midi_note@> scale;
 	for (int i = 0; i < 8; i++) {
-		midi_note@ n = nvmidi_note_create(60 + i * 2, 90);
-		n.length = synth.duration(0.5, MIDI_BEATS);
-		scale.insert_last(n);
+		midi_note@ note = nvmidi_note_create(60 + i * 2, 90); // pitch number, velocity
+		note.length = synth.duration(0.5, MIDI_BEATS);
+		scale.insert_last(note);
 	}
-	say("Scale.");
-	synth.play_sequence(scale); // one after another; play_sequence waits already
 
-	synth.all_notes_off(); // never leave a note sounding
+	say("Scale.");
+	synth.play_sequence(scale);
+
 	synth.close();
 	say("Done.");
+	wait(1000); // let the last word be spoken
 }

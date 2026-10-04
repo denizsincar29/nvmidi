@@ -1,56 +1,52 @@
-// octave_up_forwarder.nvgt - keyboard in, synth out, every note an octave higher.
-// Escape stops. No switch here: one question per branch, which reads as
-// plainly as a switch and keeps it one line per case.
+// octave_up_forwarder.nvgt - everything you play on the keyboard is sent to the
+// output port one octave higher. Escape quits.
 
 #include "../midi.nvgt"
 
-midi_input@ input;
-midi_output@ output;
-midi_message m;
-
+// One octave is 12 notes. Notes above the top of the range wrap down.
 int octave_up(int note) {
 	int up = note + 12;
-	if (up > 127) up -= 12; // wrap rather than go silent at the top
+	if (up > 127) up -= 12;
 	return up;
 }
 
 void main() {
-	show_window("nvmidi - keyboard to synth");
+	show_window("nvmidi - keyboard to synth, an octave up");
 
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.json");
-	@input = midi_input_create();
-	@output = midi_output_create();
-	if (!input.open_config(config, "nvmidi forward in")) {
+	midi_input@ keyboard = midi_input_create();
+	midi_output@ synth = midi_output_create();
+
+	if (!keyboard.open_config(config, "forward in")) {
 		print("Cannot open the input: " + midi_last_error_text() + "\n");
 		return;
 	}
-	if (!output.open_config(config, "nvmidi forward out")) {
+	if (!synth.open_config(config, "forward out")) {
 		print("Cannot open the output: " + midi_last_error_text() + "\n");
-		input.close();
+		keyboard.close();
 		return;
 	}
+	screen_reader_speak("Ready. Play something. Escape quits.", false);
 
+	midi_message m;
 	while (!key_pressed(KEY_ESCAPE)) {
-		while (input.next_message(m)) {
-			// A note, either spelling of it. The release carries its own
-			// velocity - the Nord sends 0..127, not always 0 - so it is
-			// read from data2 and passed on unchanged rather than rebuilt.
+		while (keyboard.next_message(m)) {
 			if (m.is_note_off) {
-				output.send_note_off(m.channel, octave_up(m.data1), m.data2);
+				synth.send_note_off(m.channel, octave_up(m.data1), m.data2);
 			} else if (m.is_note_on) {
-				output.send_note_on(m.channel, octave_up(m.data1), m.data2);
+				synth.send_note_on(m.channel, octave_up(m.data1), m.data2);
 			} else if (m.is_control_change) {
-				output.send_control_change(m.channel, m.controller, m.data2);
+				synth.send_control_change(m.channel, m.controller, m.data2); // pedals and knobs
 			} else if (m.kind == MIDI_PITCH_BEND) {
-				output.send_pitch_bend(m.channel, m.pitch_bend); // shifted notes need it in tune
+				synth.send_pitch_bend(m.channel, m.pitch_bend);
 			}
-			// Anything else is deliberately not forwarded.
+			// Everything else is ignored.
 		}
 		wait(5);
 	}
 
-	output.all_notes_off(); // never leave a note sounding
-	output.close();
-	input.close();
+	synth.all_notes_off(); // never leave a note stuck
+	synth.close();
+	keyboard.close();
 }

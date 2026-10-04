@@ -1,143 +1,139 @@
 # nvmidi
 
-MIDI input and output for [NVGT](https://nvgt.dev) — the NonVisual Gaming
-Toolkit.
+MIDI for [NVGT](https://nvgt.dev), the NonVisual Gaming Toolkit.
 
-Read a MIDI keyboard, pad controller or wind controller from an NVGT script;
-send MIDI to a synthesiser, a DAW or a virtual port.
+With nvmidi your NVGT game or app can:
+
+- **play notes and chords** on a synthesiser, a keyboard's built-in sounds or any other MIDI device;
+- **listen to a MIDI keyboard**, pad controller or wind controller.
 
 ## Install
 
-Clone the repository:
+1. Download the project:
 
-    git clone https://github.com/denizsincar29/nvmidi.git
+        git clone https://github.com/denizsincar29/nvmidi.git
 
-Install the plugin for the NVGT engine you are using:
+2. Install the plugin (this downloads the newest version for your NVGT):
 
-    nvgt nvmidi/scripts/get_nvmidi.nvgt
+        nvgt nvmidi/scripts/get_nvmidi.nvgt
 
-Then copy `midi.nvgt` from the repository into your project's folder and
-include it:
+3. Copy `midi.nvgt` from the project into your own script's folder, and add one line at the top of your script:
 
-```angelscript
-#include "midi.nvgt"
-```
+        #include "midi.nvgt"
 
-That is the whole of the setup. Run the installer again whenever you want a
-newer release. If you would rather build the plugin yourself, see
-[TECHNICAL.md](TECHNICAL.md).
+That's all. Run step 2 again whenever you want the latest version.
 
-If you see
+## Try it first
 
-    No matching symbol
+The `examples` folder has ready-to-run scripts. Start here:
 
-then the plugin is not installed — the installer step did not run, or it
-landed in a different engine's folder. Run the installer again.
+1. Plug in your keyboard or start your synthesiser.
+2. Run `examples/list_ports.nvgt`. It lets you choose your MIDI devices with the arrow keys and remembers them.
+3. Run `examples/music_quickstart.nvgt`. You should hear a chord, an arpeggio and a scale.
 
-## Reading a keyboard
+## Your first sound
 
 ```angelscript
 #include "midi.nvgt"
-
-midi_input@ port = midi_input_create();
-midi_message m;
 
 void main() {
-	// Say what is plugged in, so you have a port number to use.
-	for (uint i = 0; i < midi_input_port_count(); i++)
-		screen_reader_speak(midi_input_port_name_text(i));
-
-	if (!port.open(0, "keyboard")) {
-		screen_reader_speak("could not open the keyboard: " + midi_last_error_text());
+	midi_output@ synth = midi_output_create();
+	if (!synth.open(0, "my game")) {   // 0 is the first output on your list
+		screen_reader_speak("No MIDI output: " + midi_last_error_text());
 		return;
 	}
-
-	while (true) {
-		while (port.next_message(m)) {
-			midi_message_view v(m);
-			if (v.is_note_on())
-				screen_reader_speak(v.note_name() + " velocity " + v.velocity());
-		}
-		wait(10); // never spin without sleeping
-	}
+	midi_output_play_chord(synth, {"C4", "E4", "G4"}, 100); // names and a volume (0-127)
+	synth.close();
 }
 ```
 
-`m.is_note_on`, `m.is_note_off`, `m.is_control_change`, `m.controller`,
-`m.is_pedal`, `m.pedal_type`, `m.pitch_bend`, `m.program`, `m.aftertouch` and
-`m.channel_pressure` are properties of the message, so a script never takes the
-status byte apart by hand. `m.is_note_on` is false for a note-on that arrived
-with velocity 0 — that spelling means the note was released — and
-`m.is_note_off` is true for both spellings of a release.
+Notes are written as names like `C4` (middle C), `F#3` or `Bb5`.
 
-**Attention — always drain the queue in a loop.** Read messages until
-`next_message` returns false, every frame, rather than reading one message
-per frame: a fast player generates messages quicker than 60 a second. The
-queue holds 1024, and once it is full the **oldest messages are dropped**, so
-a script that reads too slowly loses the beginning of what was played. The
-plugin tells you when that has happened — `in.dropped_messages` turns true and
-`next_message` throws an overflow exception you can catch — but the messages
-themselves are gone. Keep the loop tight and it never happens.
-
-## Playing notes and chords
+## Listening to your keyboard
 
 ```angelscript
 #include "midi.nvgt"
 
-midi_output@ out = midi_output_create();
-out.open(0, "synth");
+void main() {
+	midi_input@ keyboard = midi_input_create();
+	if (!keyboard.open(0, "my game")) {   // 0 is the first input on your list
+		screen_reader_speak("No MIDI input: " + midi_last_error_text());
+		return;
+	}
 
-midi_output_play_note(out, "E4", 100);              // sounds, then moves on
+	midi_message m;
+	while (!key_pressed(KEY_ESCAPE)) {
+		// Read everything that has arrived, every time around the loop.
+		while (keyboard.next_message(m)) {
+			midi_message_view v(m);
+			if (v.is_note_on())
+				screen_reader_speak(v.note_name() + ", velocity " + v.velocity());
+		}
+		wait(5);
+	}
+	keyboard.close();
+}
+```
 
-midi_note@ long_e = midi_note_named("E4", 100);      // sounds for one beat,
-long_e.length = out.duration(1.0, MIDI_BEATS); // then returns
-out.play_note_wait(long_e);
+Always read in a loop like the one above, and always call `wait()` in your main loop. If your script reads too slowly, the oldest messages are lost.
 
-array<midi_note@>@ notes = array<midi_note@>();
+## Longer notes and tempo
+
+```angelscript
+midi_output@ synth = midi_output_create();
+synth.open(0, "my game");
+synth.tempo = 96.0;                         // beats per minute
+
+midi_note@ note = midi_note_named("E4", 100);
+note.length = synth.duration(1.0, MIDI_BEATS);   // one beat long
+synth.play_note_wait(note);                      // plays it, comes back when it ends
+```
+
+To play several notes use an array, then pick how they are laid out in time:
+
+```angelscript
+array<midi_note@> notes;
 notes.insert_last(midi_note_named("C4", 100));
 notes.insert_last(midi_note_named("E4", 100));
 notes.insert_last(midi_note_named("G4", 100));
 
-out.play_chord_wait(notes);                   // sounds, then returns
-out.play_midi_chord_wait(notes, "arpeggio");
+synth.play_chord_wait(notes);                         // all together
+synth.play_midi_chord_wait(notes, "arpeggio");        // one after another
 ```
 
-`midi_note_number("E4")` does the same job from a name, for a script that would
-rather read the name than a constant, and `midi_note_pitch_text(64)` goes the
-other way and gives back "E4" for a number.
+Other patterns: `spread`, `quick`, `fast`, `strum`, `sequence` and `repeat`.
 
-`play_midi_chord(notes, pattern)` lays a group out in time — `spread`,
-`arpeggio`, `quick`, `fast`, `sequence`, `repeat`, `strum` or `chord`. The same
-functions exist on `midi_input`, where the notes go back out of the port they
-came from and the keyboard's own sound engine makes the sound, so a keyboard
-with no software synthesiser beside it can still be played.
+## The examples
 
-## Examples
+| Script | What it does |
+| --- | --- |
+| `list_ports.nvgt` | Choose your input and output devices. Run this first. |
+| `music_quickstart.nvgt` | Plays a chord, an arpeggio and a scale. |
+| `play_chord.nvgt` | One chord played in every pattern. Space repeats it. |
+| `player.nvgt` | Two ways to play a note. |
+| `sound_probe.nvgt` | Four notes and a timing check, to see that sound works. |
+| `echo_monitor.nvgt` | Speaks everything your keyboard sends. |
+| `octave_up_forwarder.nvgt` | Plays what you play on the keyboard, one octave higher. |
+| `queue_limits.nvgt` | Shows what happens when a script reads too slowly. |
 
-The `examples/` folder holds short, runnable scripts — `echo_monitor.nvgt`,
-`play_chord.nvgt`, `list_ports.nvgt` and others. Read them in order and you
-have the whole API.
+More in [examples/README.md](examples/README.md).
 
-## Where the rest is
+## If something doesn't work
 
-- **[doc/API.md](doc/API.md)** — the reference: every type, every method, the
-  error model.
-- **[TECHNICAL.md](TECHNICAL.md)** — building the plugin, shipping a compiled
-  game, the full API surface, threading, and why text crosses the plugin
-  boundary the way it does. Read this one if you are changing the plugin or
-  packaging it with a game.
-- **`scripts/get_nvmidi.nvgt`** — the installer. It also answers
-  `nvgt scripts/get_nvmidi.nvgt --check`, which says whether the plugin you
-  have is the newest release without changing anything.
+- **"No matching symbol"**: the plugin isn't installed. Run the install step again.
+- **"No MIDI output" or "Cannot open"**: nothing is plugged in or running. Plug in your device, or start a software synth, and run `list_ports.nvgt`. On Windows the output list normally includes "Microsoft GS Wavetable Synth", which makes sound without any extra hardware.
+- **No sound**: run `sound_probe.nvgt`. If it says the timing is right but you hear nothing, check that the output you chose is the one that makes sound.
+- **A note keeps ringing**: call `synth.stop_all_notes()`. The `play_note` and `play_chord` functions start notes and return straight away; they don't stop them by themselves. The `_wait` versions do.
 
-## What is not supported
+## More help
 
-No MIDI file parsing or playback. No virtual port creation on Windows —
-`is_virtual_port` and `set_virtual_port` are accepted but only do anything on
-platforms RtMidi can support. Timestamps come from RtMidi and count seconds
-from the moment the port was opened, not wall-clock time.
+- [doc/API.md](doc/API.md): every function and what it does.
+- [TECHNICAL.md](TECHNICAL.md): building the plugin yourself and shipping it with a game.
+
+## Not included
+
+Playing or reading MIDI files, and creating virtual MIDI ports on Windows.
 
 ## Credits
 
-Backed by RtMidi, copyright Gary P. Scavone. NVGT is copyright Sam Tupy. See
-[license.md](license.md).
+Uses RtMidi by Gary P. Scavone. NVGT is by Sam Tupy. See [license.md](license.md).

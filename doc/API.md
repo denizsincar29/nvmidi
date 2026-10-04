@@ -236,12 +236,11 @@ the channel in its low nibble.
 
 Playing
 
-- `bool play_chord(array<midi_note@>@ notes)` — every note at once, released
-  when the length of the first note is over. Returns as soon as the notes are
-  out; the release happens on a timer, which only fires while the script keeps
-  running, so a script that ends right after the call cuts the chord short
-- `bool play_chord_wait(array<midi_note@>@ notes)` — the same, but the notes
-  are released before it returns
+- `bool play_chord(array<midi_note@>@ notes)` — every note at once. Returns as
+  soon as the notes are out and does **not** release them: they sound until the
+  next `play_*` call or `stop_all_notes()`
+- `bool play_chord_wait(array<midi_note@>@ notes)` — the same, but it holds the
+  chord for the length of the first note and releases it before returning
 - `bool play_note(const midi_note&in note)` / `bool play_note_wait(...)` — one
   note with the same split
 - `uint stop_all_notes()` — releases everything the high level layer is
@@ -354,11 +353,12 @@ reason in `midi_last_error_byte(uint index)`.
 
 ## Playing without blocking the script
 
-`play_chord` and `play_note` return immediately and let the release happen on
-a timer; the timer runs inside the `wait()` the script already calls in its
-loop, so a game keeps its frame rate while a chord rings. Their `_wait`
-siblings instead run to the end of the note before returning, which is what a
-test or a step by step progression wants.
+`play_chord` and `play_note` return immediately, so the script can carry on
+while the notes sound. Nothing releases them on its own: call
+`stop_all_notes()` (or play something else, which releases what was sounding
+first) when you want them to end. Their `_wait` siblings run to the end of the
+note before returning and release it themselves, which is what a test or a step
+by step progression wants.
 
 The blocking wait is built out of a deadline and short `wait()` slices rather
 than one long sleep, so a script that is drawing or reading keys keeps going.

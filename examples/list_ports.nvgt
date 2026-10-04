@@ -1,39 +1,35 @@
-// list_ports.nvgt - pick the input and the output port and write them to
-// midi_config.json, which the other examples read.
-// Up and down move, enter takes it, escape leaves without writing.
+// list_ports.nvgt - choose your MIDI input and output and save the choice to
+// midi_config.json. The other examples read that file, so run this one first.
+// Up and down arrows choose, enter confirms, escape quits without saving.
 
 #include "../midi.nvgt"
-
-midi_input@ probe; // never opened; its name is all this needs
 
 void say(const string&in text) {
 	print(text + "\n");
 	screen_reader_speak(text, false);
 }
 
-bool write_config(const string&in path, int in_port, int out_port) {
-	// "match" is written empty on purpose: the plugin tries the name first and
-	// falls back to the numbers, and an empty name matches nothing, so a stale
-	// name can never override a fresh pick.
+// Writes the two port numbers to the config file. "match" stays empty so the
+// numbers are used rather than a port name from an earlier run.
+bool save_config(const string&in path, int input_port, int output_port) {
 	file f;
 	if (!f.open(path, "w")) return false;
 	f.write("{\n");
 	f.write("\t\"match\": \"\",\n");
-	f.write("\t\"in_port\": " + in_port + ",\n");
-	f.write("\t\"out_port\": " + out_port + "\n");
+	f.write("\t\"in_port\": " + input_port + ",\n");
+	f.write("\t\"out_port\": " + output_port + "\n");
 	f.write("}\n");
 	f.close();
 	return true;
 }
 
-int pick_port(const string&in title, const string[]&in names, int start) {
-	const int count = int(names.length());
-	if (count == 0) return -1;
-	if (start < 0 || start >= count) start = 0;
+// Lets the user walk through `names` with the arrow keys.
+// Returns the chosen index, or -1 if they pressed escape.
+int choose(const string&in title, const string[]&in names, int start) {
+	int count = int(names.length());
 	int cursor = start;
-	say(title + " Currently " + names[cursor] + ".");
-	while (true) {
-		if (key_pressed(KEY_ESCAPE)) return -1;
+	say(title + " " + names[cursor] + ".");
+	while (!key_pressed(KEY_ESCAPE)) {
 		if (key_pressed(KEY_UP) || key_repeating(KEY_UP)) {
 			cursor = (cursor == 0) ? count - 1 : cursor - 1;
 			say(names[cursor]);
@@ -47,41 +43,41 @@ int pick_port(const string&in title, const string[]&in names, int start) {
 		}
 		wait(5);
 	}
-	return -1; // not reached; keeps the analyser happy about return types
+	return -1;
 }
 
 void main() {
-	show_window("nvmidi - ports");
-	say("MIDI backend: " + midi_api_name_text());
+	show_window("nvmidi - choose ports");
 
-	const uint inputs = midi_input_port_count();
-	const uint outputs = midi_output_port_count();
+	uint inputs = midi_input_port_count();
+	uint outputs = midi_output_port_count();
 	if (inputs == 0 || outputs == 0) {
-		say("Found " + inputs + " input(s) and " + outputs + " output(s). Nothing to choose from.");
+		say("Found " + inputs + " inputs and " + outputs + " outputs. Plug in your device and try again.");
 		return;
 	}
 
-	midi_config@ current = midi_config_create();
-	current.load_if_present("midi_config.json");
-	int in_index = current.find_input_port();
-	int out_index = current.find_output_port();
-	if (in_index < 0 || in_index >= int(inputs)) in_index = 0;
-	if (out_index < 0 || out_index >= int(outputs)) out_index = 0;
+	string[] input_names;
+	for (uint i = 0; i < inputs; i++) input_names.insert_last(midi_input_port_name_text(i));
+	string[] output_names;
+	for (uint i = 0; i < outputs; i++) output_names.insert_last(midi_output_port_name_text(i));
 
-	string[] in_names;
-	for (uint i = 0; i < inputs; i++) in_names.insert_last(midi_input_port_name_text(i));
-	string[] out_names;
-	for (uint i = 0; i < outputs; i++) out_names.insert_last(midi_output_port_name_text(i));
+	// Start on the ports chosen last time, if the file exists.
+	midi_config@ config = midi_config_create();
+	config.load_if_present("midi_config.json");
+	int input_start = config.find_input_port();
+	int output_start = config.find_output_port();
+	if (input_start < 0 || input_start >= int(inputs)) input_start = 0;
+	if (output_start < 0 || output_start >= int(outputs)) output_start = 0;
 
-	const int picked_in = pick_port("Input port, what you play on.", in_names, in_index);
-	if (picked_in < 0) return;
-	const int picked_out = pick_port("Output port, what receives the notes.", out_names, out_index);
-	if (picked_out < 0) return;
+	int input_port = choose("Input, where you play.", input_names, input_start);
+	if (input_port < 0) return;
+	int output_port = choose("Output, what makes the sound.", output_names, output_start);
+	if (output_port < 0) return;
 
-	if (write_config("midi_config.json", picked_in, picked_out)) {
-		say("Config written: input " + picked_in + ", " + in_names[picked_in]
-			+ "; output " + picked_out + ", " + out_names[picked_out] + ".");
+	if (save_config("midi_config.json", input_port, output_port)) {
+		say("Saved. Input: " + input_names[input_port] + ". Output: " + output_names[output_port] + ".");
 	} else {
-		say("Could not write midi_config.json. Nothing was changed.");
+		say("Could not write midi_config.json.");
 	}
+	wait(1000);
 }
