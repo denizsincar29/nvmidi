@@ -35,26 +35,39 @@ whose first character is `{` is read as JSON, anything else as the old
 
 ## Two ways to ask what a message is
 
-`m.kind` is the command nibble - `0x80`, `0x90`, `0xb0`, the one number that
-says what kind of message arrived. It carries no channel, so a note from
-channel 1 and a note from channel 5 land in the same case; `m.channel` says
-which. The `MIDI_*` constants are in `nvmidi_constants.nvgt`, so a switch reads
-as words:
+A MIDI message is three numbers: a status byte and two data bytes. The status
+byte's top half says what kind of message it is and its bottom half says which
+of the sixteen channels it came on. The names `MIDI_NOTE_ON` and `0x90` are the
+same number written two ways - the name is for a reader who has not memorised
+the table, and that is the only reason the constants exist
+(`nvmidi_constants.nvgt`). Nothing in a script has to say `0x90`.
+
+The numbers inside a message are no better, which is what `midi_message_view`
+is for: `data1` on a note is a pitch, and the view calls it `note()` and prints
+it `note_name()` as "C4"; `data2` on a note is how hard the key was hit, and the
+view calls that `velocity()`. Once a message is read through the view, a case
+body reads as a sentence:
 
 ```angelscript
-switch (m.kind) {
+midi_message_view v(m);
+switch (v.kind) {
 case MIDI_NOTE_ON:
-	if (m.data2 > 0) output.send_note_on(m.channel, m.data1 + 12, m.data2);
-	else output.send_note_off(m.channel, m.data1 + 12, 0); // velocity 0 is a release
+	// A note on at velocity 0 is a release: hardware sends it that way to
+	// save a byte under running status.
+	if (v.velocity > 0) output.send_note_on(v.channel, v.note() + 12, v.velocity);
+	else output.send_note_off(v.channel, v.note() + 12, 0);
 	break;
 case MIDI_NOTE_OFF:
-	output.send_note_off(m.channel, m.data1 + 12, m.data2);
+	output.send_note_off(v.channel, v.note() + 12, v.velocity);
 	break;
 }
 ```
 
-The other spelling is one plain question per message - `m.is_note_on`,
-`m.is_pedal`, `m.is_control_change`, and the rest, all listed in `doc/API.md`.
+`v.kind` carries no channel, so a note from channel 1 and one from channel 5
+land in the same case; `v.channel` says which.
+
+The other spelling is one plain question per message - `v.is_note_on`,
+`v.is_pedal`, `v.is_control_change`, and the rest, all listed in `doc/API.md`.
 Inside a case both work, because a case body is ordinary code.
 
 Which to reach for: a switch when one message goes to one place and the branches

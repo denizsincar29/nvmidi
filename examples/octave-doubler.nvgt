@@ -39,26 +39,36 @@ void main() {
 
 	while (!key_pressed(KEY_ESCAPE)) {
 		while (input.next_message(m)) {
-			// A router switches on what the message is and decides where it
-			// goes, which is the shape a switch is for. Everything not named
-			// below is dropped: a keyboard's clock and its aftertouch have no
-			// business in the synth.
-			switch (m.kind) {
-			case MIDI_PITCH_BEND:
-				output.send(m.status, m.data1, m.data2); // wheels pass through untouched
-				break;
+			// Read the message through midi_message_view and every number gets a
+			// name: v.is_note_on, v.velocity, v.channel. The switch is on v.kind,
+			// which is the message's type as one number - the MIDI_* names are
+			// just friendlier ways to write 0x90 and 0xb0, and that is the whole
+			// reason they exist.
+			//
+			// A router is what a switch is for: one message arrives, one place
+			// it goes. Anything not named below is dropped on purpose - a
+			// keyboard's clock and its aftertouch have no business in a synth.
+			midi_message_view v(m);
+			switch (v.kind) {
 			case MIDI_NOTE_ON:
-				// Velocity 0 is a release under running status, not a press.
-				if (m.data2 == 0)
-					output.send_note_off(m.channel, pitched(m.data1), 0);
+				// A note on at velocity 0 is a release, not a press: hardware
+				// sends it that way to save a byte under running status.
+				if (v.velocity > 0)
+					output.send_note_on(v.channel, pitched(v.note()), v.velocity);
 				else
-					output.send_note_on(m.channel, pitched(m.data1), m.data2);
+					output.send_note_off(v.channel, pitched(v.note()), 0);
 				break;
 			case MIDI_NOTE_OFF:
-				output.send_note_off(m.channel, pitched(m.data1), m.data2);
+				output.send_note_off(v.channel, pitched(v.note()), v.velocity);
 				break;
 			case MIDI_CONTROL_CHANGE:
-				output.send(m.status, m.data1, m.data2); // sustain and the rest go through
+				// The sustain pedal and every other controller go through as they
+				// are. Sending by number is fine here: nothing about a controller
+				// changes on the way out.
+				output.send(m.status, m.data1, m.data2);
+				break;
+			case MIDI_PITCH_BEND:
+				output.send(m.status, m.data1, m.data2); // the wheel is not shifted
 				break;
 			}
 		}
