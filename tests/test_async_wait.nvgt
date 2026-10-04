@@ -48,7 +48,7 @@ void check(const string&in name, bool ok, const string&in detail) {
 
 void say(const string&in text) {
 	print(text + "\n");
-	if (SCREEN_READER_AVAILABLE) screen_reader_speak(text, false);
+	screen_reader_speak(text, false);
 }
 
 midi_output@ mo;
