@@ -1,0 +1,61 @@
+// queue_overflow_test.nvgt - prove that the queue overflow is reported.
+// Reads one message a second on purpose, so a fast player overflows the
+// 4096-message queue within seconds. Escape stops.
+//
+// What you should hear: one "caught overflow" line the first second the
+// queue is full, then the count climbing once a second.
+//
+// If a catch never fires, the polling form below is the fallback: it says
+// the same thing without any try/catch.
+
+#include "../midi.nvgt"
+
+midi_input@ keyboard;
+midi_message m;
+bool caught_once = false;
+
+void say(const string&in text) {
+	print(text + "\n");
+	if (SCREEN_READER_AVAILABLE) screen_reader_speak(text, false);
+}
+
+void main() {
+	show_window("nvmidi - queue overflow test");
+
+	if (midi_input_port_count() == 0) {
+		say("No MIDI input ports. Plug the keyboard in first.");
+		return;
+	}
+
+	midi_config@ config = midi_config_create();
+	config.load_if_present("midi_config.json");
+	@keyboard = midi_input_create();
+	if (!keyboard.open_config(config, "nvmidi overflow test")) {
+		say("Cannot open " + midi_config_text(config) + ": " + midi_last_error_text());
+		return;
+	}
+	say("Listening on " + midi_input_name_text(keyboard) + ". Play fast for a few seconds. Escape stops.");
+
+	while (!key_pressed(KEY_ESCAPE)) {
+		// Deliberately slow: exactly one message per second, so the queue fills.
+		try {
+			if (keyboard.next_message(m)) say("read " + midi_message_text(m));
+		} catch {
+			// Thrown by next_message while a drop is unacknowledged.
+			say("caught overflow #" + keyboard.dropped_count);
+			caught_once = true;
+			keyboard.reset_dropped_messages();
+		}
+
+		// The fallback, and the proof that the two agree: the counter is not
+		// cleared by the raise, only by reset_dropped_messages.
+		if (keyboard.dropped_messages) {
+			uint dropped = keyboard.dropped_count;
+			say("polled: " + dropped + " dropped so far");
+			keyboard.reset_dropped_messages();
+		}
+
+		wait(1000);
+	}
+	keyboard.close();
+}
