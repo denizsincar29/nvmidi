@@ -1,0 +1,298 @@
+name: bisect
+
+# A bundle that answers one question: which commit broke the chord timing.
+#
+# Every static instrument in this repository has already been pointed at that
+# question and none of them can see it - the fault is audible, it needs a real
+# port, a real clock and a pair of ears. So this workflow does not try to
+# isolate the commit by reasoning. It builds the instrument instead: one
+# numbered folder per commit, each folder a self-contained nvgt program
+# carrying both halves of that commit - the plugin and the engine that loads
+# it - which is run by hand on the reporter's own machine until one folder
+# misbehaves and the one before it does not. Folder N is the answer.
+#
+# WHAT IS IN A FOLDER.
+#
+#   N/nvgt.exe                 the engine, built from upstream at this repo's
+#                              pinned tag, with the commit's script compiled in
+#   N/nvmidi.dll               the plugin, built from the commit's own source
+#   N/lib/*.dll                the engine's own runtime libraries, as its build
+#                              produced them
+#   N/midi_config.json         the port selection, beside the exe
+#   N/hash.txt                 commit, date, subject, and the sha256 of both
+#                              binaries; this is how a folder is identified
+#                              after the fact without trusting a folder name
+#   N/README.txt               one paragraph, the same facts in prose
+#
+# WHY BOTH HALVES COME FROM THE SAME COMMIT.
+#
+# The plugin registers its types into the engine and the engine is the
+# executable, so the pair is one program split across a process boundary. The
+# ABI along that boundary moved inside this window. A plugin from thirty
+# commits ago loaded by today's engine does not fail as "the old build" - it
+# fails as "everything is broken", and that reading would name the wrong
+# commit. Building both halves from each commit is what makes a folder's
+# verdict mean the commit rather than the mismatch.
+#
+# WHY THE ENGINE IS BUILT HERE AND BUILT ONCE.
+#
+# nvgt ships as an installer for the current version only; an older release is
+# not published in a form this job can open, and the current installer would
+# pair today's engine with an old plugin, which is the mismatch just ruled
+# out. So the engine is compiled from upstream. It is compiled once, not thirty
+# times, because the engine source is upstream at one fixed tag - it is
+# identical for every folder. What differs per folder is not the engine but the
+# script compiled into it, and that is the engine's own `--compile`, which
+# copies its stub and appends the bytecode. Thirty engine builds would be
+# thirty times four minutes of runner and would learn nothing extra.
+#
+# The tag comes from scripts/nvgt_pin.sh, the same pin the rest of the repo
+# verifies its vendored header against, so the engine here and the plugin here
+# are compiled against one API number. Its verify action is what keeps the
+# header and this tag from drifting apart silently.
+#
+# WHY THE WORKFLOW FORKS ITSELF.
+#
+# This file has to exist in every commit this job checks out, and it does not
+# exist in any of them - it is being added now. Checking out an old commit
+# would therefore delete the workflow that is running. So .github/ is copied to
+# a directory outside the tree at the start and written back after every
+# checkout. Nothing else is carried across: the rest of the tree is the commit,
+# deliberately, because the commit is the thing being tested.
+#
+# WHY THERE IS NO `on: push`.
+#
+# It costs a full engine build plus thirty plugin builds, which is minutes of
+# runner time, and a bundle nobody is waiting for is runner time spent on
+# nothing. It is dispatched by hand, once, by whoever wants the answer.
+#
+# The window defaults to the thirty commits ending five short of HEAD, oldest
+# first, so folder 1 is the oldest. The five nearest HEAD are left out because
+# their behaviour is already known on the machine that reported the problem and
+# reproducing it would spend a round trip to learn nothing. Both ends are
+# parameters: a finer bisection is a second dispatch of this same job.
+
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: 'commits, one folder each'
+        type: number
+        default: 30
+      skip:
+        description: 'nearest HEAD: how many to leave out'
+        type: number
+        default: 5
+
+jobs:
+  bundle:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      # nvgt is cloned to a directory that no checkout of this repository ever
+      # touches, so the engine survives the loop below without being carried
+      # around inside the working tree.
+      - name: fetch the engine source at this repository's pinned tag
+        id: engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The tag is read from the pin script rather than written here twice:
+          # a bump of the pin must move this job with it, and a second copy of
+          # the number is a second thing to forget.
+          tag=$(sed -n 's/^TAG=\(.*\)$/\1/p' scripts/nvgt_pin.sh | head -1)
+          [ -n "$tag" ] || { echo "no TAG= in scripts/nvgt_pin.sh"; exit 2; }
+          echo "upstream tag: $tag"
+          git clone --depth 1 --branch "$tag" https://github.com/samtupy/nvgt.git "$RUNNER_TEMP/nvgt"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: build the engine, and the support files the folders share
+        shell: cmd
+        run: |
+          rem scons drives the build; upx is what the upstream release job installs
+          rem and what no_upx=0 expects. Both are named in nvgt's own
+          rem .github/workflows/release.yml for windows, so this is that recipe
+          rem and not a guess.
+          pip install scons || exit /b 2
+          choco install -y upx || exit /b 2
+
+          cd /d "%RUNNER_TEMP%\nvgt" || exit /b 2
+
+          rem The engine build wants a config header that the repository does not
+          rem carry: user/ is gitignored, and the copy upstream's release job
+          rem passes between its own jobs is encrypted with a repository secret.
+          rem That secret is not needed here, and this is the part worth being
+          rem explicit about - the generator fills the template with fresh random
+          rem values locally, so a fork with no secrets builds the same way. The
+          rem upstream job encrypts only to move one generated header across its
+          rem own job boundary.
+          python build\nvgt_config_gen.py || exit /b 2
+          if not exist user\nvgt_config.h echo NO-CONFIG-HEADER & exit /b 2
+
+          rem no_upx=0 asks for the compressed stub, which is what the shipped
+          rem engine uses; copylibs defaults to 1 and is what puts the runtime
+          rem libraries in release\lib.
+          scons -s no_upx=0 || exit /b 2
+
+          if not exist release\stub\nvgt_windows.bin echo NO-STUB & dir release\stub & exit /b 2
+          if not exist release\nvgt.exe echo NO-ENGINE & dir release & exit /b 2
+          echo ENGINE-OK
+
+      # The support set is taken from the engine's own release\lib, not written
+      # out by hand here: the engine build decides which runtime libraries it
+      # needs, and a hand-written list would silently go stale the first time
+      # upstream adds one.
+      - name: stage the engine and its runtime libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/share"
+          cp -r "$RUNNER_TEMP/nvgt/release/." "$RUNNER_TEMP/share/"
+          rm -rf "$RUNNER_TEMP/share/stub"   # the stub is inside the built exe, not needed beside it
+          ls -l "$RUNNER_TEMP/share"
+          ls -l "$RUNNER_TEMP/share/lib" || echo "no release/lib: the exe may need none"
+
+      - name: build one folder per commit
+        shell: bash
+        env:
+          COUNT: ${{ inputs.count }}
+          SKIP: ${{ inputs.skip }}
+          TAG: ${{ steps.engine.outputs.tag }}
+        run: |
+          set -euo pipefail
+          count="${COUNT:-30}"
+          skip="${SKIP:-5}"
+
+          # The one thing carried across every checkout. See the note at the top
+          # of this file: an old commit has no bisect.yml in it, so without this
+          # copy the running workflow would be deleting itself.
+          rm -rf "$RUNNER_TEMP/wf"; cp -r .github "$RUNNER_TEMP/wf"
+
+          mapfile -t refs < <(git log --format='%H' -n "$count" "HEAD~$skip" | tac)
+          echo "window: ${#refs[@]} commits"
+          echo "  folder 1    ${refs[0]}"
+          echo "  folder $count ${refs[-1]}"
+
+          rm -rf bundle
+          n=0
+          for ref in "${refs[@]}"; do
+            n=$((n + 1))
+            echo "::group::folder $n ${ref:0:7}"
+            git checkout -q --force "$ref"
+            cp -r "$RUNNER_TEMP/wf/." .github
+
+            git log -1 --format='%h %ad %s' --date=short "$ref"
+
+            # The plugin. Each commit's own recipe, because the recipe itself
+            # moved inside this window - the shim file the MSVC link needs was
+            # added partway through, and a recipe from today applied to an old
+            # source tree would fail to link rather than reproduce the old
+            # behaviour.
+            scripts/build_win_msvc.bat || { echo "MSVC BUILD FAILED at $n"; exit 1; }
+            [ -f nvmidi.dll ] || { echo "folder $n: no nvmidi.dll after its own build"; ls -l; exit 1; }
+
+            # The folder is assembled first and the compile happens inside it,
+            # so the compile runs against the layout the folder will have when
+            # it is run: engine, plugin, config and runtime libraries all in
+            # one directory. A compile that succeeds here under a different
+            # layout than the run would be rehearsing the wrong thing - nvgt
+            # resolves the plugin by bare name and the config against the
+            # working directory, so where the files sit is part of what is
+            # being tested.
+            dir="bundle/$n"
+            mkdir -p "$dir/lib"
+            cp "$RUNNER_TEMP/share/nvgt.exe" "$dir/nvgt.exe"
+            cp -r "$RUNNER_TEMP/share/lib/." "$dir/lib/" 2>/dev/null || true
+            cp nvmidi.dll "$dir/nvmidi.dll"
+
+            # The script, from the commit. midi.nvgt is what every example
+            # includes, so the commit's own copy has to be beside it for the
+            # include to resolve; it is copied rather than referenced so the
+            # compile never reaches outside the folder.
+            cp midi.nvgt "$dir/midi.nvgt"
+            cp examples/music_quickstart.nvgt "$dir/music_quickstart.nvgt"
+
+            # The port selection travels with the exe, not with the script:
+            # nvgt resolves a relative path against the folder it runs in. A
+            # commit too old to have examples/midi_config.json gets the legacy
+            # text form, which the engine reads by content, not by extension.
+            if [ -f examples/midi_config.json ]; then
+              cp examples/midi_config.json "$dir/midi_config.json"
+            else
+              printf 'in_port = 0\nout_port = 0\n' > "$dir/midi_config.json"
+            fi
+
+            # The engine loads the plugin while compiling - the pragma in
+            # midi.nvgt registers its types into the script engine, so the
+            # compile cannot succeed unless this commit's dll loads into this
+            # engine. A commit whose plugin fails to load fails here, in the
+            # log, with a reason, instead of silently producing an exe that
+            # breaks on real hardware and gets blamed on the wrong commit.
+            (
+              cd "$dir"
+              ./nvgt.exe --compile --platform windows music_quickstart.nvgt music_quickstart.exe
+            ) || { echo "COMPILE FAILED at folder $n ($ref)"; exit 1; }
+            [ -f "$dir/music_quickstart.exe" ] || { echo "folder $n: no exe"; ls -l "$dir"; exit 1; }
+
+            {
+              echo "commit  $ref"
+              git log -1 --format='date    %ad%nsubject %s' --date=short "$ref"
+              echo "sha256  nvmidi.dll         $(sha256sum "$dir/nvmidi.dll" | cut -d' ' -f1)"
+              echo "sha256  music_quickstart.exe $(sha256sum "$dir/music_quickstart.exe" | cut -d' ' -f1)"
+              echo "engine  built from samtupy/nvgt@$TAG, the tag scripts/nvgt_pin.sh pins"
+            } > "$dir/hash.txt"
+
+            {
+              echo "Folder $n of $count in the chord-timing bisection."
+              echo
+              echo "Commit $ref ($(git log -1 --format='%h, %ad' --date=short "$ref"))."
+              echo
+              echo "Run music_quickstart.exe from THIS folder, not from anywhere"
+              echo "else: it looks for nvmidi.dll and midi_config.json beside"
+              echo "itself. Play a held chord and listen to the release."
+              echo
+              echo "If it misbehaves, the commit that broke it is this one or the"
+              echo "one after it - check hash.txt above it."
+            } > "$dir/README.txt"
+
+            # A file that staged at zero bytes looks exactly like a file that
+            # staged correctly until the reporter runs it and it does nothing.
+            # The sizes go in the log so a silent empty stage is visible here
+            # instead of on the reporter's machine.
+            ls -l "$dir" "$dir/lib"
+            echo "::endgroup::"
+          done
+
+          # The loop leaves the tree on the oldest commit. Put it back where the
+          # run started so anything the runner does next sees the repository it
+          # was dispatched for. This is tried rather than required: the answer
+          # is already built at this point and a failure to check out should not
+          # throw the bundle away.
+          git checkout -q --force "$GITHUB_SHA" || true
+          cp -r "$RUNNER_TEMP/wf/." .github
+
+          echo "folders: $(find bundle -maxdepth 1 -mindepth 1 -type d | wc -l)"
+          echo "exes:    $(find bundle -maxdepth 2 -name 'music_quickstart.exe' | wc -l)"
+          echo "dlls:    $(find bundle -maxdepth 2 -name 'nvmidi.dll' | wc -l)"
+          find bundle -name nvmidi.dll -printf '%s %p\n' | sort -k2
+
+      - name: name the bundle after the window it holds
+        id: name
+        shell: bash
+        run: |
+          set -euo pipefail
+          first=$(head -1 bundle/1/hash.txt | awk '{print substr($2,1,7)}')
+          last=$(head -1 bundle/$(find bundle -maxdepth 1 -mindepth 1 -type d | wc -l)/hash.txt | awk '{print substr($2,1,7)}')
+          echo "artifact=nvmidi-bisect-${first}-to-${last}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.name.outputs.artifact }}
+          path: bundle
+          if-no-files-found: error
+          retention-days: 14
