@@ -73,7 +73,7 @@ with velocity 0 — that spelling means the note was released — and
 **Attention — always drain the queue in a loop.** Read messages until
 `next_message` returns false, every frame, rather than reading one message
 per frame: a fast player generates messages quicker than 60 a second. The
-queue holds 4096, and once it is full the **oldest messages are dropped**, so
+queue holds 1024, and once it is full the **oldest messages are dropped**, so
 a script that reads too slowly loses the beginning of what was played. The
 plugin tells you when that has happened — `in.dropped_messages` turns true and
 `next_message` throws an overflow exception you can catch — but the messages

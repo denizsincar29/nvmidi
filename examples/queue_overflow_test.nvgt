@@ -1,6 +1,6 @@
 // queue_overflow_test.nvgt - prove that the queue overflow is reported.
 // Reads one message a second on purpose, so a fast playing fills the
-// 4096-message queue while you play. Escape stops.
+// 1024-message queue while you play. Escape stops.
 //
 // Nothing is spoken per message - the queue filling up is the whole test.
 // Press space at any time to hear where the queue stands.
@@ -24,8 +24,8 @@ void say(const string&in text) {
 // Say how full the queue is, in messages and in percent.
 void speak_state() {
 	uint pending = keyboard.get_pending();
-	uint percent = pending * 100 / 4096;
-	string line = pending + " of 4096 in the queue, " + percent + " percent full";
+	uint percent = pending * 100 / 1024;
+	string line = pending + " of 1024 in the queue, " + percent + " percent full";
 	if (keyboard.dropped_messages)
 		line += ", " + keyboard.dropped_count + " dropped";
 	say(line);

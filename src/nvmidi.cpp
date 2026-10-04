@@ -969,7 +969,7 @@ midi_note* midi_note_create_ms(int pitch, int velocity, double duration_ms) {
 
 midi_input::midi_input()
 	: midi_in(nullptr), port_index(-1), ignore_sysex(true), ignore_timing(true),
-	  queue_limit(4096), opened_at(0.0), sustain(0), sostenuto(0), soft(0) { tempo = 120.0; } // tempo and the pedals are initialised; a fresh object used to read back garbage
+	  queue_limit(1024), opened_at(0.0), sustain(0), sostenuto(0), soft(0) { tempo = 120.0; } // tempo and the pedals are initialised; a fresh object used to read back garbage
 
 midi_input::~midi_input() { close(); }
 

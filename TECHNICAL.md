@@ -613,7 +613,7 @@ your script drains. That is why messages are read with `next_message` rather
 than delivered to a script callback — calling into AngelScript from a foreign
 thread is not safe.
 
-The queue holds 4096 messages. If a script stops draining it, the oldest are
+The queue holds 1024 messages. If a script stops draining it, the oldest are
 dropped rather than memory growing without bound.
 
 ## The wrapper

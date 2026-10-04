@@ -371,7 +371,7 @@ AngelScript objects are never touched from the callback, and the notes you
 pass to the playing functions are copied out of the array before any of them
 is sent, so nothing the script owns is read from another thread.
 
-The queue holds 4096 messages. When it overflows the oldest message is
+The queue holds 1024 messages. When it overflows the oldest message is
 discarded, so a script that stops draining loses history rather than
 memory. Call `clear()` after a pause to drop a backlog you no longer care
 about.
