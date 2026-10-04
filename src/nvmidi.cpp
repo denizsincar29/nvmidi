@@ -1655,7 +1655,16 @@ void midi_output::reset() {
 // reading side of it and only differ in where the bytes go.
 bool read_note(CScriptArray* notes, size_t index, midi_note& out) {
 	if (!notes) return false;
-	midi_note* pointer = static_cast<midi_note*>(notes->At(static_cast<asUINT>(index)));
+	void* element = notes->At(static_cast<asUINT>(index));
+	if (!element) return false;
+	// For array<midi_note@> At() returns the address of the handle slot, not of
+	// the note: the slot holds a midi_note*. Reading it as a midi_note made
+	// pitch, velocity and length come out of the pointer's own bytes, so every
+	// length was ~0 and every play_*_wait returned at once. A plain array of
+	// objects (no handle) hands back the object address itself.
+	midi_note* pointer = nullptr;
+	if (notes->GetElementTypeId() & asTYPEID_OBJHANDLE) pointer = *static_cast<midi_note**>(element);
+	else pointer = static_cast<midi_note*>(element);
 	if (!pointer) return false;
 	out = *pointer;
 	return true;
