@@ -1795,9 +1795,13 @@ void wait_until(double moment) {
 			if (candidate) wait_fn = candidate->GetFunctionByDecl("void wait(int)");
 		}
 	}
+	if (!wait_fn) {
+		// Nothing to call, so nothing can be waited on. Say so rather than
+		// playing the phrase at speed and leaving everyone to guess.
+		std::fprintf(stderr, "nvmidi: no script void wait(int) in any of the engine's modules; the wait ends at once\n");
+	}
 	for (;;) {
 		const double left = moment - now_ms();
-		if (left <= 0.0) return;
 		if (!wait_fn) return; // no script to keep alive: the caller waits on
 		asIScriptContext* context = engine->CreateContext();
 		if (!context) return;
