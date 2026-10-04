@@ -47,8 +47,8 @@ them.
 ```angelscript
 switch (m.kind) {
 case MIDI_NOTE_ON:
-	if (m.data2 > 0) output.send_note_on(m.channel, m.data1 + 12, m.data2);
-	else output.send_note_off(m.channel, m.data1 + 12, 0); // velocity 0
+	if (m.is_note_off) output.send_note_off(m.channel, m.data1 + 12, 0);
+	else output.send_note_on(m.channel, m.data1 + 12, m.data2);
 	break;
 case MIDI_NOTE_OFF:
 	output.send_note_off(m.channel, m.data1 + 12, m.data2);
@@ -61,7 +61,7 @@ case MIDI_NOTE_OFF:
 The other spelling is one question per message — `m.is_note_on`, `m.is_pedal`,
 `m.is_control_change`, all in `doc/API.md`. Reach for a switch when one message
 goes to one place (a router, a logger); reach for `is_*` when one question
-decides one thing.
+decides one thing. `TECHNICAL.md` tells the whole story of the status byte.
 
 `echo_monitor.nvgt` shows both in one file. `octave-doubler.nvgt` is the pure
 switch. The other three have no per-message branching, so a switch there would

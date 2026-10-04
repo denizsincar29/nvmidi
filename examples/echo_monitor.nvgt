@@ -14,7 +14,7 @@ void say(const string&in text) {
 string describe(const midi_message&in message) {
 	switch (message.kind) {
 	case MIDI_NOTE_ON:
-		if (message.is_note_off) return "note off " + midi_message_note_name_text(message); // velocity 0
+		if (message.is_note_off) return "note off " + midi_message_note_name_text(message);
 		return "note on " + midi_message_note_name_text(message) + ", velocity " + message.data2;
 	case MIDI_NOTE_OFF:
 		return "note off " + midi_message_note_name_text(message);
