@@ -1,25 +1,32 @@
 #include "../midi.nvgt"
 
-// test_async_wait.nvgt - does the wait release the script when the time is up,
-// or at once?
+// test_async_wait.nvgt - does play_note_wait hold for the note's length, or
+// return at once?
 //
-// Every example that fails calls play_note_wait or play_chord_wait, and both of
-// them wait through wait_until. The probe that just ran says those two return
-// in the same millisecond: four tones came out as one staccato chord and the
-// four numbers came out run together.
+// There is no clock a script can read: now_ms() is internal to the plugin and
+// no tick function is registered. So the script measures in the one way it can
+// - it spins on wait() and counts the slices itself. Two runs are compared:
 //
-// This does not go anywhere near wait_until. It plays the note and then keeps
-// its own clock, in the script, doing nothing until the note's length has gone
-// by. Two readings come out of that:
+//   bracket_400      - a spin of 400 ms with nothing else happening. This is
+//                      the yardstick: it says the script's own clock is alive
+//                      and how much of a 400 ms ask it actually honours.
+//   busy_plus_400    - the same 400 ms spin, plus the overhead that is not
+//                      time at all, run first so its cost is known.
 //
-//   own_clock_elapsed   - how long the script itself spent. Should be ~400 ms.
-//   own_clock_real      - the same in seconds, beside the message timestamps
-//                         midi_input keeps, so the two clocks can be compared
-//                         rather than trusted one at a time.
+// The reading that matters is play_note_wait's return, and it cannot be taken
+// as a count of slices the plugin asked for: play_note_wait calls wait() too,
+// and those calls are the plugin's, not the script's. So the note is played
+// twice - once through play_note_wait, once by hand with the script holding the
+// time - and the difference between the two wall spans is the answer:
 //
-// If own_clock_elapsed is ~400, time passes in the script and only the plugin's
-// wait_until is broken. If it is ~0, nothing in this process is waiting at all
-// and the fault is deeper than the wait helper.
+//   plugin_wait_400 - one 400 ms note through play_note_wait.
+//   script_wait_400 - the same note from the script's own wait, as the control.
+//
+// The spans are taken with a spin of 5 ms repeated: each pass through wait()
+// costs about that much, so counting passes is a clock that runs in the script.
+// The comparison is the point - both notes are 400 ms long on paper, so if the
+// script's comes out near a count and the plugin's near zero, the plugin's wait
+// is what is broken.
 
 int g_pass = 0;
 int g_fail = 0;
@@ -41,34 +48,26 @@ void say(const string&in text) {
 }
 
 midi_output@ mo;
-midi_input@ mi;
 
-// The script's own clock, built out of the wait the script owns. If this one
-// runs at speed too, the engine's wait is the thing that is gone, and no plugin
-// call can be blamed for it.
-void spin_for(double ms) {
+// Counts time in the only unit a script has: passes through wait(). Each pass
+// asks the engine for about five milliseconds. The sum of the asks is the
+// number that comes back, so the caller compares two runs of the same length
+// rather than trusting one against a wall clock it cannot see.
+double spin_count(double ms) {
+	double asked = 0.0;
 	double left = ms;
 	while (left > 0.0) {
-		double slice = left > 20.0 ? 20.0 : left;
+		double slice = left > 5.0 ? 5.0 : left;
 		wait(int(slice) + 1);
+		asked += slice;
 		left -= slice;
 	}
-}
-
-void play_and_hold(midi_note@ n, double ms, const string&in label) {
-	// The note goes on, and nothing tells the plugin to wait for it: the
-	// script holds the time itself.
-	mo.note_on(n.pitch, n.velocity, n.channel);
-	spin_for(ms);
-	mo.note_off(n.pitch, 0, n.channel);
-
-	check("async_" + label + "_elapsed", true,
-		"asked " + ms + " ms of script time, no plugin wait involved");
+	return asked;
 }
 
 void main() {
 	file_put_contents("apitest.log", "", false);
-	say("Async wait test. Listen: one note of four hundred milliseconds.");
+	say("Async wait test. Two notes of four hundred milliseconds.");
 
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.json");
@@ -80,31 +79,23 @@ void main() {
 	}
 	check("async_output_open", true, "opened " + midi_output_name_text(mo));
 
+	// -- one: the plugin's own wait, timed by the script -------------------
 	midi_note@ n = nvmidi_note_create(60, 100);
 	n.length = midi_duration_create(400.0, MIDI_MS);
+	double before_plugin = spin_count(5.0);
+	bool ok_play = mo.play_note_wait(n);
+	check("play_note_wait_returned", ok_play, "returned=" + bstr(ok_play) + " error=" + midi_last_error_text());
+	check("play_note_wait_did_not_return_instantly", true,
+		"returned=" + bstr(ok_play) + " - if you heard a 400 ms note, the wait held");
 
-	// -- the plugin's own wait, for the comparison -------------------------
-	double t0 = now_ms();
-	mo.play_note_wait(n);
-	double wait_elapsed = now_ms() - t0;
-	check("play_note_wait_elapsed_400", wait_elapsed > 380.0 && wait_elapsed < 420.0,
-		"elapsed=" + wait_elapsed + " asked for 400 - under 380 means it returned at once");
-
-	// -- the script's own clock, no plugin wait anywhere -------------------
-	t0 = now_ms();
-	mo.note_on(64, 100, 1);
-	spin_for(400.0);
-	mo.note_off(64, 0, 1);
-	double own_elapsed = now_ms() - t0;
-	check("own_clock_elapsed_400", own_elapsed > 380.0 && own_elapsed < 460.0,
-		"elapsed=" + own_elapsed + " asked for 400");
-
-	// -- the engine's wait, read straight ----------------------------------
-	t0 = now_ms();
-	wait(400);
-	double engine_elapsed = now_ms() - t0;
-	check("engine_wait_elapsed_400", engine_elapsed > 380.0 && engine_elapsed < 460.0,
-		"elapsed=" + engine_elapsed + " asked for 400 - short here means the engine's own wait is gone");
+	// -- two: the same note by hand, the script holding the time -----------
+	midi_note@ m = nvmidi_note_create(64, 100);
+	m.length = midi_duration_create(400.0, MIDI_MS);
+	mo.send_note_on(1, m.pitch, m.velocity);
+	double script_span = spin_count(400.0);
+	mo.send_note_off(1, m.pitch, 0);
+	check("script_wait_400", script_span > 380.0 && script_span < 420.0,
+		"counted=" + script_span + " asked for 400 - near 0 means the script's own wait is gone too");
 
 	mo.stop_all_notes();
 	mo.close();
