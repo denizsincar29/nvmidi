@@ -19,9 +19,18 @@
 // and not in the wait. The script prints what it knows of each length so the
 // two numbers can be compared with the source.
 //
-// The chord is built by hand rather than through music.nvgt: a bare note with
-// its length written in milliseconds, the same way the note above is written.
-// Whatever separates them is then not the unit and not the tempo.
+// The 400 ms comparison is built by hand rather than through music.nvgt: a bare
+// note with its length in milliseconds, the same way the note above is written,
+// so whatever separates them is not the unit. Then the same port with a tempo
+// of 96 and a chord written as one beat - the shape music_quickstart uses, and
+// the one that reported the bug - because a length in milliseconds survives any
+// tempo while a length in beats does not.
+//
+// Last comes the pattern player. It had a second fault of its own: it released
+// each note through its own channel, and a note whose length was written in
+// beats could be let go on a channel the note on never used, which leaves a
+// note ringing until it is clicked off. The trace at the end prints every note
+// message the port sent.
 
 int g_pass = 0;
 int g_fail = 0;
@@ -116,8 +125,9 @@ void main() {
 		true, "listened: one beat at 96 is 625 ms, not 500");
 
 	// -- the pattern player, which the reported scripts call ---------------
-	mo.play_midi_chord_wait(chord, "arpeggio");
-	check("arpeggio_held", true, "listened: the same note, laid out in time");
+	mo.play_midi_chord_wait(beats, "arpeggio");
+	check("arpeggio_held",
+		true, "listened: a held beat note here, then a short one - the reported click");
 
 	mo.stop_all_notes();
 	mo.close();

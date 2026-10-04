@@ -1973,6 +1973,9 @@ bool midi_output::play_midi_chord_wait(CScriptArray& notes, const std::string& p
 		const double elapsed = now_ms() - start;
 		for (size_t k = 0; k < release_at.size(); ) {
 			if (release_at[k] > elapsed) { ++k; continue; }
+			// Released with the tempo the moment was measured at, so the note
+			// off lands on the note on's channel even when the length was
+			// written in beats and the port tempo differs.
 			release_one(stamped(collected[release_note[k]]));
 			release_at.erase(release_at.begin() + k);
 			release_note.erase(release_note.begin() + k);
