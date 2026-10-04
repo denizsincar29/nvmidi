@@ -1775,36 +1775,49 @@ void build_steps_at(const std::vector<midi_note>& notes, int mode, double tempo,
 // Waits until the moment is reached, in short hops. A single long wait would
 // freeze the script and, in a game, the whole window with it.
 void wait_until(double moment) {
-	// Resolved once: the engine owns wait(), and looking it up per slice would
-	// cost more than the slice itself. Sleeping in short hops keeps the
-	// script's own clock going and lets it react.
-	//
-	// The module index 0 is the trap this used to fall into. The engine does
-	// not promise that the module being run is the first one, and when it is
-	// not, the lookup misses, wait_fn stays null, and the loop below returns
-	// at once - every play_*_wait turns its notes on and off in the same
-	// millisecond. The search is by name now, over every module the engine
-	// knows, so which one the script is in stops mattering.
+	// NVGT's wait() is an application function registered on the engine, not a
+	// script function, so a module lookup (GetFunctionByDecl) never finds it and
+	// every play_*_wait used to return at once. Look at the registered globals
+	// first, matching by name and arity so int/uint parameter spelling does not
+	// matter, then fall back to a script-defined wait in any module. The result
+	// is cached per engine: a lookup per slice would cost more than the slice.
+	static asIScriptEngine* cached_engine = nullptr;
+	static asIScriptFunction* cached_fn = nullptr;
 	asIScriptEngine* engine = g_engine;
-	asIScriptFunction* wait_fn = nullptr;
-	if (engine) {
-		asIScriptModule* module = engine->GetModule(0);
-		if (module) wait_fn = module->GetFunctionByDecl("void wait(int)");
-		for (asUINT i = 0; !wait_fn && i < engine->GetModuleCount(); ++i) {
-			asIScriptModule* candidate = engine->GetModuleByIndex(i);
-			if (candidate) wait_fn = candidate->GetFunctionByDecl("void wait(int)");
+	if (engine != cached_engine) {
+		cached_engine = engine;
+		cached_fn = nullptr;
+		if (engine) {
+			for (asUINT i = 0; !cached_fn && i < engine->GetGlobalFunctionCount(); ++i) {
+				asIScriptFunction* f = engine->GetGlobalFunctionByIndex(i);
+				if (f && f->GetParamCount() == 1 && std::strcmp(f->GetName(), "wait") == 0) cached_fn = f;
+			}
+			for (asUINT m = 0; !cached_fn && m < engine->GetModuleCount(); ++m) {
+				asIScriptModule* candidate = engine->GetModuleByIndex(m);
+				if (!candidate) continue;
+				cached_fn = candidate->GetFunctionByDecl("void wait(int)");
+				if (!cached_fn) cached_fn = candidate->GetFunctionByDecl("void wait(uint)");
+			}
+		}
+		if (!cached_fn) {
+			std::fprintf(stderr, "nvmidi: no wait(int) found in the engine or its modules; falling back to a plain sleep\n");
 		}
 	}
-	if (!wait_fn) {
-		// Nothing to call, so nothing can be waited on. Say so rather than
-		// playing the phrase at speed and leaving everyone to guess.
-		std::fprintf(stderr, "nvmidi: no script void wait(int) in any of the engine's modules; the wait ends at once\n");
-	}
+	asIScriptFunction* wait_fn = cached_fn;
 	for (;;) {
 		const double left = moment - now_ms();
-		if (!wait_fn) return; // no script to keep alive: the caller waits on
+		if (left <= 0.0) return;
+		if (!wait_fn) {
+			// No script clock to keep alive: sleep the real time instead of
+			// playing the phrase at speed.
+			std::this_thread::sleep_for(std::chrono::microseconds(static_cast<long long>((left > 5.0 ? 5.0 : left) * 1000.0)));
+			continue;
+		}
 		asIScriptContext* context = engine->CreateContext();
-		if (!context) return;
+		if (!context) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(left > 5.0 ? 5 : 1));
+			continue;
+		}
 		context->Prepare(wait_fn);
 		context->SetArgDWord(0, static_cast<asUINT>(left > 5.0 ? 5 : static_cast<int>(left) + 1));
 		context->Execute();
