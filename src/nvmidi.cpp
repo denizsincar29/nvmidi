@@ -1859,6 +1859,21 @@ void midi_output::note_off(const midi_note& note) {
 	send_note_off(static_cast<unsigned int>(note.channel), static_cast<unsigned int>(note.pitch), 0);
 }
 
+// A length survives the trip out to a sounding note only if the note is
+// stamped with the tempo the length was resolved against. collect_notes resolves
+// every length at this port's tempo but leaves the duration carrying whatever
+// tempo the script wrote into it - a duration built by midi_duration_create
+// keeps the default 120. Resolving a beats length at 96 and then reading it
+// back at 120 is what turned a held chord into a flash: 625 ms became 500, and
+// a length written as one beat became louder than it was long. Stamping the
+// notes with the resolving tempo here keeps both halves of the round trip -
+// the wait and the release - on the one number that was actually asked for.
+midi_note midi_output::stamped(const midi_note& note) const {
+	midi_note copy = note;
+	if (tempo > 0.0) copy.length.tempo = tempo;
+	return copy;
+}
+
 bool midi_output::play_chord(CScriptArray& notes) {
 	clear_error();
 	if (!midi_out) {
@@ -1879,7 +1894,12 @@ bool midi_output::play_chord(CScriptArray& notes) {
 		stop_all_notes();
 	}
 
-	for (size_t i = 0; i < collected.size(); ++i) note_on(collected[i]);
+	// sounding is what play_chord_wait measures its wait from, so it has to
+	// carry the same lengths this tempo resolves to.
+	for (size_t i = 0; i < collected.size(); ++i) {
+		collected[i] = stamped(collected[i]);
+		note_on(collected[i]);
+	}
 	sounding = collected;
 	return true;
 }
@@ -1953,7 +1973,7 @@ bool midi_output::play_midi_chord_wait(CScriptArray& notes, const std::string& p
 		const double elapsed = now_ms() - start;
 		for (size_t k = 0; k < release_at.size(); ) {
 			if (release_at[k] > elapsed) { ++k; continue; }
-			release_one(collected[release_note[k]]);
+			release_one(stamped(collected[release_note[k]]));
 			release_at.erase(release_at.begin() + k);
 			release_note.erase(release_note.begin() + k);
 		}
@@ -1961,7 +1981,7 @@ bool midi_output::play_midi_chord_wait(CScriptArray& notes, const std::string& p
 	// Whatever is still ringing gets its full length.
 	for (size_t k = 0; k < release_at.size(); ++k) {
 		wait_until(start + release_at[k]);
-		release_one(collected[release_note[k]]);
+		release_one(stamped(collected[release_note[k]]));
 	}
 	stop_all_notes();
 	return true;
@@ -1991,7 +2011,7 @@ bool midi_output::play_note(const midi_note& note) {
 		wait_until(now_ms() + group_length_at(sounding, tempo));
 		stop_all_notes();
 	}
-	midi_note copy = note;
+	midi_note copy = stamped(note);
 	clamp_note(copy);
 	note_on(copy);
 	sounding.push_back(copy);

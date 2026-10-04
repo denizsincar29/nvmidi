@@ -602,6 +602,10 @@ private:
 	// Send helper shared by the high level functions; builds a note on or a
 	// note off from a midi_note without going through the script.
 	void note_on(const midi_note& note);
+	// The same note with this port's tempo written into its length, so the
+	// length reads back the same at any tempo it is asked for afterwards.
+	// Every note kept in sounding goes through here - see play_chord.
+	midi_note stamped(const midi_note& note) const;
 	void note_off(const midi_note& note);
 	// Releases one note and forgets it, so stop_all_notes() does not send a
 	// second note off for the same key.

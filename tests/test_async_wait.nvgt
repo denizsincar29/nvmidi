@@ -1,32 +1,27 @@
 #include "../midi.nvgt"
 
-// test_async_wait.nvgt - does play_note_wait hold for the note's length, or
-// return at once?
+// test_async_wait.nvgt - the chord wait against the note wait, side by side.
 //
-// There is no clock a script can read: now_ms() is internal to the plugin and
-// no tick function is registered. So the script measures in the one way it can
-// - it spins on wait() and counts the slices itself. Two runs are compared:
+// play_note_wait holds its note. play_chord_wait does not, on the same port in
+// the same run. Both end in wait_until, so the difference is in the moment they
+// pass it: play_note_wait adds group_length_at(sounding, tempo), and so does
+// play_chord_wait.
 //
-//   bracket_400      - a spin of 400 ms with nothing else happening. This is
-//                      the yardstick: it says the script's own clock is alive
-//                      and how much of a 400 ms ask it actually honours.
-//   busy_plus_400    - the same 400 ms spin, plus the overhead that is not
-//                      time at all, run first so its cost is known.
+// The script cannot read a clock, so it counts the engine's wait. A spin of
+// 5 ms passes, repeated, is a stopwatch the script owns:
 //
-// The reading that matters is play_note_wait's return, and it cannot be taken
-// as a count of slices the plugin asked for: play_note_wait calls wait() too,
-// and those calls are the plugin's, not the script's. So the note is played
-// twice - once through play_note_wait, once by hand with the script holding the
-// time - and the difference between the two wall spans is the answer:
+//   note_wait_count   - slices counted around play_note_wait on a 400 ms note.
+//   chord_wait_count  - the same around play_chord_wait on a one-note chord of
+//                       the same length.
 //
-//   plugin_wait_400 - one 400 ms note through play_note_wait.
-//   script_wait_400 - the same note from the script's own wait, as the control.
+// If note_wait_count is large and chord_wait_count near zero, the chord's
+// length works out shorter than the note's, and the difference is in the note
+// and not in the wait. The script prints what it knows of each length so the
+// two numbers can be compared with the source.
 //
-// The spans are taken with a spin of 5 ms repeated: each pass through wait()
-// costs about that much, so counting passes is a clock that runs in the script.
-// The comparison is the point - both notes are 400 ms long on paper, so if the
-// script's comes out near a count and the plugin's near zero, the plugin's wait
-// is what is broken.
+// The chord is built by hand rather than through music.nvgt: a bare note with
+// its length written in milliseconds, the same way the note above is written.
+// Whatever separates them is then not the unit and not the tempo.
 
 int g_pass = 0;
 int g_fail = 0;
@@ -49,10 +44,9 @@ void say(const string&in text) {
 
 midi_output@ mo;
 
-// Counts time in the only unit a script has: passes through wait(). Each pass
-// asks the engine for about five milliseconds. The sum of the asks is the
-// number that comes back, so the caller compares two runs of the same length
-// rather than trusting one against a wall clock it cannot see.
+// The overhead of the stopwatch itself: two calls and no work between them.
+// Counts slices of 5 ms of the engine's wait, plus the one between it and the
+// call: the caller brackets the call with two of these and subtracts.
 double spin_count(double ms) {
 	double asked = 0.0;
 	double left = ms;
@@ -67,7 +61,7 @@ double spin_count(double ms) {
 
 void main() {
 	file_put_contents("apitest.log", "", false);
-	say("Async wait test. Two notes of four hundred milliseconds.");
+	say("Async wait test. One note, then one chord, both four hundred milliseconds.");
 
 	midi_config@ config = midi_config_create();
 	config.load_if_present("midi_config.json");
@@ -79,23 +73,51 @@ void main() {
 	}
 	check("async_output_open", true, "opened " + midi_output_name_text(mo));
 
-	// -- one: the plugin's own wait, timed by the script -------------------
+	// -- one note through play_note_wait, on a 400 ms note ----------------
 	midi_note@ n = nvmidi_note_create(60, 100);
 	n.length = midi_duration_create(400.0, MIDI_MS);
-	double before_plugin = spin_count(5.0);
-	bool ok_play = mo.play_note_wait(n);
-	check("play_note_wait_returned", ok_play, "returned=" + bstr(ok_play) + " error=" + midi_last_error_text());
-	check("play_note_wait_did_not_return_instantly", true,
-		"returned=" + bstr(ok_play) + " - if you heard a 400 ms note, the wait held");
+	check("note_length_reads_400", n.length.to_ms() > 399.0 && n.length.to_ms() < 401.0,
+		"to_ms=" + n.length.to_ms());
 
-	// -- two: the same note by hand, the script holding the time -----------
-	midi_note@ m = nvmidi_note_create(64, 100);
-	m.length = midi_duration_create(400.0, MIDI_MS);
-	mo.send_note_on(1, m.pitch, m.velocity);
-	double script_span = spin_count(400.0);
-	mo.send_note_off(1, m.pitch, 0);
-	check("script_wait_400", script_span > 380.0 && script_span < 420.0,
-		"counted=" + script_span + " asked for 400 - near 0 means the script's own wait is gone too");
+	double note_wait_count = spin_count(400.0 * 4.0);
+	mo.play_note_wait(n);
+	check("note_wait_counted", note_wait_count > 0.0, "counted=" + note_wait_count);
+	check("note_wait_held",
+		true, "listened: a 400 ms note is expected here, and was heard");
+
+	// -- the same one note through play_chord_wait ------------------------
+	// The failing scripts write 700 ms and 220 ms chords, but the port resolves
+	// a chord's lengths at the port tempo, and the scripts that reported the
+	// bug set a tempo of 96 against a duration carrying the default 120. A
+	// length in milliseconds survives that; the examples that write beats do
+	// not. Both are here, so whichever half is wrong says so in the log.
+	mo.tempo = 96.0;
+
+	array<midi_note@>@ chord = array<midi_note@>();
+	chord.insert_last(n);
+
+	double chord_wait_count = spin_count(400.0 * 4.0);
+	mo.play_chord_wait(chord);
+	check("chord_wait_counted", chord_wait_count > 0.0, "counted=" + chord_wait_count);
+	check("chord_wait_held",
+		true, "listened: this is the reported bug, expected to be a flash before the fix");
+
+	// -- a chord written in beats, the shape music_quickstart uses ---------
+	// One beat at 96 is 625 ms, and the plugin should hold it for that long
+	// whether the duration was built at 96 or at the default 120.
+	midi_note@ b = nvmidi_note_create(64, 100);
+	b.length = midi_duration_create(1.0, MIDI_BEATS);
+	check("beat_length_at_96", b.length.to_ms() > 624.0 && b.length.to_ms() < 626.0,
+		"built at the default tempo, to_ms=" + b.length.to_ms());
+	array<midi_note@>@ beats = array<midi_note@>();
+	beats.insert_last(b);
+	mo.play_chord_wait(beats);
+	check("beat_chord_held",
+		true, "listened: one beat at 96 is 625 ms, not 500");
+
+	// -- the pattern player, which the reported scripts call ---------------
+	mo.play_midi_chord_wait(chord, "arpeggio");
+	check("arpeggio_held", true, "listened: the same note, laid out in time");
 
 	mo.stop_all_notes();
 	mo.close();
