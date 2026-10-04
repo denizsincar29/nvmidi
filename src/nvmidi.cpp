@@ -1778,11 +1778,22 @@ void wait_until(double moment) {
 	// Resolved once: the engine owns wait(), and looking it up per slice would
 	// cost more than the slice itself. Sleeping in short hops keeps the
 	// script's own clock going and lets it react.
+	//
+	// The module index 0 is the trap this used to fall into. The engine does
+	// not promise that the module being run is the first one, and when it is
+	// not, the lookup misses, wait_fn stays null, and the loop below returns
+	// at once - every play_*_wait turns its notes on and off in the same
+	// millisecond. The search is by name now, over every module the engine
+	// knows, so which one the script is in stops mattering.
 	asIScriptEngine* engine = g_engine;
 	asIScriptFunction* wait_fn = nullptr;
 	if (engine) {
 		asIScriptModule* module = engine->GetModule(0);
 		if (module) wait_fn = module->GetFunctionByDecl("void wait(int)");
+		for (asUINT i = 0; !wait_fn && i < engine->GetModuleCount(); ++i) {
+			asIScriptModule* candidate = engine->GetModuleByIndex(i);
+			if (candidate) wait_fn = candidate->GetFunctionByDecl("void wait(int)");
+		}
 	}
 	for (;;) {
 		const double left = moment - now_ms();
