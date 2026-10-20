@@ -130,6 +130,10 @@ More in [examples/README.md](examples/README.md).
 - [doc/API.md](doc/API.md): every function and what it does.
 - [TECHNICAL.md](TECHNICAL.md): building the plugin yourself and shipping it with a game.
 
+## No keyboard?
+
+`tools/midi_tester` builds `nvmidi-tester`, a fake MIDI keyboard that opens a virtual port and plays chords, pedals and controllers from stdin. See [tools/midi_tester/README.md](tools/midi_tester/README.md).
+
 ## Not included
 
 Playing or reading MIDI files, and creating virtual MIDI ports on Windows.

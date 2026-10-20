@@ -1,0 +1,112 @@
+# Builds nvmidi-tester (tools/midi_tester): a fake MIDI keyboard that opens a
+# virtual port and plays what is typed on stdin. One binary per platform, left
+# as downloadable artifacts. A tag named tester-* also publishes them as a
+# release, for developers who have no keyboard and no compiler.
+name: midi-tester
+
+on:
+  push:
+    paths:
+      - 'tools/midi_tester/**'
+      - 'third_party/rtmidi/**'
+      - '.github/workflows/midi-tester.yml'
+    tags:
+      - 'tester-*'
+  pull_request:
+    paths:
+      - 'tools/midi_tester/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: nvmidi-tester-windows
+            file: nvmidi-tester.exe
+          - os: ubuntu-latest
+            name: nvmidi-tester-linux
+            file: nvmidi-tester
+          - os: macos-latest
+            name: nvmidi-tester-macos
+            file: nvmidi-tester
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install ALSA headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libasound2-dev
+
+      - name: build (windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        working-directory: tools/midi_tester
+        run: mingw32-make
+
+      - name: build (unix)
+        if: runner.os != 'Windows'
+        working-directory: tools/midi_tester
+        run: make
+
+      # winmm, kernel32 and the C runtime are on every Windows. Anything else
+      # means a MinGW library followed the build in and the exe would not
+      # start on someone else's machine.
+      - name: windows exe imports only system dlls
+        if: runner.os == 'Windows'
+        shell: bash
+        working-directory: tools/midi_tester
+        run: |
+          objdump -p nvmidi-tester.exe | grep "DLL Name" | tee imports.txt
+          if grep -v -i -E 'KERNEL32|WINMM|msvcrt|api-ms-win' imports.txt; then
+            echo "unexpected dll in the import table"; exit 1
+          fi
+
+      - name: help runs
+        working-directory: tools/midi_tester
+        shell: bash
+        run: ./${{ matrix.file }} -h
+
+      # A machine with no MIDI system must fail with a readable message and a
+      # non-zero exit, not crash. Runners have no ALSA sequencer or MIDI
+      # driver, so either the tool starts and quits on EOF (exit 0), or it
+      # reports an error (exit 1); a signal or abort (>=128) is the failure.
+      - name: does not crash without a MIDI system
+        working-directory: tools/midi_tester
+        shell: bash
+        run: |
+          set +e
+          ./${{ matrix.file }} < /dev/null
+          rc=$?
+          echo "exit code $rc"
+          if [ "$rc" -ge 128 ]; then exit 1; fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: tools/midi_tester/${{ matrix.file }}
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/tester-')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: name the files by platform
+        run: |
+          mkdir out
+          cp dist/nvmidi-tester-windows/nvmidi-tester.exe out/nvmidi-tester-windows.exe
+          cp dist/nvmidi-tester-linux/nvmidi-tester out/nvmidi-tester-linux
+          cp dist/nvmidi-tester-macos/nvmidi-tester out/nvmidi-tester-macos
+          chmod +x out/nvmidi-tester-linux out/nvmidi-tester-macos
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
