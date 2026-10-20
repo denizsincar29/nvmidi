@@ -6,12 +6,8 @@ name: midi-tester
 
 on:
   push:
-    paths:
-      - 'tools/midi_tester/**'
-      - 'third_party/rtmidi/**'
-      - '.github/workflows/midi-tester.yml'
-    tags:
-      - 'tester-*'
+    branches: ['**']
+    tags: ['tester-*']
   pull_request:
     paths:
       - 'tools/midi_tester/**'
