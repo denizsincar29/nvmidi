@@ -98,6 +98,20 @@ jobs:
           & $cppwinrt -input $winmd -reference sdk -output tools/midi_tester/gen -verbose
           if ($LASTEXITCODE -ne 0) { throw "cppwinrt failed" }
 
+      - name: what the projection step produced
+        if: always()
+        shell: pwsh
+        run: |
+          $lines = @()
+          $lines += "winmd files:"
+          $lines += (Get-ChildItem pkgs -Recurse -Include *.winmd | ForEach-Object { $_.FullName.Replace((Get-Location).Path,'') })
+          $lines += "dll files:"
+          $lines += (Get-ChildItem pkgs -Recurse -Include Windows.Devices.Midi2*.dll | ForEach-Object { $_.FullName.Replace((Get-Location).Path,'') })
+          $lines += "gen headers:"
+          $lines += (Get-ChildItem tools/midi_tester/gen -Recurse -Filter *Midi*.h -ErrorAction SilentlyContinue | Select-Object -First 15 | ForEach-Object { $_.FullName.Replace((Get-Location).Path,'') })
+          $txt = ($lines -join "`n").Replace('%','%25').Replace("`r",'').Replace("`n",'%0A')
+          Write-Host "::notice title=inspect::$txt"
+
       # The compiler's complaints are copied into an error annotation, so they
       # can be read from the run's check without downloading the log.
       - name: build
