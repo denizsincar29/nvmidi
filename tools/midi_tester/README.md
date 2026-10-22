@@ -7,13 +7,23 @@ that listens to MIDI input can be tested without hardware.
 Download a binary from the `midi-tester` workflow (Actions, Artifacts) or from
 a `tester-*` release.
 
-## Windows: one-time setup
+## Windows
 
-Windows cannot create virtual MIDI ports on its own. Install
-[loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html), create a
-port named `nvmidi virtual`, and leave loopMIDI running. The tool sends into
-that port and the game opens the same port as an input. Linux (ALSA) and macOS
-create the port themselves.
+Download `nvmidi-tester-windows.zip` and unpack it. Keep `nvmidi-tester.exe`
+and `Windows.Devices.Midi2.dll` in the same folder, then run the exe.
+
+- **Windows 11 25H2 or newer:** nothing to install. The exe creates the
+  virtual port `nvmidi virtual` through Windows MIDI Services and prints the
+  name the game will list as a MIDI input. The port exists while the exe runs.
+- **Anything older:** Windows has no built-in virtual ports. The exe says so
+  and asks you to download [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html).
+  Install it, create a port named `nvmidi virtual`, run the exe again. It sends
+  into that port and the game reads the same port as an input.
+- `--loopmidi` skips the built-in way and goes straight to loopMIDI.
+- The built-in way sends channel messages only (notes, controllers, pedals,
+  program change, pitch bend, pressure). SysEx and system messages need loopMIDI.
+
+Linux (ALSA) and macOS (CoreMIDI) create the port themselves.
 
 ## Use
 
@@ -58,6 +68,9 @@ on all 16 channels, so nothing is left ringing in the game.
 
 ## Build
 
-    cd tools/midi_tester && make        # mingw32-make on Windows
+    cd tools/midi_tester && make        # Linux, macOS, or Windows with MinGW
 
-Linux needs `libasound2-dev`.
+Linux needs `libasound2-dev`. The MinGW build on Windows has no built-in virtual
+port, only the loopMIDI way. The full Windows build is the MSVC one in
+`.github/workflows/midi-tester.yml`, which needs the Windows.Devices.Midi2
+package from the microsoft/MIDI releases page.
