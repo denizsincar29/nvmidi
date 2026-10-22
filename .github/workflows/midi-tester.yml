@@ -163,9 +163,13 @@ jobs:
         shell: pwsh
         working-directory: out
         run: |
-          "" | ./nvmidi-tester.exe
-          Write-Host "exit code $LASTEXITCODE"
-          if ($LASTEXITCODE -lt 0 -or $LASTEXITCODE -gt 127) { exit 1 }
+          $out = "" | & ./nvmidi-tester.exe 2>&1 | ForEach-Object { "$_" }
+          $code = $LASTEXITCODE
+          $txt = (($out -join "`n") + "`nexit code $code").Replace('%','%25').Replace("`r",'').Replace("`n",'%0A')
+          Write-Host "::notice title=run output::$txt"
+          Write-Host ($out -join "`n")
+          Write-Host "exit code $code"
+          if ($code -lt 0 -or $code -gt 127) { exit 1 }
 
       - uses: actions/upload-artifact@v4
         with:
