@@ -101,7 +101,10 @@ jobs:
         run: |
           $cppwinrt = (Get-ChildItem pkgs -Recurse -Filter cppwinrt.exe | Select-Object -First 1).FullName
           $winmd = (Get-ChildItem pkgs -Recurse -Filter Windows.Devices.Midi2.winmd | Select-Object -First 1).FullName
-          & $cppwinrt -input $winmd -reference sdk -output tools/midi_tester/gen -verbose
+          # The Windows SDK carries its own, older C++/WinRT headers. Mixing them with
+          # this projection fails with "Mismatched C++/WinRT headers", so the SDK
+          # types are generated too and every winrt/ header comes from gen.
+          & $cppwinrt -input sdk -input $winmd -output tools/midi_tester/gen
           if ($LASTEXITCODE -ne 0) { throw "cppwinrt failed" }
 
       - name: what the projection step produced
@@ -124,7 +127,7 @@ jobs:
         shell: pwsh
         working-directory: tools/midi_tester
         run: |
-          $args = @('/nologo','/std:c++17','/O2','/EHsc','/MT','/W3','/DNVMIDI_WMS','/D__WINDOWS_MM__','/DNOMINMAX',
+          $args = @('/nologo','/std:c++20','/O2','/EHsc','/MT','/W3','/DNVMIDI_WMS','/D__WINDOWS_MM__','/DNOMINMAX',
                     '/Igen','/I..\..\third_party\rtmidi',
                     'nvmidi_tester.cpp','wms_backend.cpp','..\..\third_party\rtmidi\RtMidi.cpp',
                     '/Fe:nvmidi-tester.exe','/link','windowsapp.lib','winmm.lib','advapi32.lib')
