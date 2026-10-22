@@ -107,20 +107,6 @@ jobs:
           & $cppwinrt -input sdk -input $winmd -output tools/midi_tester/gen
           if ($LASTEXITCODE -ne 0) { throw "cppwinrt failed" }
 
-      - name: what the projection step produced
-        if: always()
-        shell: pwsh
-        run: |
-          $lines = @()
-          $lines += "winmd files:"
-          $lines += (Get-ChildItem pkgs -Recurse -Include *.winmd | ForEach-Object { $_.FullName.Replace((Get-Location).Path,'') })
-          $lines += "dll files:"
-          $lines += (Get-ChildItem pkgs -Recurse -Include Windows.Devices.Midi2*.dll | ForEach-Object { $_.FullName.Replace((Get-Location).Path,'') })
-          $lines += "gen headers:"
-          $lines += (Get-ChildItem tools/midi_tester/gen -Recurse -Filter *Midi*.h -ErrorAction SilentlyContinue | Select-Object -First 15 | ForEach-Object { $_.FullName.Replace((Get-Location).Path,'') })
-          $txt = ($lines -join "`n").Replace('%','%25').Replace("`r",'').Replace("`n",'%0A')
-          Write-Host "::notice title=inspect::$txt"
-
       # The compiler's complaints are copied into an error annotation, so they
       # can be read from the run's check without downloading the log.
       - name: build
@@ -169,7 +155,10 @@ jobs:
           Write-Host "::notice title=run output::$txt"
           Write-Host ($out -join "`n")
           Write-Host "exit code $code"
+          # pwsh ends a step with the last native exit code, and 1 is the
+          # expected answer here, so the step decides its own result.
           if ($code -lt 0 -or $code -gt 127) { exit 1 }
+          exit 0
 
       - uses: actions/upload-artifact@v4
         with:
