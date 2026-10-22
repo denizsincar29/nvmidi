@@ -22,9 +22,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
-            name: nvmidi-tester-windows
-            file: nvmidi-tester.exe
           - os: ubuntu-latest
             name: nvmidi-tester-linux
             file: nvmidi-tester
@@ -39,29 +36,10 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libasound2-dev
 
-      - name: build (windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: tools/midi_tester
-        run: mingw32-make
-
       - name: build (unix)
         if: runner.os != 'Windows'
         working-directory: tools/midi_tester
         run: make
-
-      # winmm, kernel32 and the C runtime are on every Windows. Anything else
-      # means a MinGW library followed the build in and the exe would not
-      # start on someone else's machine.
-      - name: windows exe imports only system dlls
-        if: runner.os == 'Windows'
-        shell: bash
-        working-directory: tools/midi_tester
-        run: |
-          objdump -p nvmidi-tester.exe | grep "DLL Name" | tee imports.txt
-          if grep -v -i -E 'KERNEL32|WINMM|msvcrt|api-ms-win' imports.txt; then
-            echo "unexpected dll in the import table"; exit 1
-          fi
 
       - name: help runs
         working-directory: tools/midi_tester
@@ -88,9 +66,82 @@ jobs:
           path: tools/midi_tester/${{ matrix.file }}
           if-no-files-found: error
 
+  windows:
+    # MSVC and not MinGW: the Windows MIDI Services API is C++/WinRT, which
+    # only MSVC builds. The exe creates the virtual port itself on Windows 11
+    # 25H2+, and falls back to a loopMIDI port everywhere else. The zip holds
+    # the exe and Windows.Devices.Midi2.dll, which the exe loads from its own
+    # folder when Windows does not carry the API itself.
+    runs-on: windows-latest
+    env:
+      MIDI2_VERSION: 0.99.94-preview.12
+      CPPWINRT_VERSION: 3.0.260520.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: get the NuGet packages
+        shell: pwsh
+        run: |
+          nuget install Windows.Devices.Midi2 -Version $env:MIDI2_VERSION -Prerelease -OutputDirectory pkgs -NonInteractive
+          nuget install Microsoft.Windows.CppWinRT -Version $env:CPPWINRT_VERSION -OutputDirectory pkgs -NonInteractive
+          Get-ChildItem pkgs -Recurse -Include *.winmd,Windows.Devices.Midi2.dll,cppwinrt.exe | Select-Object -ExpandProperty FullName
+
+      - name: generate the C++/WinRT projection
+        shell: pwsh
+        run: |
+          $cppwinrt = (Get-ChildItem pkgs -Recurse -Filter cppwinrt.exe | Select-Object -First 1).FullName
+          $winmd = (Get-ChildItem pkgs -Recurse -Filter Windows.Devices.Midi2.winmd | Select-Object -First 1).FullName
+          & $cppwinrt -input $winmd -reference sdk -output tools/midi_tester/gen -verbose
+          if ($LASTEXITCODE -ne 0) { throw "cppwinrt failed" }
+
+      - name: build
+        shell: cmd
+        working-directory: tools/midi_tester
+        run: >
+          cl /nologo /std:c++17 /O2 /EHsc /MT /W3 /DNVMIDI_WMS /D__WINDOWS_MM__ /DNOMINMAX
+          /Igen /I..\..\third_party\rtmidi
+          nvmidi_tester.cpp wms_backend.cpp ..\..\third_party\rtmidi\RtMidi.cpp
+          /Fe:nvmidi-tester.exe
+          /link windowsapp.lib winmm.lib advapi32.lib
+
+      - name: package the exe with the API dll
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item tools/midi_tester/nvmidi-tester.exe out/
+          $dll = Get-ChildItem pkgs -Recurse -Filter Windows.Devices.Midi2.dll | Where-Object { $_.FullName -match 'win-x64' } | Select-Object -First 1
+          if (-not $dll) { throw "Windows.Devices.Midi2.dll for win-x64 not found in the package" }
+          Copy-Item $dll.FullName out/
+          Get-ChildItem out
+
+      - name: help runs
+        shell: pwsh
+        working-directory: out
+        run: ./nvmidi-tester.exe -h
+
+      # A runner has no usable MIDI service. The tool has to say so in words
+      # and exit by itself; a crash code is the failure.
+      - name: no MIDI service gives a readable message
+        shell: pwsh
+        working-directory: out
+        run: |
+          "" | ./nvmidi-tester.exe
+          Write-Host "exit code $LASTEXITCODE"
+          if ($LASTEXITCODE -lt 0 -or $LASTEXITCODE -gt 127) { exit 1 }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nvmidi-tester-windows
+          path: out/
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/tester-')
-    needs: build
+    needs: [build, windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -99,7 +150,7 @@ jobs:
       - name: name the files by platform
         run: |
           mkdir out
-          cp dist/nvmidi-tester-windows/nvmidi-tester.exe out/nvmidi-tester-windows.exe
+          (cd dist/nvmidi-tester-windows && zip -q ../../out/nvmidi-tester-windows.zip nvmidi-tester.exe Windows.Devices.Midi2.dll)
           cp dist/nvmidi-tester-linux/nvmidi-tester out/nvmidi-tester-linux
           cp dist/nvmidi-tester-macos/nvmidi-tester out/nvmidi-tester-macos
           chmod +x out/nvmidi-tester-linux out/nvmidi-tester-macos

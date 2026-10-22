@@ -8,14 +8,18 @@
 //   nvmidi-tester -a     stdin is one JSON object per line, each one a MIDI
 //                        message. Meant for scripts and other programs.
 //
-// Windows has no virtual ports in winmm. There the tool opens an existing
-// output port whose name contains "nvmidi virtual" instead - create one with
-// loopMIDI (name it "nvmidi virtual") and point the game at the same port.
-// Linux (ALSA) and macOS (CoreMIDI) create a real virtual port.
+// Windows 11 25H2 or newer: the tool creates the virtual device itself through
+// Windows MIDI Services (MSVC build, wms_backend.cpp). Anything older: winmm has
+// no virtual ports, so the tool opens an existing output port whose name
+// contains "nvmidi virtual" - create one with loopMIDI and point the game at
+// the same port. Linux (ALSA) and macOS (CoreMIDI) create a real virtual port.
 //
 // Output is plain lines of text, nothing else, so a screen reader reads it.
 
 #include "RtMidi.h"
+#ifdef NVMIDI_WMS
+#include "wms_backend.h"
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -91,8 +95,17 @@ public:
 	int channel = 1;   // 1..16, the same convention as the nvmidi plugin
 	int velocity = 100;
 
+	bool use_wms = false; // Windows MIDI Services backend instead of RtMidi
+
 	void send(const Bytes &m) {
 		std::lock_guard<std::mutex> g(send_mx);
+#ifdef NVMIDI_WMS
+		if (use_wms) {
+			std::string e;
+			if (!wms::send(m, e)) std::cerr << "error: " << e << "\n";
+			return;
+		}
+#endif
 		try { out->sendMessage(&m); } catch (RtMidiError &e) { std::cerr << "error: " << e.getMessage() << "\n"; }
 	}
 
@@ -577,6 +590,7 @@ static void usage() {
 		"  -p NAME     use the existing output port whose name contains NAME\n"
 		"              (Windows: needed when the port is not called \"nvmidi virtual\")\n"
 		"  -l          list output ports and exit\n"
+		"  --loopmidi  Windows: skip the built-in virtual device, use a loopMIDI port\n"
 		"  -c N        channel 1..16 (default 1)\n"
 		"  -h          this help\n"
 		"\n"
@@ -593,7 +607,7 @@ static void usage() {
 }
 
 int main(int argc, char **argv) {
-	bool automation = false, list_only = false;
+	bool automation = false, list_only = false, force_loopmidi = false;
 	std::string vname = "nvmidi virtual", pname;
 	int channel = 1;
 
@@ -601,6 +615,7 @@ int main(int argc, char **argv) {
 		std::string a = argv[i];
 		if (a == "-a") automation = true;
 		else if (a == "-l") list_only = true;
+		else if (a == "--loopmidi") force_loopmidi = true;
 		else if (a == "-h" || a == "--help" || a == "-?") { usage(); return 0; }
 		else if (a == "-n" && i + 1 < argc) vname = argv[++i];
 		else if (a == "-p" && i + 1 < argc) pname = argv[++i];
@@ -609,6 +624,7 @@ int main(int argc, char **argv) {
 	}
 	if (channel < 1 || channel > 16) { std::cerr << "channel must be 1..16\n"; return 2; }
 
+	(void)force_loopmidi; // only the Windows MSVC build reads it
 	Keyboard kb;
 	kb.channel = channel;
 	try {
@@ -631,23 +647,48 @@ int main(int argc, char **argv) {
 
 	try {
 #ifdef _WIN32
-		// winmm cannot create a port, so find one somebody else made.
-		std::string want = lower(pname.empty() ? vname : pname);
-		int found = -1;
-		for (unsigned i = 0; i < count; i++)
-			if (lower(kb.out->getPortName(i)).find(want) != std::string::npos) { found = (int)i; break; }
-		if (found < 0) {
-			std::cerr << "error: no output port with \"" << want << "\" in its name.\n"
-			          << "Windows cannot create virtual MIDI ports by itself.\n"
-			          << "Install loopMIDI (tobias-erichsen.de/software/loopmidi.html), create a port named \""
-			          << vname << "\", then start this again.\n"
-			          << "Output ports I can see:\n";
-			for (unsigned i = 0; i < count; i++) std::cerr << "  " << i << ": " << kb.out->getPortName(i) << "\n";
-			if (!count) std::cerr << "  none\n";
-			return 1;
+#ifdef NVMIDI_WMS
+		if (!force_loopmidi && pname.empty()) {
+			wms::Result r = wms::start(vname);
+			if (r.status == wms::Status::Ok) {
+				kb.use_wms = true;
+				std::cout << "ready, virtual port \"" << vname << "\" is open (Windows MIDI Services)\n";
+			} else {
+				switch (r.status) {
+					case wms::Status::NotWindows11:
+						std::cerr << "This is not Windows 11 (" << r.detail << "), so there are no built-in virtual MIDI ports.\n";
+						break;
+					case wms::Status::OldWindows11:
+						std::cerr << "This Windows 11 is older than 25H2 (" << r.detail << "), so there are no built-in virtual MIDI ports. Updating Windows fixes that.\n";
+						break;
+					default:
+						std::cerr << "Windows MIDI Services is not usable here: " << r.detail << "\n";
+				}
+				std::cerr << "Download loopMIDI instead: https://www.tobias-erichsen.de/software/loopmidi.html\n"
+				          << "Install it, create a port named \"" << vname << "\", then start this again.\n";
+			}
 		}
-		kb.out->openPort((unsigned)found, "nvmidi-tester");
-		std::cout << "ready, sending to port " << kb.out->getPortName((unsigned)found) << "\n";
+#endif
+		if (!kb.use_wms) {
+			// winmm cannot create a port, so find one somebody else made.
+			std::string want = lower(pname.empty() ? vname : pname);
+			int found = -1;
+			for (unsigned i = 0; i < count; i++)
+				if (lower(kb.out->getPortName(i)).find(want) != std::string::npos) { found = (int)i; break; }
+			if (found < 0) {
+				std::cerr << "error: no output port with \"" << want << "\" in its name.\n";
+#ifndef NVMIDI_WMS
+				std::cerr << "Windows cannot create virtual MIDI ports by itself. Download loopMIDI: https://www.tobias-erichsen.de/software/loopmidi.html\n"
+				          << "Install it, create a port named \"" << vname << "\", then start this again.\n";
+#endif
+				std::cerr << "Output ports I can see:\n";
+				for (unsigned i = 0; i < count; i++) std::cerr << "  " << i << ": " << kb.out->getPortName(i) << "\n";
+				if (!count) std::cerr << "  none\n";
+				return 1;
+			}
+			kb.out->openPort((unsigned)found, "nvmidi-tester");
+			std::cout << "ready, sending to port " << kb.out->getPortName((unsigned)found) << "\n";
+		}
 #else
 		if (!pname.empty()) {
 			std::string want = lower(pname);
@@ -689,5 +730,8 @@ int main(int argc, char **argv) {
 	sch.stop();
 	kb.panic();
 	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+#ifdef NVMIDI_WMS
+	if (kb.use_wms) wms::stop();
+#endif
 	return 0;
 }
