@@ -74,7 +74,11 @@ jobs:
     # folder when Windows does not carry the API itself.
     runs-on: windows-latest
     env:
-      MIDI2_VERSION: 0.99.94-preview.12
+      # The API package is not on nuget.org: Microsoft ships it on the
+      # releases page of github.com/microsoft/MIDI. Preview 12 says preview
+      # 11 is still the one to build against.
+      MIDI2_RELEASE: inbox-preview-11
+      MIDI2_NUPKG: Windows.Devices.Midi2.0.99.92-preview.11.nupkg
       CPPWINRT_VERSION: 3.0.260520.1
     steps:
       - uses: actions/checkout@v4
@@ -83,10 +87,12 @@ jobs:
         with:
           arch: x64
 
-      - name: get the NuGet packages
+      - name: get the packages
         shell: pwsh
         run: |
-          nuget install Windows.Devices.Midi2 -Version $env:MIDI2_VERSION -Prerelease -OutputDirectory pkgs -NonInteractive
+          New-Item -ItemType Directory -Force pkgs | Out-Null
+          Invoke-WebRequest "https://github.com/microsoft/MIDI/releases/download/$env:MIDI2_RELEASE/$env:MIDI2_NUPKG" -OutFile pkgs/midi2.zip
+          Expand-Archive pkgs/midi2.zip -DestinationPath pkgs/Windows.Devices.Midi2
           nuget install Microsoft.Windows.CppWinRT -Version $env:CPPWINRT_VERSION -OutputDirectory pkgs -NonInteractive
           Get-ChildItem pkgs -Recurse -Include *.winmd,Windows.Devices.Midi2.dll,cppwinrt.exe | Select-Object -ExpandProperty FullName
 
