@@ -98,15 +98,26 @@ jobs:
           & $cppwinrt -input $winmd -reference sdk -output tools/midi_tester/gen -verbose
           if ($LASTEXITCODE -ne 0) { throw "cppwinrt failed" }
 
+      # The compiler's complaints are copied into an error annotation, so they
+      # can be read from the run's check without downloading the log.
       - name: build
-        shell: cmd
+        shell: pwsh
         working-directory: tools/midi_tester
-        run: >
-          cl /nologo /std:c++17 /O2 /EHsc /MT /W3 /DNVMIDI_WMS /D__WINDOWS_MM__ /DNOMINMAX
-          /Igen /I..\..\third_party\rtmidi
-          nvmidi_tester.cpp wms_backend.cpp ..\..\third_party\rtmidi\RtMidi.cpp
-          /Fe:nvmidi-tester.exe
-          /link windowsapp.lib winmm.lib advapi32.lib
+        run: |
+          $args = @('/nologo','/std:c++17','/O2','/EHsc','/MT','/W3','/DNVMIDI_WMS','/D__WINDOWS_MM__','/DNOMINMAX',
+                    '/Igen','/I..\..\third_party\rtmidi',
+                    'nvmidi_tester.cpp','wms_backend.cpp','..\..\third_party\rtmidi\RtMidi.cpp',
+                    '/Fe:nvmidi-tester.exe','/link','windowsapp.lib','winmm.lib','advapi32.lib')
+          $out = & cl.exe @args 2>&1 | ForEach-Object { "$_" }
+          $code = $LASTEXITCODE
+          $out | Write-Host
+          if ($code -ne 0) {
+            $errs = ($out | Where-Object { $_ -match 'error|fatal|LNK' } | Select-Object -First 12) -join "`n"
+            if ($errs.Length -gt 3000) { $errs = $errs.Substring(0, 3000) }
+            $errs = $errs.Replace('%','%25').Replace("`r",'').Replace("`n",'%0A')
+            Write-Host "::error title=cl failed::$errs"
+            exit 1
+          }
 
       - name: package the exe with the API dll
         shell: pwsh
